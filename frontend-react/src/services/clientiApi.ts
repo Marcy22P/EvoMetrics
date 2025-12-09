@@ -1,0 +1,283 @@
+// Importa ShopifyTestResult da shopifyApi invece di duplicarlo
+import type { ShopifyTestResult } from './shopifyApi';
+
+// URL Clienti Service - Usa API Gateway unificato (porta 10000 in sviluppo, window.location.origin in produzione)
+const CLIENTI_SERVICE_URL = import.meta.env.VITE_CLIENTI_SERVICE_URL || 
+  (window.location.hostname === 'localhost' ? 'http://localhost:10000' : window.location.origin);
+
+export interface Cliente {
+  id: string;
+  nome_azienda: string;
+  contatti?: {
+    email?: string;
+    telefono?: string;
+    indirizzo?: string;
+  };
+  servizi_attivi?: string[];
+  integrazioni?: {
+    shopify_shop?: string;
+    meta_ad_account_id?: string;
+  };
+  note?: string;
+  source?: string;
+  source_id?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ShopifyMetrics {
+  total_orders: number;
+  total_revenue: number;
+  average_order_value: number;
+  orders_by_status: Record<string, number>;
+  period: {
+    start: string;
+    end: string;
+  };
+}
+
+export interface MagicLink {
+  id: string;
+  cliente_id: string;
+  token: string;
+  url: string;
+  is_active: boolean;
+  is_used: boolean;
+  expires_at: string;
+  revoked_at?: string;
+  created_at: string;
+  used_at?: string;
+  status: 'active' | 'used' | 'expired' | 'revoked';
+}
+
+class ClientiApiService {
+  private async getAuthHeaders() {
+    const token = localStorage.getItem('auth_token');
+    if (!token) {
+      throw new Error('Token di autenticazione non trovato');
+    }
+    return {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    };
+  }
+
+  async getClienti(): Promise<Cliente[]> {
+    const headers = await this.getAuthHeaders();
+    const response = await fetch(`${CLIENTI_SERVICE_URL}/api/clienti`, {
+      method: 'GET',
+      headers,
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      let errorMessage = `Errore nel caricamento dei clienti: ${response.status}`;
+      try {
+        const errorData = JSON.parse(text);
+        errorMessage = errorData.detail || errorData.message || errorMessage;
+      } catch {
+        if (text) errorMessage = text;
+      }
+      throw new Error(errorMessage);
+    }
+    try {
+      return await response.json();
+    } catch (jsonError) {
+      console.error('Errore nel parsing JSON della risposta:', jsonError);
+      throw new Error('Risposta del server non valida (non JSON)');
+    }
+  }
+
+  async getCliente(id: string): Promise<Cliente> {
+    const headers = await this.getAuthHeaders();
+    const response = await fetch(`${CLIENTI_SERVICE_URL}/api/clienti/${id}`, {
+      method: 'GET',
+      headers,
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      let errorMessage = `Errore nel caricamento del cliente: ${response.status}`;
+      try {
+        const errorData = JSON.parse(text);
+        errorMessage = errorData.detail || errorData.message || errorMessage;
+      } catch {
+        if (text) errorMessage = text;
+      }
+      throw new Error(errorMessage);
+    }
+    try {
+      return await response.json();
+    } catch (jsonError) {
+      console.error('Errore nel parsing JSON della risposta:', jsonError);
+      throw new Error('Risposta del server non valida (non JSON)');
+    }
+  }
+
+  async createCliente(cliente: Omit<Cliente, 'id' | 'created_at' | 'updated_at'>): Promise<{ id: string; status: string }> {
+    const headers = await this.getAuthHeaders();
+    const response = await fetch(`${CLIENTI_SERVICE_URL}/api/clienti`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(cliente),
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      let errorMessage = `Errore nella creazione del cliente: ${response.status}`;
+      try {
+        const errorData = JSON.parse(text);
+        errorMessage = errorData.detail || errorData.message || errorMessage;
+      } catch {
+        if (text) errorMessage = text;
+      }
+      throw new Error(errorMessage);
+    }
+    try {
+      return await response.json();
+    } catch (jsonError) {
+      console.error('Errore nel parsing JSON della risposta:', jsonError);
+      throw new Error('Risposta del server non valida (non JSON)');
+    }
+  }
+
+  async deleteCliente(id: string): Promise<void> {
+    const headers = await this.getAuthHeaders();
+    const response = await fetch(`${CLIENTI_SERVICE_URL}/api/clienti/${id}`, {
+      method: 'DELETE',
+      headers,
+    });
+    if (!response.ok) {
+      throw new Error(`Errore nell'eliminazione del cliente: ${response.status}`);
+    }
+  }
+
+  async getImportSources(): Promise<{ preventivi: any[]; contratti: any[] }> {
+    const headers = await this.getAuthHeaders();
+    const response = await fetch(`${CLIENTI_SERVICE_URL}/api/clienti/import/sources`, {
+      method: 'GET',
+      headers,
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      let errorMessage = `Errore nel caricamento delle fonti: ${response.status}`;
+      try {
+        const errorData = JSON.parse(text);
+        errorMessage = errorData.detail || errorData.message || errorMessage;
+      } catch {
+        if (text) errorMessage = text;
+      }
+      throw new Error(errorMessage);
+    }
+    try {
+      return await response.json();
+    } catch (jsonError) {
+      console.error('Errore nel parsing JSON della risposta:', jsonError);
+      throw new Error('Risposta del server non valida (non JSON)');
+    }
+  }
+
+  async importCliente(sourceType: 'preventivo' | 'contratto', sourceId: string): Promise<{ id: string; status: string }> {
+    const headers = await this.getAuthHeaders();
+    const response = await fetch(`${CLIENTI_SERVICE_URL}/api/clienti/import`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ source_type: sourceType, source_id: sourceId }),
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      let errorMessage = `Errore nell'importazione del cliente: ${response.status}`;
+      try {
+        const errorData = JSON.parse(text);
+        errorMessage = errorData.detail || errorData.message || errorMessage;
+      } catch {
+        if (text) errorMessage = text;
+      }
+      throw new Error(errorMessage);
+    }
+    try {
+      return await response.json();
+    } catch (jsonError) {
+      console.error('Errore nel parsing JSON della risposta:', jsonError);
+      throw new Error('Risposta del server non valida (non JSON)');
+    }
+  }
+
+  // NOTA: I metodi Shopify sono stati spostati in shopifyApi.ts
+  // Questi metodi sono mantenuti per retrocompatibilità ma deprecati
+  // Usa shopifyApi.connectShopify(), shopifyApi.getShopifyMetrics(), shopifyApi.testShopifyConnection()
+  async connectShopify(clienteId: string, shop: string): Promise<void> {
+    // Deprecato: usa shopifyApi.connectShopify() invece
+    const { shopifyApi } = await import('./shopifyApi');
+    return shopifyApi.connectShopify(clienteId, shop);
+  }
+
+  async getShopifyMetrics(
+    clienteId: string,
+    startDate?: string,
+    endDate?: string
+  ): Promise<ShopifyMetrics> {
+    // Deprecato: usa shopifyApi.getShopifyMetrics() invece
+    const { shopifyApi } = await import('./shopifyApi');
+    return shopifyApi.getShopifyMetrics(clienteId, startDate, endDate);
+  }
+
+  async testShopifyConnection(clienteId: string): Promise<ShopifyTestResult> {
+    // Deprecato: usa shopifyApi.testShopifyConnection() invece
+    const { shopifyApi } = await import('./shopifyApi');
+    return shopifyApi.testShopifyConnection(clienteId);
+  }
+
+  async createMagicLink(clienteId: string): Promise<MagicLink> {
+    const headers = await this.getAuthHeaders();
+    const response = await fetch(`${CLIENTI_SERVICE_URL}/api/clienti/${clienteId}/magic-link`, {
+      method: 'POST',
+      headers,
+    });
+    if (!response.ok) {
+      throw new Error(`Errore nella creazione del magic link: ${response.status}`);
+    }
+    const data = await response.json();
+    // Il backend restituisce CreateMagicLinkResponse, ma il frontend si aspetta MagicLink
+    // Convertiamo aggiungendo i campi mancanti
+    return {
+      id: data.id,
+      cliente_id: clienteId,
+      token: data.token,
+      url: data.url,
+      is_active: data.is_active,
+      is_used: false,
+      expires_at: data.expires_at,
+      created_at: new Date().toISOString(),
+      status: 'active'
+    } as MagicLink;
+  }
+
+  async getMagicLinks(clienteId: string): Promise<MagicLink[]> {
+    const headers = await this.getAuthHeaders();
+    const response = await fetch(`${CLIENTI_SERVICE_URL}/api/clienti/${clienteId}/magic-links`, {
+      method: 'GET',
+      headers,
+    });
+    if (!response.ok) {
+      throw new Error(`Errore nel caricamento dei magic links: ${response.status}`);
+    }
+    const links = await response.json();
+    // Aggiungi campo status se mancante
+    return links.map((link: any) => ({
+      ...link,
+      status: link.status || (link.revoked_at ? 'revoked' : link.is_used ? 'used' : new Date(link.expires_at) < new Date() ? 'expired' : 'active')
+    }));
+  }
+
+  async revokeMagicLink(linkId: string): Promise<void> {
+    const headers = await this.getAuthHeaders();
+    const response = await fetch(`${CLIENTI_SERVICE_URL}/api/magic-links/${linkId}`, {
+      method: 'DELETE',
+      headers,
+    });
+    if (!response.ok) {
+      throw new Error(`Errore nella revoca del magic link: ${response.status}`);
+    }
+  }
+}
+
+export const clientiApi = new ClientiApiService();
+

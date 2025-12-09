@@ -1,0 +1,56 @@
+.spotlight-card-container {
+    position: relative;
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border-subtle);
+    background-color: var(--bg-card);
+    overflow: hidden;
+    transition: transform 0.2s ease, border-color 0.2s ease;
+    cursor: default;
+    height: 100%;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    z-index: 10;
+}
+
+.spotlight-card-container:hover {
+    border-color: var(--border-highlight);
+    transform: translateY(-2px);
+    box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.5);
+}
+
+.spotlight-overlay {
+    pointer-events: none;
+    position: absolute;
+    inset: 0;
+    transition: opacity 0.3s ease;
+    z-index: 1;
+    mix-blend-mode: plus-lighter; /* Migliora visibilità */
+}
+
+.spotlight-content-wrapper {
+    position: relative;
+    z-index: 2;
+    height: 100%;
+    width: 100%;
+    padding: 1.5rem;
+    display: flex;
+    flex-direction: column;
+}
+
+/* Override global styles if class 'card' is passed */
+.spotlight-card-container.card {
+    background-color: var(--bg-card) !important;
+    border: 1px solid var(--border-subtle) !important;
+    box-shadow: none !important;
+}
+
+.spotlight-card-container.card:hover {
+    transform: translateY(-2px) !important;
+    box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.5) !important;
+    border-color: var(--border-highlight) !important;
+}
+
+.spotlight-card-container.card .spotlight-content-wrapper {
+    padding: 0;
+}

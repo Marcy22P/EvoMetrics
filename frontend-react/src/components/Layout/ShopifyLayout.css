@@ -1,0 +1,7 @@
+/* Override specifico per il posizionamento del logo */
+.Polaris-TopBar__LogoContainer img {
+  margin-left: 16px; /* Sposta il logo a destra */
+}
+
+
+

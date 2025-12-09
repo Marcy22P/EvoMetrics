@@ -1,0 +1,767 @@
+/* Root CSS Variables - Copiate dal preventivatore */
+:root {
+  --primary-gradient: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  --dark-gradient: linear-gradient(135deg, #0a0a0a 0%, #111111 50%, #0a0a0a 100%);
+  --glass-bg: rgba(255, 255, 255, 0.08);
+  --glass-border: rgba(255, 255, 255, 0.12);
+  --accent-blue: #667eea;
+  --accent-purple: #764ba2;
+  --text-primary: #ffffff;
+  --text-secondary: #b3c6ff;
+  --text-muted: #8899cc;
+  --backdrop-blur: blur(20px);
+  --card-shadow: 0 16px 40px rgba(0, 0, 0, 0.4);
+  --hover-shadow: 0 24px 60px rgba(102, 126, 234, 0.25);
+  --transition-smooth: all 0.4s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  --border-radius-lg: 24px;
+  --border-radius-md: 16px;
+  --border-radius-sm: 12px;
+}
+
+/* Keyframes for animations */
+@keyframes shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-10px); }
+}
+
+@keyframes glow {
+  0%, 100% { box-shadow: 0 0 20px rgba(102, 126, 234, 0.3); }
+  50% { box-shadow: 0 0 40px rgba(102, 126, 234, 0.6); }
+}
+
+/* Contratti Container */
+.contratti-container {
+  min-height: 100vh;
+  background: var(--dark-gradient);
+  color: var(--text-primary);
+  position: relative;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  overflow-x: hidden;
+}
+
+.contratti-container::before {
+  content: '';
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: 
+    radial-gradient(circle at 20% 80%, rgba(102, 126, 234, 0.05) 0%, transparent 50%),
+    radial-gradient(circle at 80% 20%, rgba(118, 75, 162, 0.05) 0%, transparent 50%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Header */
+.contratti-header {
+  background: var(--glass-bg);
+  backdrop-filter: var(--backdrop-blur);
+  padding: 4rem 2rem;
+  text-align: center;
+  border-bottom: 1px solid var(--glass-border);
+  position: relative;
+  z-index: 1;
+  overflow: hidden;
+}
+
+.contratti-header::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: var(--primary-gradient);
+  box-shadow: 0 0 20px rgba(102, 126, 234, 0.5);
+}
+
+.contratti-header::after {
+  content: '';
+  position: absolute;
+  top: -50%;
+  left: -50%;
+  width: 200%;
+  height: 200%;
+  background: conic-gradient(
+    from 0deg at 50% 50%,
+    transparent 0deg,
+    rgba(102, 126, 234, 0.03) 45deg,
+    transparent 90deg,
+    rgba(118, 75, 162, 0.03) 135deg,
+    transparent 180deg
+  );
+  animation: rotate 30s linear infinite;
+  pointer-events: none;
+}
+
+@keyframes rotate {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.contratti-header h1 {
+  font-size: 3.5rem;
+  margin: 1rem 0;
+  font-weight: 800;
+  background: linear-gradient(135deg, var(--text-primary) 0%, var(--text-secondary) 50%, var(--accent-blue) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  letter-spacing: -0.04em;
+  text-shadow: 0 0 40px rgba(102, 126, 234, 0.3);
+  position: relative;
+  z-index: 2;
+  overflow: hidden;
+}
+
+.contratti-header h1::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
+  animation: shimmer 3s infinite;
+}
+
+.contratti-header .header-content {
+  position: relative;
+}
+
+.subtitle {
+  font-size: 1.4rem;
+  color: var(--text-secondary);
+  margin: 0;
+  font-weight: 400;
+  opacity: 0.9;
+  letter-spacing: 0.025em;
+  position: relative;
+  z-index: 2;
+}
+
+/* Tabs */
+.contratti-tabs {
+  display: flex;
+  background: var(--glass-bg);
+  border-bottom: 1px solid var(--glass-border);
+  padding: 0 2rem;
+  backdrop-filter: var(--backdrop-blur);
+  position: relative;
+  z-index: 1;
+  justify-content: center;
+  gap: 1rem;
+}
+
+.tab-button {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  padding: 1.5rem 3rem;
+  cursor: pointer;
+  font-size: 1.1rem;
+  font-weight: 600;
+  transition: var(--transition-smooth);
+  border-radius: var(--border-radius-sm) var(--border-radius-sm) 0 0;
+  position: relative;
+  backdrop-filter: blur(10px);
+  border: 1px solid transparent;
+  border-bottom: none;
+  min-width: 160px;
+  justify-content: center;
+}
+
+.tab-button::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--primary-gradient);
+  border-radius: inherit;
+  opacity: 0;
+  transition: var(--transition-smooth);
+  z-index: -1;
+}
+
+.tab-button::after {
+  content: '';
+  position: absolute;
+  bottom: -1px;
+  left: 50%;
+  width: 0;
+  height: 3px;
+  background: var(--primary-gradient);
+  transition: var(--transition-smooth);
+  transform: translateX(-50%);
+  border-radius: 2px 2px 0 0;
+  box-shadow: 0 0 20px rgba(102, 126, 234, 0.6);
+}
+
+.tab-button svg {
+  width: 24px;
+  height: 24px;
+  fill: var(--text-muted);
+  transition: var(--transition-smooth);
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.3));
+}
+
+/* Hover effects removed */
+
+.tab-button.active {
+  color: var(--text-primary);
+  background: var(--glass-bg);
+  border-color: var(--glass-border);
+  box-shadow: var(--card-shadow);
+}
+
+.tab-button.active::before {
+  opacity: 0.15;
+}
+
+.tab-button.active::after {
+  width: 80%;
+}
+
+.tab-button.active svg {
+  fill: var(--accent-blue);
+  filter: drop-shadow(0 0 8px rgba(102, 126, 234, 0.5));
+}
+
+/* Content */
+.contratti-content {
+  padding: 3rem 2rem;
+  max-width: 1400px;
+  margin: 0 auto;
+  position: relative;
+  z-index: 1;
+}
+
+/* Modifica Section */
+.contratti-modifica {
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+}
+
+.modifica-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 2rem;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--border-radius-lg);
+  backdrop-filter: var(--backdrop-blur);
+  box-shadow: var(--card-shadow);
+}
+
+.header-info h2 {
+  color: var(--text-primary);
+  font-size: 1.8rem;
+  margin: 0 0 0.5rem 0;
+  font-weight: 700;
+}
+
+.header-info p {
+  color: var(--text-secondary);
+  margin: 0;
+  font-size: 1rem;
+}
+
+.header-actions {
+  display: flex;
+  gap: 1rem;
+}
+
+.new-button {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  background: var(--primary-gradient);
+  color: white;
+  border: none;
+  padding: 1rem 2rem;
+  border-radius: var(--border-radius-md);
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 1rem;
+  transition: var(--transition-smooth);
+  box-shadow: var(--card-shadow);
+  position: relative;
+  overflow: hidden;
+}
+
+.new-button::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.2), transparent);
+  opacity: 0;
+  transition: var(--transition-smooth);
+}
+
+/* Hover effects removed */
+
+.new-button svg {
+  width: 20px;
+  height: 20px;
+  fill: currentColor;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.3));
+}
+
+/* Anteprima e Archivio Sections */
+.contratti-anteprima {
+  padding: 2rem;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.contratti-archivio {
+  padding: 2rem;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.anteprima-placeholder,
+.archivio-placeholder {
+  text-align: center;
+  padding: 4rem 2rem;
+}
+
+.anteprima-placeholder .placeholder-icon,
+.archivio-placeholder .placeholder-icon {
+  width: 80px;
+  height: 80px;
+  margin: 0 auto 2rem;
+  color: var(--accent-blue);
+  opacity: 0.8;
+  animation: float 3s ease-in-out infinite;
+}
+
+.anteprima-placeholder h2,
+.archivio-placeholder h2 {
+  font-size: 2.2rem;
+  margin: 0 0 1rem 0;
+  font-weight: 700;
+  background: linear-gradient(135deg, var(--text-primary) 0%, var(--accent-blue) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  letter-spacing: -0.02em;
+}
+
+.anteprima-placeholder p,
+.archivio-placeholder p {
+  font-size: 1.2rem;
+  color: var(--text-secondary);
+  margin: 0;
+  line-height: 1.6;
+  font-weight: 400;
+}
+
+/* Placeholder */
+.contratti-placeholder {
+  background: var(--glass-bg);
+  border: 2px solid var(--glass-border);
+  border-radius: var(--border-radius-lg);
+  padding: 4rem 3rem;
+  backdrop-filter: var(--backdrop-blur);
+  box-shadow: var(--card-shadow);
+  text-align: center;
+  position: relative;
+  overflow: hidden;
+  transition: var(--transition-smooth);
+}
+
+.contratti-placeholder::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: var(--primary-gradient);
+  opacity: 0.8;
+}
+
+/* Hover effects removed */
+
+.placeholder-icon {
+  width: 80px;
+  height: 80px;
+  margin: 0 auto 2rem;
+  color: var(--accent-blue);
+  opacity: 0.8;
+  animation: float 3s ease-in-out infinite;
+}
+
+.placeholder-icon svg {
+  width: 100%;
+  height: 100%;
+  filter: drop-shadow(0 0 20px rgba(102, 126, 234, 0.3));
+}
+
+.contratti-placeholder h2 {
+  font-size: 2.2rem;
+  margin: 0 0 1rem 0;
+  font-weight: 700;
+  background: linear-gradient(135deg, var(--text-primary) 0%, var(--accent-blue) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  letter-spacing: -0.02em;
+}
+
+.contratti-placeholder p {
+  font-size: 1.2rem;
+  color: var(--text-secondary);
+  margin: 0;
+  line-height: 1.6;
+  font-weight: 400;
+}
+
+/* Section SVG Icon */
+.section-svg-icon {
+  width: 28px;
+  height: 28px;
+  fill: var(--accent-blue);
+  filter: drop-shadow(0 0 8px rgba(102, 126, 234, 0.5));
+  margin-right: 1rem;
+  vertical-align: middle;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .contratti-header {
+    padding: 2rem 1rem;
+  }
+  
+  .contratti-header h1 {
+    font-size: 2.2rem;
+  }
+  
+  .contratti-content {
+    padding: 1rem;
+  }
+  
+  .contratti-placeholder {
+    padding: 2rem 1.5rem;
+  }
+  
+  .placeholder-icon {
+    width: 60px;
+    height: 60px;
+  }
+  
+  .contratti-placeholder h2 {
+    font-size: 1.8rem;
+  }
+  
+  .contratti-placeholder p {
+    font-size: 1rem;
+  }
+}
+
+/* Archivio Styles */
+.archivio-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 2rem;
+  padding-bottom: 1rem;
+  border-bottom: 2px solid rgba(102, 126, 234, 0.2);
+}
+
+.archivio-actions {
+  display: flex;
+  gap: 15px;
+  align-items: center;
+}
+
+.import-button {
+  background: var(--primary-gradient);
+  color: var(--text-primary);
+  border: none;
+  padding: 12px 20px;
+  border-radius: var(--border-radius-sm);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: var(--transition-smooth);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-shadow: 0 8px 25px rgba(102, 126, 234, 0.3);
+}
+
+/* Hover effects removed */
+
+.import-button svg {
+  width: 18px;
+  height: 18px;
+}
+
+.archivio-header h2 {
+  color: var(--text-primary);
+  font-size: 1.8rem;
+  font-weight: 700;
+  margin: 0;
+}
+
+.refresh-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: var(--primary-gradient);
+  color: white;
+  border: none;
+  padding: 0.75rem 1.5rem;
+  border-radius: var(--border-radius-md);
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.9rem;
+  transition: var(--transition-smooth);
+  box-shadow: var(--card-shadow);
+}
+
+/* Hover effects removed */
+
+.refresh-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.refresh-button svg {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
+}
+
+.loading-placeholder,
+.empty-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 4rem 2rem;
+  text-align: center;
+}
+
+.loading-spinner {
+  width: 40px;
+  height: 40px;
+  border: 4px solid rgba(102, 126, 234, 0.2);
+  border-top: 4px solid var(--accent-blue);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  margin-bottom: 1rem;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.contratti-list {
+  display: grid;
+  gap: 1.5rem;
+  grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
+}
+
+.contratto-item {
+  background: rgba(255, 255, 255, 0.05);
+  border: 2px solid rgba(102, 126, 234, 0.2);
+  border-radius: var(--border-radius-lg);
+  padding: 1.5rem;
+  transition: var(--transition-smooth);
+  backdrop-filter: blur(10px);
+}
+
+/* Hover effects removed */
+
+.contratto-info h3 {
+  color: var(--text-primary);
+  font-size: 1.3rem;
+  font-weight: 700;
+  margin: 0 0 1rem 0;
+}
+
+.contratto-info p {
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  margin: 0.5rem 0;
+  line-height: 1.4;
+}
+
+.status-badge {
+  display: inline-block;
+  padding: 0.25rem 0.75rem;
+  border-radius: var(--border-radius-sm);
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.status-bozza {
+  background: rgba(255, 193, 7, 0.2);
+  color: #ffc107;
+  border: 1px solid rgba(255, 193, 7, 0.3);
+}
+
+.status-firmato {
+  background: rgba(40, 167, 69, 0.2);
+  color: #28a745;
+  border: 1px solid rgba(40, 167, 69, 0.3);
+}
+
+.status-attivo {
+  background: rgba(0, 123, 255, 0.2);
+  color: #007bff;
+  border: 1px solid rgba(0, 123, 255, 0.3);
+}
+
+.status-inviato {
+  background: rgba(0, 123, 255, 0.2);
+  color: #007bff;
+  border: 1px solid rgba(0, 123, 255, 0.3);
+}
+
+.status-estinto {
+  background: rgba(108, 117, 125, 0.2);
+  color: #6c757d;
+  border: 1px solid rgba(108, 117, 125, 0.3);
+}
+
+.status-rescisso {
+  background: rgba(220, 53, 69, 0.2);
+  color: #dc3545;
+  border: 1px solid rgba(220, 53, 69, 0.3);
+}
+
+/* Status Section e Select */
+.status-section {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 0.5rem 0;
+}
+
+.status-section strong {
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  min-width: 60px;
+}
+
+.status-select {
+  background: rgba(255, 255, 255, 0.05);
+  border: 2px solid rgba(102, 126, 234, 0.2);
+  border-radius: var(--border-radius-sm);
+  color: var(--text-primary);
+  padding: 0.4rem 0.8rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: var(--transition-smooth);
+  backdrop-filter: blur(10px);
+  min-width: 120px;
+}
+
+/* Hover effects removed */
+
+.status-select:focus {
+  outline: none;
+  border-color: var(--accent-blue);
+  box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.2);
+}
+
+.status-select option {
+  background: #1a1a1a;
+  color: var(--text-primary);
+  padding: 0.5rem;
+}
+
+/* Stili specifici per ogni status */
+.status-select.status-bozza {
+  border-color: rgba(255, 193, 7, 0.3);
+  color: #ffc107;
+}
+
+.status-select.status-inviato {
+  border-color: rgba(0, 123, 255, 0.3);
+  color: #007bff;
+}
+
+.status-select.status-firmato {
+  border-color: rgba(40, 167, 69, 0.3);
+  color: #28a745;
+}
+
+.status-select.status-estinto {
+  border-color: rgba(108, 117, 125, 0.3);
+  color: #6c757d;
+}
+
+.status-select.status-rescisso {
+  border-color: rgba(220, 53, 69, 0.3);
+  color: #dc3545;
+}
+
+/* Hover effects removed */
+
+.contratto-actions {
+  display: flex;
+  gap: 0.75rem;
+  margin-top: 1.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid rgba(102, 126, 234, 0.1);
+}
+
+.action-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 1rem;
+  border: none;
+  border-radius: 4px !important; /* Bordi rettangolari invece di arrotondati */
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.85rem;
+  transition: var(--transition-smooth);
+  flex: 1;
+  justify-content: center;
+}
+
+.load-button {
+  background: var(--primary-gradient);
+  color: white;
+  box-shadow: var(--card-shadow);
+}
+
+/* Hover effects removed */
+
+.delete-button {
+  background: rgba(220, 53, 69, 0.1);
+  color: #dc3545;
+  border: 1px solid rgba(220, 53, 69, 0.2);
+}
+
+/* Hover effects removed */
+
+.action-button svg {
+  width: 16px;
+  height: 16px;
+  fill: currentColor;
+}

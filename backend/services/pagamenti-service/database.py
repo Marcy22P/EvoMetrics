@@ -1,0 +1,45 @@
+"""
+Database connection helper per Pagamenti Service
+"""
+
+import databases
+import os
+from pathlib import Path
+
+# Carica variabili d'ambiente dalla root del progetto
+try:
+    from dotenv import load_dotenv
+    root_dir = Path(__file__).parent.parent.parent.parent
+    env_path = root_dir / ".env"
+    if env_path.exists():
+        load_dotenv(env_path)
+    else:
+        load_dotenv()
+except ImportError:
+    pass
+
+# Database configuration
+DATABASE_URL = os.environ.get("DATABASE_URL")
+if not DATABASE_URL:
+    raise ValueError("DATABASE_URL environment variable is required")
+
+if DATABASE_URL.startswith("postgresql://") and "+asyncpg" not in DATABASE_URL:
+    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
+    print(f"✅ DATABASE_URL aggiornato con +asyncpg: {DATABASE_URL[:50]}...")
+
+# Ottimizzazione pool per microservizi unificati: riduciamo le connessioni
+# In modalità unificata (10 servizi) evitiamosaturazione (max 100 conn)
+database = databases.Database(DATABASE_URL, min_size=1, max_size=3)
+
+
+async def init_database():
+    """Initialize database connection"""
+    await database.connect()
+    print("✅ Database connesso (Pagamenti Service)")
+
+
+async def close_database():
+    """Close database connection"""
+    await database.disconnect()
+    print("✅ Database disconnesso (Pagamenti Service)")
+

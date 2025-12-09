@@ -1,0 +1,259 @@
+.delete-contratto-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.7);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+  backdrop-filter: blur(5px);
+}
+
+.delete-contratto-modal {
+  background: linear-gradient(135deg, rgba(30, 30, 40, 0.9), rgba(20, 20, 30, 0.9));
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  width: 90%;
+  max-width: 500px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+  display: flex;
+  flex-direction: column;
+  max-height: 90vh;
+  animation: modalFadeIn 0.3s ease;
+}
+
+@keyframes modalFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.delete-contratto-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1.5rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  background: linear-gradient(135deg, rgba(220, 53, 69, 0.1), rgba(200, 30, 50, 0.1));
+}
+
+.delete-contratto-modal-header h2 {
+  margin: 0;
+  font-size: 1.5rem;
+  color: #ff6b6b;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.delete-contratto-modal-header .warning-icon {
+  width: 24px;
+  height: 24px;
+  fill: #ff6b6b;
+}
+
+.close-button {
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 1.8rem;
+  cursor: pointer;
+  transition: color 0.2s ease;
+}
+
+.close-button:hover {
+  color: #fff;
+}
+
+.delete-contratto-modal-content {
+  padding: 1.5rem;
+  overflow-y: auto;
+}
+
+.warning-message {
+  text-align: center;
+  margin-bottom: 1.5rem;
+  padding: 1rem;
+  background: rgba(220, 53, 69, 0.1);
+  border-radius: 12px;
+  border: 1px solid rgba(220, 53, 69, 0.2);
+}
+
+.warning-icon {
+  width: 32px;
+  height: 32px;
+  margin: 0 auto 0.5rem auto;
+  fill: #ff6b6b;
+  display: block;
+}
+
+.warning-message p {
+  margin: 0.5rem 0;
+  font-size: 1.1rem;
+  color: #fff;
+}
+
+.warning-subtitle {
+  color: rgba(255, 255, 255, 0.7) !important;
+  font-size: 0.95rem !important;
+}
+
+.contratto-info {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 12px;
+  padding: 1rem;
+  margin-bottom: 1.5rem;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.contratto-info h3 {
+  margin-top: 0;
+  margin-bottom: 1rem;
+  font-size: 1.2rem;
+  color: #fff;
+}
+
+.info-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+}
+
+.info-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.info-label {
+  font-size: 0.85rem;
+  color: rgba(255, 255, 255, 0.7);
+  font-weight: 500;
+}
+
+.info-value {
+  font-size: 0.95rem;
+  color: #fff;
+  font-weight: 600;
+}
+
+.status-bozza {
+  color: #ffc107;
+}
+
+.status-inviato {
+  color: #17a2b8;
+}
+
+.status-firmato {
+  color: #28a745;
+}
+
+.status-estinto {
+  color: #6c757d;
+}
+
+.status-rescisso {
+  color: #dc3545;
+}
+
+.consequences-warning {
+  background: rgba(255, 193, 7, 0.1);
+  border-radius: 12px;
+  padding: 1rem;
+  border: 1px solid rgba(255, 193, 7, 0.2);
+}
+
+.consequences-warning h4 {
+  margin-top: 0;
+  margin-bottom: 0.75rem;
+  font-size: 1rem;
+  color: #ffc107;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.consequences-warning .warning-icon {
+  width: 20px;
+  height: 20px;
+  fill: #ffc107;
+  margin: 0;
+  display: inline-block;
+}
+
+.consequences-warning ul {
+  margin: 0;
+  padding-left: 1.2rem;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.consequences-warning li {
+  margin-bottom: 0.5rem;
+  font-size: 0.9rem;
+}
+
+.delete-contratto-modal-footer {
+  padding: 1rem 1.5rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  display: flex;
+  justify-content: flex-end;
+  gap: 1rem;
+}
+
+.cancel-button {
+  padding: 0.75rem 1.5rem;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.7);
+  cursor: pointer;
+  font-size: 0.95rem;
+  transition: all 0.2s ease;
+}
+
+.cancel-button:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.delete-button {
+  padding: 0.75rem 1.5rem;
+  border-radius: 8px;
+  background: rgba(220, 53, 69, 0.2);
+  border: 1px solid rgba(220, 53, 69, 0.3);
+  color: #dc3545;
+  cursor: pointer;
+  font-size: 0.95rem;
+  font-weight: 500;
+  transition: all 0.2s ease;
+}
+
+.delete-button:hover {
+  background: rgba(220, 53, 69, 0.3);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(220, 53, 69, 0.2);
+}
+
+/* Responsive */
+@media (max-width: 600px) {
+  .info-grid {
+    grid-template-columns: 1fr;
+  }
+  
+  .delete-contratto-modal-footer {
+    flex-direction: column;
+  }
+  
+  .cancel-button,
+  .delete-button {
+    width: 100%;
+  }
+}
