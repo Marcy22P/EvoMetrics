@@ -252,19 +252,19 @@ def get_openai_client():
 async def handle_list_resources() -> list[types.Resource]:
     return [
         types.Resource(
-            uri=types.AnyURI("preventivi://catalog"),
+            uri=types.AnyUrl("preventivi://catalog"),
             name="Catalogo Servizi Evoluzione Imprese",
             description="Lista completa dei servizi offerti con descrizioni e ID",
             mimeType="application/json",
         ),
         types.Resource(
-            uri=types.AnyURI("preventivi://schema"),
+            uri=types.AnyUrl("preventivi://schema"),
             name="Schema JSON Preventivo",
             description="Struttura JSON richiesta per creare un preventivo valido",
             mimeType="application/json",
         ),
         types.Resource(
-            uri=types.AnyURI("spese://categorie"),
+            uri=types.AnyUrl("spese://categorie"),
             name="Categorie di Spese Fiscali",
             description="Lista completa delle categorie di spese con regole di deducibilità secondo la normativa fiscale italiana",
             mimeType="application/json",
@@ -272,7 +272,7 @@ async def handle_list_resources() -> list[types.Resource]:
     ]
 
 @mcp_server.read_resource()
-async def handle_read_resource(uri: types.AnyURI) -> str | bytes:
+async def handle_read_resource(uri: types.AnyUrl) -> str | bytes:
     if uri.path == "/catalog":
         import json
         return json.dumps(SERVIZI_CATALOG, indent=2)
