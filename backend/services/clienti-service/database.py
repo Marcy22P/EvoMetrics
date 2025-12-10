@@ -45,6 +45,7 @@ clienti_table = Table(
     Column("note", Text, nullable=True),
     Column("source", String(50), nullable=True),  # "preventivo", "contratto", "manual", "assessment"
     Column("source_id", String(50), nullable=True),  # ID del preventivo/contratto/assessment di origine
+    Column("dettagli", Text, nullable=True), # JSON: Nuovi dettagli strutturati (Brand, Canali, Stats, ecc.)
     Column("created_at", DateTime, nullable=False),
     Column("updated_at", DateTime, nullable=False)
 )
@@ -75,4 +76,3 @@ async def close_database():
     """Close database connection"""
     await database.disconnect()
     print("✅ Database disconnesso (Clienti Service)")
-

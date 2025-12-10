@@ -5,6 +5,72 @@ import type { ShopifyTestResult } from './shopifyApi';
 const CLIENTI_SERVICE_URL = import.meta.env.VITE_CLIENTI_SERVICE_URL || 
   (window.location.hostname === 'localhost' ? 'http://localhost:10000' : window.location.origin);
 
+// --- INTERFACCE DETTAGLI CLIENTI ---
+
+export interface Referente {
+  nome?: string;
+  cognome?: string;
+  azienda?: string;
+  email?: string;
+  telefono?: string;
+  file_preventivo?: string;
+  file_contratto?: string;
+}
+
+export interface Canale {
+  id: string;
+  url_sito?: string;
+  nome_utente?: string;
+  password?: string; // Nota: sicurezza
+  via_negozio?: string;
+}
+
+export interface BrandManual {
+  logo?: string;
+  colore_principale?: string;
+  colore_secondario?: string;
+  colore_terziario?: string;
+  font_titolo?: string;
+  font_sottotitolo?: string;
+  font_descrizioni?: string;
+}
+
+export interface Situazione {
+  grafico_img?: string;
+  fatturato?: number;
+  spesa_adv?: number;
+}
+
+export interface Registrazione {
+  id: string;
+  data?: string;
+  file_audio?: string;
+  titolo?: string;
+}
+
+export interface Task {
+  id: string;
+  titolo: string;
+  status: 'da_fare' | 'fatto';
+  descrizione?: string;
+  data_scadenza?: string;
+}
+
+export interface DettagliCliente {
+  data_inizio?: string;
+  data_fine?: string;
+  referente?: Referente;
+  canali?: Canale[];
+  brand_manual?: BrandManual;
+  situazione_inizio?: Situazione;
+  situazione_attuale?: Situazione;
+  obiettivo?: 'notorieta' | 'considerazione' | 'acquisizione' | 'profitto' | 'fidelizzazione';
+  registrazioni?: Registrazione[];
+  tasks?: Task[];
+  stato_umore?: 'triste' | 'neutrale' | 'felice';
+  note_rapide?: string;
+}
+
 export interface Cliente {
   id: string;
   nome_azienda: string;
@@ -21,6 +87,7 @@ export interface Cliente {
   note?: string;
   source?: string;
   source_id?: string;
+  dettagli?: DettagliCliente; // Nuovo campo
   created_at: string;
   updated_at: string;
 }
@@ -51,15 +118,18 @@ export interface MagicLink {
 }
 
 class ClientiApiService {
-  private async getAuthHeaders() {
+  private async getAuthHeaders(isFileUpload = false) {
     const token = localStorage.getItem('auth_token');
     if (!token) {
       throw new Error('Token di autenticazione non trovato');
     }
-    return {
+    const headers: Record<string, string> = {
       'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json',
     };
+    if (!isFileUpload) {
+        headers['Content-Type'] = 'application/json';
+    }
+    return headers;
   }
 
   async getClienti(): Promise<Cliente[]> {
@@ -138,6 +208,32 @@ class ClientiApiService {
     }
   }
 
+  async updateCliente(id: string, cliente: Partial<Cliente>): Promise<{ id: string; status: string }> {
+    const headers = await this.getAuthHeaders();
+    const response = await fetch(`${CLIENTI_SERVICE_URL}/api/clienti/${id}`, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify(cliente),
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      let errorMessage = `Errore nell'aggiornamento del cliente: ${response.status}`;
+      try {
+        const errorData = JSON.parse(text);
+        errorMessage = errorData.detail || errorData.message || errorMessage;
+      } catch {
+        if (text) errorMessage = text;
+      }
+      throw new Error(errorMessage);
+    }
+    try {
+      return await response.json();
+    } catch (jsonError) {
+      console.error('Errore nel parsing JSON della risposta:', jsonError);
+      throw new Error('Risposta del server non valida (non JSON)');
+    }
+  }
+
   async deleteCliente(id: string): Promise<void> {
     const headers = await this.getAuthHeaders();
     const response = await fetch(`${CLIENTI_SERVICE_URL}/api/clienti/${id}`, {
@@ -198,6 +294,43 @@ class ClientiApiService {
       console.error('Errore nel parsing JSON della risposta:', jsonError);
       throw new Error('Risposta del server non valida (non JSON)');
     }
+  }
+
+  async getClienteDocuments(id: string): Promise<{ preventivi: any[], contratti: any[] }> {
+    const headers = await this.getAuthHeaders();
+    const response = await fetch(`${CLIENTI_SERVICE_URL}/api/clienti/${id}/documents`, {
+      method: 'GET',
+      headers,
+    });
+    if (!response.ok) {
+        throw new Error(`Errore caricamento documenti: ${response.status}`);
+    }
+    return await response.json();
+  }
+
+  async analyzeDocument(file: File): Promise<{ filename: string, value: number, error?: string }> {
+    const headers = await this.getAuthHeaders(true); // true for file upload (no Content-Type: json)
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const response = await fetch(`${CLIENTI_SERVICE_URL}/api/documents/analyze`, {
+        method: 'POST',
+        headers,
+        body: formData
+    });
+
+    if (!response.ok) {
+        const text = await response.text();
+        let errorMessage = `Errore analisi: ${response.status}`;
+        try {
+            const errorData = JSON.parse(text);
+            errorMessage = errorData.detail || errorData.message || errorMessage;
+        } catch {
+            if (text) errorMessage = text;
+        }
+        return { filename: file.name, value: 0, error: errorMessage };
+    }
+    return await response.json();
   }
 
   // NOTA: I metodi Shopify sono stati spostati in shopifyApi.ts
@@ -280,4 +413,3 @@ class ClientiApiService {
 }
 
 export const clientiApi = new ClientiApiService();
-

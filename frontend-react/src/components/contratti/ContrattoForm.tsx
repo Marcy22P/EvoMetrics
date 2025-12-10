@@ -1,4 +1,20 @@
 import React, { useState, useEffect } from 'react';
+import { 
+  FormLayout, 
+  TextField, 
+  Select, 
+  LegacyCard, 
+  Box, 
+  Text,
+  Button,
+  Grid,
+  BlockStack,
+  InlineStack,
+  Divider,
+  Banner,
+  Checkbox
+} from '@shopify/polaris';
+import { MagicIcon, SaveIcon } from '@shopify/polaris-icons';
 import type { ContrattoData } from '../../types/contratto';
 import { 
   generateArticolo2Oggetto, 
@@ -17,7 +33,6 @@ import {
   hasLinkbuilding as checkHasLinkbuilding,
   formatCurrencyWithWords
 } from '../../utils/contrattoUtils';
-import './ContrattoForm.css';
 
 interface ContrattoFormProps {
   contrattoData: ContrattoData;
@@ -46,13 +61,13 @@ const ContrattoForm: React.FC<ContrattoFormProps> = ({
   useEffect(() => {
     // Evita loop infiniti: aggiorna solo se l'ID è cambiato o se è un nuovo contratto
     if (contrattoData.id !== formData.id || !formData.durata?.dataDecorrenza) {
-    setFormData(contrattoData);
-    setInputValues({
-      importoTotale: contrattoData.compenso.sitoWeb?.importoTotale?.toString() || '',
-      importoMensile: contrattoData.compenso.marketing.importoMensile?.toString() || ''
-    });
+      setFormData(contrattoData);
+      setInputValues({
+        importoTotale: contrattoData.compenso.sitoWeb?.importoTotale?.toString() || '',
+        importoMensile: contrattoData.compenso.marketing.importoMensile?.toString() || ''
+      });
     }
-  }, [contrattoData.id]); // Solo quando cambia l'ID del contratto
+  }, [contrattoData.id]); 
 
   const handleInputChange = (field: string, value: any) => {
     const newData = { ...formData };
@@ -92,7 +107,7 @@ const ContrattoForm: React.FC<ContrattoFormProps> = ({
   };
 
 
-  const calculateDataScadenza = (tipo: string, dataDecorrenza: string) => {
+  const calculateDataScadenza = (tipo: string, dataDecorrenza: string, customMesi?: number) => {
     if (!dataDecorrenza) return '';
     
     const decorrenza = new Date(dataDecorrenza);
@@ -110,30 +125,73 @@ const ContrattoForm: React.FC<ContrattoFormProps> = ({
       case '3_mesi_senza_rinnovo':
         scadenza.setMonth(scadenza.getMonth() + 3);
         break;
+      case 'spot_una_tantum':
+        scadenza.setDate(scadenza.getDate() + 60); // Stimato 8 settimane
+        break;
+      case 'custom':
+        if (customMesi && customMesi > 0) {
+          scadenza.setMonth(scadenza.getMonth() + customMesi);
+        }
+        break;
     }
     
     return scadenza.toISOString().split('T')[0];
   };
 
   const handleDurataChange = (tipo: string) => {
-    // Leggi la data di decorrenza direttamente dall'input DOM per essere sicuri di avere il valore più aggiornato
-    const dataDecorrenzaInput = document.getElementById('data-decorrenza-input') as HTMLInputElement;
-    const dataDecorrenzaCorrente = dataDecorrenzaInput?.value || formData.durata?.dataDecorrenza || '';
+    // Usa il valore corrente dallo state invece che dal DOM
+    const dataDecorrenzaCorrente = formData.durata?.dataDecorrenza || '';
+    const customMesi = formData.durata?.customMesi || 0;
     
-    // Calcola la data di scadenza solo se c'è una data di decorrenza
-    const dataScadenza = dataDecorrenzaCorrente ? calculateDataScadenza(tipo, dataDecorrenzaCorrente) : '';
+    const dataScadenza = dataDecorrenzaCorrente ? calculateDataScadenza(tipo, dataDecorrenzaCorrente, customMesi) : '';
     
     const newData = { ...formData };
     newData.durata = {
       ...newData.durata,
       tipo: tipo as any,
       dataDecorrenza: dataDecorrenzaCorrente,
-      dataScadenza: dataScadenza
+      dataScadenza: dataScadenza,
+      // Reset custom values if switching away from custom, or keep them if custom
+      customMesi: tipo === 'custom' ? customMesi : undefined,
+      customRinnovo: tipo === 'custom' ? (formData.durata.customRinnovo || false) : undefined
     };
     
-    // Aggiorna automaticamente l'articolo 4 solo se abbiamo entrambe le date
     if (dataDecorrenzaCorrente && dataScadenza) {
-      newData.articolo4Durata = generateArticolo4Durata(tipo, dataDecorrenzaCorrente, dataScadenza);
+      const options = tipo === 'custom' ? { mesi: customMesi, rinnovo: newData.durata.customRinnovo } : undefined;
+      newData.articolo4Durata = generateArticolo4Durata(tipo, dataDecorrenzaCorrente, dataScadenza, options);
+    } else if (tipo === 'custom' && (!customMesi || customMesi === 0)) {
+      // Clear duration text if custom months is invalid
+       newData.articolo4Durata = '';
+    }
+    
+    setFormData(newData);
+    onDataChange(newData);
+  };
+
+  const handleCustomDurataChange = (key: 'mesi' | 'rinnovo', value: any) => {
+    const newData = { ...formData };
+    const currentDurata = newData.durata;
+    
+    if (key === 'mesi') {
+      const mesi = parseInt(value) || 0;
+      currentDurata.customMesi = mesi;
+      
+      // Recalculate expiry
+      if (currentDurata.dataDecorrenza) {
+        currentDurata.dataScadenza = calculateDataScadenza('custom', currentDurata.dataDecorrenza, mesi);
+      }
+    } else {
+      currentDurata.customRinnovo = value;
+    }
+    
+    // Regenerate article if we have date and months
+    if (currentDurata.dataDecorrenza && currentDurata.dataScadenza && currentDurata.customMesi) {
+      newData.articolo4Durata = generateArticolo4Durata(
+        'custom', 
+        currentDurata.dataDecorrenza, 
+        currentDurata.dataScadenza,
+        { mesi: currentDurata.customMesi, rinnovo: currentDurata.customRinnovo }
+      );
     }
     
     setFormData(newData);
@@ -141,7 +199,7 @@ const ContrattoForm: React.FC<ContrattoFormProps> = ({
   };
 
   const handleDataDecorrenzaChange = (data: string) => {
-    const dataScadenza = calculateDataScadenza(formData.durata.tipo, data);
+    const dataScadenza = calculateDataScadenza(formData.durata.tipo, data, formData.durata.customMesi);
     
     const newData = { ...formData };
     newData.durata = {
@@ -150,8 +208,8 @@ const ContrattoForm: React.FC<ContrattoFormProps> = ({
       dataScadenza: dataScadenza
     };
     
-    // Aggiorna automaticamente l'articolo 4
-    newData.articolo4Durata = generateArticolo4Durata(newData.durata.tipo, data, dataScadenza);
+    const options = formData.durata.tipo === 'custom' ? { mesi: formData.durata.customMesi, rinnovo: formData.durata.customRinnovo } : undefined;
+    newData.articolo4Durata = generateArticolo4Durata(newData.durata.tipo, data, dataScadenza, options);
     
     setFormData(newData);
     onDataChange(newData);
@@ -176,10 +234,8 @@ const ContrattoForm: React.FC<ContrattoFormProps> = ({
   };
 
   const handleImportoTotaleInput = (value: string) => {
-    // Aggiorna solo lo stato di input
     setInputValues(prev => ({ ...prev, importoTotale: value }));
     
-    // Converti in numero solo se valido
     const numValue = value === '' ? 0 : parseInt(value.replace(/[^0-9]/g, ''));
     if (!isNaN(numValue)) {
       const modalita = formData.compenso.sitoWeb?.modalitaPagamento || '50_50';
@@ -201,7 +257,6 @@ const ContrattoForm: React.FC<ContrattoFormProps> = ({
           saldo: rate.saldo
         };
         
-        // Aggiungi secondaRata solo se necessario, altrimenti rimuovila
         if (rate.secondaRata) {
           updatedSitoWeb.secondaRata = rate.secondaRata;
         } else {
@@ -211,7 +266,6 @@ const ContrattoForm: React.FC<ContrattoFormProps> = ({
         newData.compenso.sitoWeb = updatedSitoWeb;
       }
       
-      // Aggiorna automaticamente l'articolo 5
       newData.articolo5Compenso = generateArticolo5Compenso(newData);
       
       setFormData(newData);
@@ -220,16 +274,13 @@ const ContrattoForm: React.FC<ContrattoFormProps> = ({
   };
 
   const handleImportoMensileInput = (value: string) => {
-    // Aggiorna solo lo stato di input
     setInputValues(prev => ({ ...prev, importoMensile: value }));
     
-    // Converti in numero solo se valido
     const numValue = value === '' ? 0 : parseInt(value.replace(/[^0-9]/g, ''));
     if (!isNaN(numValue)) {
       const newData = { ...formData };
       newData.compenso.marketing.importoMensile = numValue;
       
-      // Aggiorna automaticamente l'articolo 5
       newData.articolo5Compenso = generateArticolo5Compenso(newData);
       
       setFormData(newData);
@@ -237,11 +288,11 @@ const ContrattoForm: React.FC<ContrattoFormProps> = ({
     }
   };
 
-  const handleGiornoPagamentoChange = (giorno: number) => {
+  const handleGiornoPagamentoChange = (giorno: string) => {
+    const giornoNum = parseInt(giorno);
     const newData = { ...formData };
-    newData.compenso.marketing.giornoPagamento = giorno;
+    newData.compenso.marketing.giornoPagamento = giornoNum;
     
-    // Aggiorna automaticamente l'articolo 5
     newData.articolo5Compenso = generateArticolo5Compenso(newData);
     
     setFormData(newData);
@@ -268,7 +319,6 @@ const ContrattoForm: React.FC<ContrattoFormProps> = ({
         saldo: rate.saldo
       };
       
-      // Aggiungi secondaRata solo se necessario, altrimenti rimuovila
       if (rate.secondaRata) {
         updatedSitoWeb.secondaRata = rate.secondaRata;
       } else {
@@ -278,547 +328,436 @@ const ContrattoForm: React.FC<ContrattoFormProps> = ({
       newData.compenso.sitoWeb = updatedSitoWeb;
     }
     
-    // Aggiorna automaticamente l'articolo 5
     newData.articolo5Compenso = generateArticolo5Compenso(newData);
     
     setFormData(newData);
     onDataChange(newData);
   };
 
-  const hasSitoWeb = formData.tipologiaServizio === 'sito_marketing_linkbuilding' || formData.tipologiaServizio === 'sito_marketing';
+  const generateAutomaticContent = () => {
+    const newData = { ...formData };
+    newData.articolo2Oggetto = generateArticolo2Oggetto(formData.tipologiaServizio);
+    if (checkHasSitoWeb(formData.tipologiaServizio)) {
+      newData.articolo2SitoWeb = generateArticolo2SitoWeb(formData.tipologiaServizio);
+    }
+    if (checkHasMarketing(formData.tipologiaServizio)) {
+      newData.articolo2Marketing = generateArticolo2Marketing(formData.tipologiaServizio);
+    }
+    if (checkHasLinkbuilding(formData.tipologiaServizio)) {
+      newData.articolo2Linkbuilding = generateArticolo2Linkbuilding();
+    }
+    newData.articolo3Modalita = generateArticolo3Modalita();
+    const options = formData.durata.tipo === 'custom' ? { mesi: formData.durata.customMesi, rinnovo: formData.durata.customRinnovo } : undefined;
+    newData.articolo4Durata = generateArticolo4Durata(formData.durata.tipo, formData.durata.dataDecorrenza, formData.durata.dataScadenza, options);
+    newData.articolo5Compenso = generateArticolo5Compenso(formData);
+    newData.articolo6Proprieta = generateArticolo6Proprieta();
+    newData.articolo7Responsabilita = generateArticolo7Responsabilita();
+    newData.articolo8NormeRinvio = generateArticolo8NormeRinvio();
+    newData.articolo9ForoCompetente = generateArticolo9ForoCompetente();
+    
+    setFormData(newData);
+    onDataChange(newData);
+  };
+
+  const hasSitoWeb = checkHasSitoWeb(formData.tipologiaServizio);
+  const hasMarketing = checkHasMarketing(formData.tipologiaServizio);
 
   return (
-    <div className="contratto-form">
+    <BlockStack gap="500">
+      {/* Banner Modifiche non salvate */}
+      {isModified && (
+        <Banner title="Modifiche non salvate" tone="warning">
+          <p>Ricordati di salvare le modifiche prima di uscire.</p>
+        </Banner>
+      )}
+
       {/* Dati Committente */}
-      <div className="form-section">
-        <h2>
-          <svg className="section-svg-icon" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M12,4A4,4 0 0,1 16,8A4,4 0 0,1 12,12A4,4 0 0,1 8,8A4,4 0 0,1 12,4M12,14C16.42,14 20,15.79 20,18V20H4V18C4,15.79 7.58,14 12,14Z" />
-          </svg>
-          Dati Committente
-        </h2>
-        
-        <div className="form-grid">
-          <div className="form-field">
-            <label>Ragione Sociale *</label>
-            <input
-              type="text"
+      <LegacyCard title="Dati Committente" sectioned>
+        <FormLayout>
+          <FormLayout.Group>
+            <TextField
+              label="Ragione Sociale"
               value={formData.datiCommittente.ragioneSociale}
-              onChange={(e) => handleInputChange('datiCommittente.ragioneSociale', e.target.value)}
-              placeholder="Inserisci la ragione sociale"
+              onChange={(val) => handleInputChange('datiCommittente.ragioneSociale', val)}
+              autoComplete="organization"
             />
-          </div>
-          
-          <div className="form-field">
-            <label>Città *</label>
-            <input
-              type="text"
-              value={formData.datiCommittente.citta}
-              onChange={(e) => handleInputChange('datiCommittente.citta', e.target.value)}
-              placeholder="Città"
+            <TextField
+              label="C.F./P.IVA"
+              value={formData.datiCommittente.cfPiva}
+              onChange={(val) => handleInputChange('datiCommittente.cfPiva', val)}
+              autoComplete="off"
             />
-          </div>
+          </FormLayout.Group>
           
-          <div className="form-field">
-            <label>Via *</label>
-            <input
-              type="text"
+          <FormLayout.Group>
+            <TextField
+              label="Via"
               value={formData.datiCommittente.via}
-              onChange={(e) => handleInputChange('datiCommittente.via', e.target.value)}
-              placeholder="Via"
+              onChange={(val) => handleInputChange('datiCommittente.via', val)}
+              autoComplete="address-line1"
             />
-          </div>
-          
-          <div className="form-field">
-            <label>Numero *</label>
-            <input
-              type="text"
+            <TextField
+              label="Numero"
               value={formData.datiCommittente.numero}
-              onChange={(e) => handleInputChange('datiCommittente.numero', e.target.value)}
-              placeholder="n."
+              onChange={(val) => handleInputChange('datiCommittente.numero', val)}
+              autoComplete="address-line2"
             />
-          </div>
-          
-          <div className="form-field">
-            <label>CAP *</label>
-            <input
-              type="text"
+          </FormLayout.Group>
+
+          <FormLayout.Group>
+            <TextField
+              label="Città"
+              value={formData.datiCommittente.citta}
+              onChange={(val) => handleInputChange('datiCommittente.citta', val)}
+              autoComplete="address-level2"
+            />
+            <TextField
+              label="CAP"
               value={formData.datiCommittente.cap}
-              onChange={(e) => handleInputChange('datiCommittente.cap', e.target.value)}
-              placeholder="CAP"
+              onChange={(val) => handleInputChange('datiCommittente.cap', val)}
+              autoComplete="postal-code"
             />
-          </div>
-          
-          <div className="form-field">
-            <label>E-mail *</label>
-            <input
+          </FormLayout.Group>
+
+          <FormLayout.Group>
+            <TextField
+              label="E-mail"
               type="email"
               value={formData.datiCommittente.email}
-              onChange={(e) => handleInputChange('datiCommittente.email', e.target.value)}
-              placeholder="email@esempio.com"
+              onChange={(val) => handleInputChange('datiCommittente.email', val)}
+              autoComplete="email"
             />
-          </div>
-          
-          <div className="form-field">
-            <label>PEC</label>
-            <input
+            <TextField
+              label="PEC"
               type="email"
               value={formData.datiCommittente.pec}
-              onChange={(e) => handleInputChange('datiCommittente.pec', e.target.value)}
-              placeholder="pec@esempio.com"
+              onChange={(val) => handleInputChange('datiCommittente.pec', val)}
+              autoComplete="email"
             />
-          </div>
-          
-          <div className="form-field">
-            <label>C.F./P.IVA *</label>
-            <input
-              type="text"
-              value={formData.datiCommittente.cfPiva}
-              onChange={(e) => handleInputChange('datiCommittente.cfPiva', e.target.value)}
-              placeholder="Codice Fiscale o P.IVA"
-            />
-          </div>
-          
-          <div className="form-field">
-            <label>Legale Rappresentante *</label>
-            <input
-              type="text"
-              value={formData.datiCommittente.legaleRappresentante}
-              onChange={(e) => handleInputChange('datiCommittente.legaleRappresentante', e.target.value)}
-              placeholder="Nome e Cognome"
-            />
-          </div>
-        </div>
-      </div>
+          </FormLayout.Group>
 
-      {/* Tipologia Servizio */}
-      <div className="form-section">
-        <h2>
-          <svg className="section-svg-icon" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z" />
-          </svg>
-          Tipologia Servizio
-        </h2>
-        
-        <div className="form-field">
-          <label>Seleziona il tipo di servizio *</label>
-          <select
+          <TextField
+            label="Legale Rappresentante"
+            value={formData.datiCommittente.legaleRappresentante}
+            onChange={(val) => handleInputChange('datiCommittente.legaleRappresentante', val)}
+            autoComplete="name"
+          />
+        </FormLayout>
+      </LegacyCard>
+
+      {/* Tipologia e Durata */}
+      <LegacyCard title="Dettagli Contratto" sectioned>
+        <FormLayout>
+          <Select
+            label="Tipologia Servizio"
+            options={[
+              {label: 'Sito web + Marketing + Linkbuilding', value: 'sito_marketing_linkbuilding'},
+              {label: 'Sito web + Marketing', value: 'sito_marketing'},
+              {label: 'Marketing (content + adv)', value: 'marketing_content_adv'},
+              {label: 'Marketing (adv)', value: 'marketing_adv'},
+              {label: 'Solo Sito Web', value: 'solo_sito'},
+              {label: 'Marketing (solo content)', value: 'marketing_content'},
+            ]}
             value={formData.tipologiaServizio}
-            onChange={(e) => handleInputChange('tipologiaServizio', e.target.value)}
-          >
-            <option value="sito_marketing_linkbuilding">Sito web + Marketing + Linkbuilding</option>
-            <option value="sito_marketing">Sito web + Marketing</option>
-            <option value="marketing_content_adv">Marketing (content + adv)</option>
-            <option value="marketing_adv">Marketing (adv)</option>
-          </select>
-        </div>
-      </div>
+            onChange={(val) => handleInputChange('tipologiaServizio', val)}
+          />
 
-      {/* Durata Contratto */}
-      <div className="form-section">
-        <h2>
-          <svg className="section-svg-icon" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M19,3H18V1H16V3H8V1H6V3H5A2,2 0 0,0 3,5V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19V5A2,2 0 0,0 19,3M19,19H5V8H19V19Z" />
-          </svg>
-          Durata Contratto
-        </h2>
-        
-        <div className="form-grid">
-          <div className="form-field">
-            <label>Tipo Durata *</label>
-            <select
+          <Divider />
+          <Text as="h3" variant="headingSm">Durata</Text>
+
+          <FormLayout.Group>
+            <Select
+              label="Tipo Durata"
+              options={[
+                {label: '12 mesi senza tacito rinnovo', value: '12_mesi_senza_rinnovo'},
+                {label: '12 mesi con tacito rinnovo', value: '12_mesi_con_rinnovo'},
+                {label: '6+6 mesi senza tacito rinnovo', value: '6_6_mesi_senza_rinnovo'},
+                {label: '3 mesi con tacito rinnovo', value: '3_mesi_con_rinnovo'},
+                {label: '3 mesi senza tacito rinnovo', value: '3_mesi_senza_rinnovo'},
+                {label: 'Spot (Una Tantum)', value: 'spot_una_tantum'},
+                {label: 'Personalizzata', value: 'custom'},
+              ]}
               value={formData.durata?.tipo || '12_mesi_senza_rinnovo'}
-              onChange={(e) => {
-                e.preventDefault();
-                handleDurataChange(e.target.value);
-              }}
-            >
-              <option value="12_mesi_senza_rinnovo">12 mesi senza tacito rinnovo</option>
-              <option value="12_mesi_con_rinnovo">12 mesi con tacito rinnovo</option>
-              <option value="6_6_mesi_senza_rinnovo">6+6 mesi senza tacito rinnovo</option>
-              <option value="3_mesi_con_rinnovo">3 mesi con tacito rinnovo</option>
-              <option value="3_mesi_senza_rinnovo">3 mesi senza tacito rinnovo</option>
-            </select>
-          </div>
-          
-          <div className="form-field">
-            <label>Data Decorrenza *</label>
-            <input
-              type="date"
-              id="data-decorrenza-input"
-              value={formData.durata?.dataDecorrenza || ''}
-              onChange={(e) => handleDataDecorrenzaChange(e.target.value)}
+              onChange={handleDurataChange}
             />
-          </div>
-          
-          <div className="form-field">
-            <label>Data Scadenza</label>
-            <input
+            <TextField
+              label="Data Decorrenza"
+              type="date"
+              value={formData.durata?.dataDecorrenza || ''}
+              onChange={handleDataDecorrenzaChange}
+              autoComplete="off"
+            />
+            <TextField
+              label="Data Scadenza"
               type="date"
               value={formData.durata?.dataScadenza || ''}
               readOnly
-              className="readonly-field"
+              autoComplete="off"
+              helpText="Calcolata automaticamente"
             />
-            <small>Calcolata automaticamente</small>
-          </div>
-        </div>
-      </div>
+          </FormLayout.Group>
 
-      {/* Compenso */}
-      <div className="form-section">
-        <h2>
-          <svg className="section-svg-icon" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M7,15H9C9,16.08 10.37,17 12,17C13.63,17 15,16.08 15,15C15,13.9 13.96,13.5 11.76,12.97C9.64,12.44 7,11.78 7,9C7,7.21 8.47,5.69 10.5,5.18V3H13.5V5.18C15.53,5.69 17,7.21 17,9H15C15,7.92 13.63,7 12,7C10.37,7 9,7.92 9,9C9,10.1 10.04,10.5 12.24,11.03C14.36,11.56 17,12.22 17,15C17,16.79 15.53,18.31 13.5,18.82V21H10.5V18.82C8.47,18.31 7,16.79 7,15Z" />
-          </svg>
-          Compenso e Modalità di Pagamento
-        </h2>
-        
-        {hasSitoWeb && (
-          <div className="compenso-sito-web">
-            <h3>Sito Web</h3>
-            <div className="form-grid">
-              <div className="form-field">
-                <label>Importo Totale (€) *</label>
-                <input
-                  type="text"
-                  value={inputValues.importoTotale}
-                  onChange={(e) => handleImportoTotaleInput(e.target.value)}
-                  placeholder="Inserisci importo (es: 5000)"
-                />
-              </div>
-              
-              <div className="form-field">
-                <label>Modalità Pagamento *</label>
-                <select
-                  value={formData.compenso.sitoWeb?.modalitaPagamento || '50_50'}
-                  onChange={(e) => handleModalitaPagamentoChange(e.target.value)}
-                >
-                  <option value="50_50">50% acconto + 50% a consegna</option>
-                  <option value="40_30_30">40% acconto + 30% a 30gg + 30% a consegna</option>
-                </select>
-              </div>
-              
-              <div className="form-field">
-                <label>Acconto (€)</label>
-                <input
-                  type="text"
-                  value={formData.compenso.sitoWeb?.acconto ? formatCurrencyWithWords(formData.compenso.sitoWeb.acconto) : '0 € (zero/00)'}
-                  readOnly
-                  className="readonly-field"
-                />
-              </div>
-              
-              {formData.compenso.sitoWeb?.modalitaPagamento === '40_30_30' && (
-                <div className="form-field">
-                  <label>Seconda Rate (€)</label>
-                  <input
-                    type="text"
-                    value={formData.compenso.sitoWeb?.secondaRata ? formatCurrencyWithWords(formData.compenso.sitoWeb.secondaRata) : '0 € (zero/00)'}
-                    readOnly
-                    className="readonly-field"
+          {formData.durata?.tipo === 'custom' && (
+            <Box paddingBlockStart="200">
+              <InlineStack gap="400" align="start">
+                <div style={{width: '150px'}}>
+                  <TextField
+                    label="Numero Mesi"
+                    type="number"
+                    value={formData.durata.customMesi?.toString() || ''}
+                    onChange={(val) => handleCustomDurataChange('mesi', val)}
+                    autoComplete="off"
                   />
                 </div>
-              )}
-              
-              <div className="form-field">
-                <label>Saldo (€)</label>
-                <input
-                  type="text"
-                  value={formData.compenso.sitoWeb?.saldo ? formatCurrencyWithWords(formData.compenso.sitoWeb.saldo) : '0 € (zero/00)'}
-                  readOnly
-                  className="readonly-field"
-                />
-              </div>
-            </div>
-          </div>
-        )}
-        
-        <div className="compenso-marketing">
-          <h3>Marketing</h3>
-          <div className="form-grid">
-            <div className="form-field">
-              <label>Importo Mensile (€) *</label>
-              <input
-                type="text"
-                value={inputValues.importoMensile}
-                onChange={(e) => handleImportoMensileInput(e.target.value)}
-                placeholder="Inserisci importo mensile (es: 1200)"
-              />
-            </div>
-            
-            <div className="form-field">
-              <label>Giorno Pagamento *</label>
-              <select
-                value={formData.compenso.marketing.giornoPagamento || 1}
-                onChange={(e) => handleGiornoPagamentoChange(parseInt(e.target.value))}
-              >
-                {Array.from({ length: 31 }, (_, i) => (
-                  <option key={i + 1} value={i + 1}>{i + 1}</option>
-                ))}
-              </select>
-            </div>
-          </div>
-        </div>
-      </div>
+                <div style={{marginTop: '28px'}}>
+                  <Checkbox
+                    label="Tacito Rinnovo"
+                    checked={formData.durata.customRinnovo || false}
+                    onChange={(val) => handleCustomDurataChange('rinnovo', val)}
+                  />
+                </div>
+              </InlineStack>
+            </Box>
+          )}
+        </FormLayout>
+      </LegacyCard>
+
+      {/* Compenso */}
+      <LegacyCard title="Compenso e Pagamenti" sectioned>
+        <FormLayout>
+          {hasSitoWeb && (
+            <Box>
+              <Text as="h3" variant="headingSm" fontWeight="bold">Sito Web</Text>
+              <Box paddingBlockStart="200">
+                <FormLayout.Group>
+                  <TextField
+                    label="Importo Totale (€)"
+                    value={inputValues.importoTotale}
+                    onChange={handleImportoTotaleInput}
+                    autoComplete="off"
+                    prefix="€"
+                  />
+                  <Select
+                    label="Modalità Pagamento"
+                    options={[
+                      {label: '50% acconto + 50% a consegna', value: '50_50'},
+                      {label: '40% acconto + 30% a 30gg + 30% a consegna', value: '40_30_30'},
+                    ]}
+                    value={formData.compenso.sitoWeb?.modalitaPagamento || '50_50'}
+                    onChange={handleModalitaPagamentoChange}
+                  />
+                </FormLayout.Group>
+                
+                <Grid>
+                  <Grid.Cell columnSpan={{xs: 6, sm: 3, md: 3, lg: 3, xl: 3}}>
+                    <TextField
+                      label="Acconto"
+                      value={formData.compenso.sitoWeb?.acconto ? formatCurrencyWithWords(formData.compenso.sitoWeb.acconto) : '0 €'}
+                      readOnly
+                      autoComplete="off"
+                    />
+                  </Grid.Cell>
+                  
+                  {formData.compenso.sitoWeb?.modalitaPagamento === '40_30_30' && (
+                    <Grid.Cell columnSpan={{xs: 6, sm: 3, md: 3, lg: 3, xl: 3}}>
+                      <TextField
+                        label="Seconda Rata"
+                        value={formData.compenso.sitoWeb?.secondaRata ? formatCurrencyWithWords(formData.compenso.sitoWeb.secondaRata) : '0 €'}
+                        readOnly
+                        autoComplete="off"
+                      />
+                    </Grid.Cell>
+                  )}
+                  
+                  <Grid.Cell columnSpan={{xs: 6, sm: 3, md: 3, lg: 3, xl: 3}}>
+                    <TextField
+                      label="Saldo"
+                      value={formData.compenso.sitoWeb?.saldo ? formatCurrencyWithWords(formData.compenso.sitoWeb.saldo) : '0 €'}
+                      readOnly
+                      autoComplete="off"
+                    />
+                  </Grid.Cell>
+                </Grid>
+              </Box>
+              {hasMarketing && <Box paddingBlockStart="400"><Divider /></Box>}
+            </Box>
+          )}
+
+          {hasMarketing && (
+            <Box paddingBlockStart={hasSitoWeb ? "400" : "0"}>
+              <Text as="h3" variant="headingSm" fontWeight="bold">Marketing</Text>
+              <Box paddingBlockStart="200">
+                <FormLayout.Group>
+                  <TextField
+                    label="Importo Mensile (€)"
+                    value={inputValues.importoMensile}
+                    onChange={handleImportoMensileInput}
+                    autoComplete="off"
+                    prefix="€"
+                  />
+                  <Select
+                    label="Giorno Pagamento"
+                    options={Array.from({ length: 31 }, (_, i) => ({
+                      label: (i + 1).toString(),
+                      value: (i + 1).toString()
+                    }))}
+                    value={(formData.compenso.marketing.giornoPagamento || 1).toString()}
+                    onChange={handleGiornoPagamentoChange}
+                  />
+                </FormLayout.Group>
+              </Box>
+            </Box>
+          )}
+        </FormLayout>
+      </LegacyCard>
 
       {/* Note */}
-      <div className="form-section">
-        <h2>
-          <svg className="section-svg-icon" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z" />
-          </svg>
-          Note Aggiuntive
-        </h2>
-        
-        <div className="form-field">
-          <label>Note</label>
-          <textarea
-            value={formData.note}
-            onChange={(e) => handleInputChange('note', e.target.value)}
-            placeholder="Inserisci eventuali note particolari..."
-            rows={4}
-          />
-        </div>
-      </div>
+      <LegacyCard title="Note Aggiuntive" sectioned>
+        <TextField
+          label="Note"
+          value={formData.note}
+          onChange={(val) => handleInputChange('note', val)}
+          multiline={4}
+          autoComplete="off"
+          placeholder="Inserisci eventuali note particolari..."
+        />
+      </LegacyCard>
 
-      {/* Articoli Dinamici */}
-      <div className="form-section articoli-section">
-        <h2>
-          <svg className="section-svg-icon" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z" />
-          </svg>
-          Articoli del Contratto
-        </h2>
-        <p className="section-description">
-          I contenuti degli articoli vengono generati automaticamente in base ai servizi selezionati. 
-          Puoi modificare i testi qui sotto per personalizzare il contratto.
-        </p>
-        
-        <div className="articoli-actions">
-          <button
-            type="button"
-            onClick={() => {
-              const newData = { ...formData };
-              newData.articolo2Oggetto = generateArticolo2Oggetto(formData.tipologiaServizio);
-              if (checkHasSitoWeb(formData.tipologiaServizio)) {
-                newData.articolo2SitoWeb = generateArticolo2SitoWeb();
-              }
-              if (checkHasMarketing()) {
-                newData.articolo2Marketing = generateArticolo2Marketing(formData.tipologiaServizio);
-              }
-              if (checkHasLinkbuilding(formData.tipologiaServizio)) {
-                newData.articolo2Linkbuilding = generateArticolo2Linkbuilding();
-              }
-              newData.articolo3Modalita = generateArticolo3Modalita();
-              newData.articolo4Durata = generateArticolo4Durata(formData.durata.tipo, formData.durata.dataDecorrenza, formData.durata.dataScadenza);
-              newData.articolo5Compenso = generateArticolo5Compenso(formData);
-              newData.articolo6Proprieta = generateArticolo6Proprieta();
-              newData.articolo7Responsabilita = generateArticolo7Responsabilita();
-              newData.articolo8NormeRinvio = generateArticolo8NormeRinvio();
-              newData.articolo9ForoCompetente = generateArticolo9ForoCompetente();
-              
-              setFormData(newData);
-              onDataChange(newData);
-            }}
-            className="generate-button"
-          >
-            <svg viewBox="0 0 24 24" fill="currentColor">
-              <path d="M12,2A10,10 0 0,1 22,12A10,10 0 0,1 12,22A10,10 0 0,1 2,12A10,10 0 0,1 12,2M12,4A8,8 0 0,0 4,12A8,8 0 0,0 12,20A8,8 0 0,0 20,12A8,8 0 0,0 12,4M11,16.5L18,9.5L16.5,8L11,13.5L7.5,10L6,11.5L11,16.5Z" />
-            </svg>
-            Genera Contenuti Automatici
-          </button>
-        </div>
+      {/* Articoli */}
+      <LegacyCard title="Articoli del Contratto" sectioned>
+        <Box paddingBlockEnd="400">
+          <Banner title="Generazione Automatica" tone="info">
+            <p>I contenuti degli articoli vengono generati in base ai servizi selezionati. Puoi modificarli manualmente qui sotto.</p>
+            <Box paddingBlockStart="200">
+              <Button icon={MagicIcon} onClick={generateAutomaticContent}>Rigenera Contenuti</Button>
+            </Box>
+          </Banner>
+        </Box>
 
-        {/* ART. 2 - OGGETTO DELLA PRESTAZIONE */}
-        <div className="articolo-container">
-          <h3>ART. 2 - OGGETTO DELLA PRESTAZIONE</h3>
-          
-          <div className="articolo-subsection">
-            <h4>2.1 Oggetto</h4>
-            <div className="form-field">
-              <label>Descrizione Oggetto</label>
-              <textarea
+        <FormLayout>
+          <Box>
+            <Text as="h3" variant="headingSm">ART. 2 - OGGETTO</Text>
+            <Box paddingBlockStart="200">
+              <TextField
+                label="2.1 Oggetto"
                 value={formData.articolo2Oggetto || ''}
-                onChange={(e) => handleInputChange('articolo2Oggetto', e.target.value)}
-                placeholder={generateArticolo2Oggetto(formData.tipologiaServizio)}
-                rows={6}
+                onChange={(val) => handleInputChange('articolo2Oggetto', val)}
+                multiline={4}
+                autoComplete="off"
               />
-            </div>
-          </div>
+            </Box>
+            
+            {hasSitoWeb && (
+              <Box paddingBlockStart="200">
+                <TextField
+                  label="2.2 Sito Web"
+                  value={formData.articolo2SitoWeb || ''}
+                  onChange={(val) => handleInputChange('articolo2SitoWeb', val)}
+                  multiline={6}
+                  autoComplete="off"
+                />
+              </Box>
+            )}
 
-          {/* 2.2 Sito Web - Solo se presente */}
-          {checkHasSitoWeb(formData.tipologiaServizio) && (
-            <div className="articolo-subsection">
-              <h4>2.2 Sito Web</h4>
-              <div className="form-field">
-                <label>Descrizione Sito Web</label>
-              <textarea
-                value={formData.articolo2SitoWeb || ''}
-                onChange={(e) => handleInputChange('articolo2SitoWeb', e.target.value)}
-                placeholder={generateArticolo2SitoWeb()}
-                rows={12}
-              />
-              </div>
-            </div>
-          )}
+            {hasMarketing && (
+              <Box paddingBlockStart="200">
+                <TextField
+                  label="2.3 Marketing"
+                  value={formData.articolo2Marketing || ''}
+                  onChange={(val) => handleInputChange('articolo2Marketing', val)}
+                  multiline={6}
+                  autoComplete="off"
+                />
+              </Box>
+            )}
 
-          {/* 2.3 Marketing - Sempre presente */}
-          {checkHasMarketing() && (
-            <div className="articolo-subsection">
-              <h4>2.3 Marketing</h4>
-              <div className="form-field">
-                <label>Descrizione Marketing</label>
-              <textarea
-                value={formData.articolo2Marketing || ''}
-                onChange={(e) => handleInputChange('articolo2Marketing', e.target.value)}
-                placeholder={generateArticolo2Marketing(formData.tipologiaServizio)}
-                rows={10}
-              />
-              </div>
-            </div>
-          )}
+            {checkHasLinkbuilding(formData.tipologiaServizio) && (
+              <Box paddingBlockStart="200">
+                <TextField
+                  label="2.4 Linkbuilding"
+                  value={formData.articolo2Linkbuilding || ''}
+                  onChange={(val) => handleInputChange('articolo2Linkbuilding', val)}
+                  multiline={4}
+                  autoComplete="off"
+                />
+              </Box>
+            )}
+          </Box>
 
-          {/* 2.4 Linkbuilding - Solo se presente */}
-          {checkHasLinkbuilding(formData.tipologiaServizio) && (
-            <div className="articolo-subsection">
-              <h4>2.4 Linkbuilding</h4>
-              <div className="form-field">
-                <label>Descrizione Linkbuilding</label>
-              <textarea
-                value={formData.articolo2Linkbuilding || ''}
-                onChange={(e) => handleInputChange('articolo2Linkbuilding', e.target.value)}
-                placeholder={generateArticolo2Linkbuilding()}
-                rows={8}
-              />
-              </div>
-            </div>
-          )}
-        </div>
+          <TextField
+            label="ART. 3 - MODALITÀ DI ESECUZIONE"
+            value={formData.articolo3Modalita || ''}
+            onChange={(val) => handleInputChange('articolo3Modalita', val)}
+            multiline={4}
+            autoComplete="off"
+          />
 
-        {/* ART. 3 - MODALITÀ DI ESECUZIONE DELLA PRESTAZIONE PROFESSIONALE */}
-        <div className="articolo-container">
-          <h3>ART. 3 - MODALITÀ DI ESECUZIONE DELLA PRESTAZIONE PROFESSIONALE</h3>
-          <div className="form-field">
-            <label>Descrizione Modalità</label>
-            <textarea
-              value={formData.articolo3Modalita || ''}
-              onChange={(e) => handleInputChange('articolo3Modalita', e.target.value)}
-              placeholder={generateArticolo3Modalita()}
-              rows={6}
-            />
-          </div>
-        </div>
+          <TextField
+            label="ART. 4 - DURATA"
+            value={formData.articolo4Durata || ''}
+            onChange={(val) => handleInputChange('articolo4Durata', val)}
+            multiline={4}
+            autoComplete="off"
+          />
 
-        {/* ART. 4 - DURATA DEL CONTRATTO */}
-        <div className="articolo-container">
-          <h3>ART. 4 - DURATA DEL CONTRATTO</h3>
-          <div className="form-field">
-            <label>Descrizione Durata</label>
-            <textarea
-              value={formData.articolo4Durata || ''}
-              onChange={(e) => handleInputChange('articolo4Durata', e.target.value)}
-              placeholder={generateArticolo4Durata(formData.durata.tipo, formData.durata.dataDecorrenza, formData.durata.dataScadenza)}
-              rows={8}
-            />
-          </div>
-        </div>
+          <TextField
+            label="ART. 5 - COMPENSO"
+            value={formData.articolo5Compenso || ''}
+            onChange={(val) => handleInputChange('articolo5Compenso', val)}
+            multiline={4}
+            autoComplete="off"
+          />
 
-        {/* ART. 5 - COMPENSO E MODALITÀ DI PAGAMENTO */}
-        <div className="articolo-container">
-          <h3>ART. 5 - COMPENSO E MODALITÀ DI PAGAMENTO</h3>
-          <div className="form-field">
-            <label>Descrizione Compenso</label>
-            <textarea
-              value={formData.articolo5Compenso || ''}
-              onChange={(e) => handleInputChange('articolo5Compenso', e.target.value)}
-              placeholder={generateArticolo5Compenso(formData)}
-              rows={8}
-            />
-          </div>
-        </div>
+          <TextField
+            label="ART. 6 - PROPRIETÀ"
+            value={formData.articolo6Proprieta || ''}
+            onChange={(val) => handleInputChange('articolo6Proprieta', val)}
+            multiline={4}
+            autoComplete="off"
+          />
 
-        {/* ART. 6 - PROPRIETÀ E RISERVATEZZA DEI RISULTATI */}
-        <div className="articolo-container">
-          <h3>ART. 6 - PROPRIETÀ E RISERVATEZZA DEI RISULTATI</h3>
-          <div className="form-field">
-            <label>Descrizione Proprietà e Riservatezza</label>
-            <textarea
-              value={formData.articolo6Proprieta || ''}
-              onChange={(e) => handleInputChange('articolo6Proprieta', e.target.value)}
-              placeholder="Articolo 6 - Proprietà e riservatezza dei risultati"
-              rows={6}
-            />
-          </div>
-        </div>
+          <TextField
+            label="ART. 7 - RESPONSABILITÀ"
+            value={formData.articolo7Responsabilita || ''}
+            onChange={(val) => handleInputChange('articolo7Responsabilita', val)}
+            multiline={2}
+            autoComplete="off"
+          />
 
-        {/* ART. 7 - RESPONSABILITÀ */}
-        <div className="articolo-container">
-          <h3>ART. 7 - RESPONSABILITÀ</h3>
-          <div className="form-field">
-            <label>Descrizione Responsabilità</label>
-            <textarea
-              value={formData.articolo7Responsabilita || ''}
-              onChange={(e) => handleInputChange('articolo7Responsabilita', e.target.value)}
-              placeholder="Articolo 7 - Responsabilità"
-              rows={3}
-            />
-          </div>
-        </div>
+          <TextField
+            label="ART. 8 - NORME DI RINVIO"
+            value={formData.articolo8NormeRinvio || ''}
+            onChange={(val) => handleInputChange('articolo8NormeRinvio', val)}
+            multiline={2}
+            autoComplete="off"
+          />
 
-        {/* ART. 8 - NORME DI RINVIO */}
-        <div className="articolo-container">
-          <h3>ART. 8 - NORME DI RINVIO</h3>
-          <div className="form-field">
-            <label>Descrizione Norme di Rinvio</label>
-            <textarea
-              value={formData.articolo8NormeRinvio || ''}
-              onChange={(e) => handleInputChange('articolo8NormeRinvio', e.target.value)}
-              placeholder="Articolo 8 - Norme di rinvio"
-              rows={4}
-            />
-          </div>
-        </div>
+          <TextField
+            label="ART. 9 - FORO COMPETENTE"
+            value={formData.articolo9ForoCompetente || ''}
+            onChange={(val) => handleInputChange('articolo9ForoCompetente', val)}
+            multiline={2}
+            autoComplete="off"
+          />
+        </FormLayout>
+      </LegacyCard>
 
-        {/* ART. 9 - FORO COMPETENTE */}
-        <div className="articolo-container">
-          <h3>ART. 9 - FORO COMPETENTE</h3>
-          <div className="form-field">
-            <label>Descrizione Foro Competente</label>
-            <textarea
-              value={formData.articolo9ForoCompetente || ''}
-              onChange={(e) => handleInputChange('articolo9ForoCompetente', e.target.value)}
-              placeholder="Articolo 9 - Foro competente"
-              rows={2}
-            />
-          </div>
-        </div>
-      </div>
-
-      {/* Form Actions */}
-      <div className="form-actions">
-        <button
-          onClick={onSave}
-          disabled={isSaving}
-          className={`save-button ${isModified ? 'modified' : ''}`}
-        >
-          <svg viewBox="0 0 24 24" fill="currentColor">
-            <path d="M15,9H5V5H15M12,19A3,3 0 0,1 9,16A3,3 0 0,1 12,13A3,3 0 0,1 15,16A3,3 0 0,1 12,19M17,3H5C3.89,3 3,3.9 3,5V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19V7L17,3Z" />
-          </svg>
-          {isSaving ? 'Salvataggio...' : 'Salva Contratto'}
-        </button>
-        
-        <div className="save-info">
-          {isModified && (
-            <div className="modified-indicator">
-              <svg viewBox="0 0 24 24" fill="currentColor">
-                <path d="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4M11,16.5L18,9.5L16.5,8L11,13.5L7.5,10L6,11.5L11,16.5Z" />
-              </svg>
-              Modifiche non salvate
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
+      {/* Action Bar */}
+      <Box paddingBlock="400">
+        <InlineStack align="end" gap="300">
+          <Button 
+            variant="primary" 
+            size="large"
+            icon={SaveIcon} 
+            onClick={onSave} 
+            loading={isSaving}
+            disabled={isSaving}
+          >
+            Salva Contratto
+          </Button>
+        </InlineStack>
+      </Box>
+    </BlockStack>
   );
 };
 

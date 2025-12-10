@@ -4,447 +4,341 @@ import {
   Page,
   Layout,
   LegacyCard,
-  BlockStack,
-  Text,
-  Badge,
-  Button,
-  Grid,
   Banner,
-  Modal,
-  TextField,
-  InlineStack,
-  Box,
   SkeletonPage,
-  Divider,
-  Icon,
-  EmptyState
+  FormLayout,
+  TextField,
+  Select,
+  BlockStack,
+  Box,
+  Toast,
+  Frame
 } from '@shopify/polaris';
-import {
-  DeleteIcon,
-  ClipboardIcon,
-  StoreIcon
-} from '@shopify/polaris-icons';
-import { toast } from 'react-hot-toast';
-import { clientiApi, type Cliente, type MagicLink } from '../services/clientiApi';
-import { shopifyApi, type ShopifyMetrics, type ShopifyTestResult } from '../services/shopifyApi';
+import { SaveIcon, DeleteIcon } from '@shopify/polaris-icons';
+import { clientiApi, type Cliente, type DettagliCliente, type Task } from '../services/clientiApi';
+
+// Import Components
+import ClienteHeader from '../components/clienti/ClienteHeader';
+import ClienteReferente from '../components/clienti/ClienteReferente';
+import ClienteCanali from '../components/clienti/ClienteCanali';
+import ClienteBrand from '../components/clienti/ClienteBrand';
+import ClienteStats from '../components/clienti/ClienteStats';
+import ClienteRecordings from '../components/clienti/ClienteRecordings';
+import ClienteTasks from '../components/clienti/ClienteTasks';
+import ClienteDealHistory from '../components/clienti/ClienteDealHistory';
 
 const ClienteDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   
-  // Stati Dati
   const [cliente, setCliente] = useState<Cliente | null>(null);
+  const [documents, setDocuments] = useState<{ preventivi: any[], contratti: any[] }>({ preventivi: [], contratti: [] });
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  
-  // Stati Shopify
-  const [shopifyConnected, setShopifyConnected] = useState(false);
-  const [shopifyMetrics, setShopifyMetrics] = useState<ShopifyMetrics | null>(null);
-  const [showShopifyModal, setShowShopifyModal] = useState(false);
-  const [shopName, setShopName] = useState('');
-  const [testingConnection, setTestingConnection] = useState(false);
-  const [, setTestResult] = useState<ShopifyTestResult | null>(null); 
-  
-  // Stati Magic Links
-  const [magicLinks, setMagicLinks] = useState<MagicLink[]>([]);
-  const [loadingLinks, setLoadingLinks] = useState(false);
-  const [creatingLink, setCreatingLink] = useState(false);
-  
-  // Stati Cancellazione
-  const [showDeleteModal, setShowDeleteModal] = useState(false);
-  const [deleting, setDeleting] = useState(false);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  // Caricamento Dati Cliente
+  // Default empty details
+  const emptyDettagli: DettagliCliente = {
+    referente: { nome: '', cognome: '', azienda: '', email: '', telefono: '' },
+    canali: [],
+    brand_manual: {},
+    situazione_inizio: { fatturato: 0, spesa_adv: 0 },
+    situazione_attuale: { fatturato: 0, spesa_adv: 0 },
+    registrazioni: [],
+    tasks: [],
+    stato_umore: 'neutrale'
+  };
+
   const loadCliente = useCallback(async () => {
     if (!id) return;
     try {
       setLoading(true);
-      setError(null);
-      const data = await clientiApi.getCliente(id);
+      // Parallellizza le chiamate
+      const [data, docs] = await Promise.all([
+          clientiApi.getCliente(id),
+          clientiApi.getClienteDocuments(id).catch(err => {
+              console.warn("Errore caricamento documenti:", err);
+              return { preventivi: [], contratti: [] };
+          })
+      ]);
+      
+      // Ensure dettagli exists
+      if (!data.dettagli) {
+        data.dettagli = { ...emptyDettagli };
+      } else {
+        // Merge with defaults to avoid undefined errors
+        data.dettagli = {
+            ...emptyDettagli,
+            ...data.dettagli,
+            referente: { ...emptyDettagli.referente, ...(data.dettagli.referente || {}) },
+            situazione_inizio: { ...emptyDettagli.situazione_inizio, ...(data.dettagli.situazione_inizio || {}) },
+            situazione_attuale: { ...emptyDettagli.situazione_attuale, ...(data.dettagli.situazione_attuale || {}) },
+        };
+      }
+
       setCliente(data);
+      setDocuments(docs);
     } catch (err: any) {
       setError(err.message || 'Errore nel caricamento del cliente');
-      toast.error('Impossibile caricare il cliente');
     } finally {
       setLoading(false);
     }
   }, [id]);
 
-  // Caricamento Metriche Shopify
-  const loadShopifyMetrics = useCallback(async () => {
-    if (!id) return;
-    try {
-      const metrics = await shopifyApi.getShopifyMetrics(id);
-      setShopifyMetrics(metrics);
-    } catch (err: any) {
-      console.error('Errore caricamento metriche:', err);
-      if (err.message?.includes('403') || err.message?.includes('Forbidden')) {
-        toast.error('Accesso negato alle metriche Shopify');
-      }
-    }
-  }, [id]);
-
-  // Check Connessione Shopify
-  const checkShopifyConnection = useCallback(async () => {
-    if (!id) return;
-    try {
-      const result = await shopifyApi.testShopifyConnection(id);
-      if (result.connected) {
-        setShopifyConnected(true);
-        setTestResult(result);
-        loadShopifyMetrics();
-      } else {
-        setShopifyConnected(false);
-        setTestResult(result);
-      }
-    } catch (err) {
-      setShopifyConnected(false);
-    }
-  }, [id, loadShopifyMetrics]);
-
-  // Magic Links
-  const loadMagicLinks = useCallback(async () => {
-    if (!id) return;
-    try {
-      setLoadingLinks(true);
-      const links = await clientiApi.getMagicLinks(id);
-      setMagicLinks(links);
-    } catch (err: any) {
-      console.error('Errore caricamento magic links:', err);
-    } finally {
-      setLoadingLinks(false);
-    }
-  }, [id]);
-
   useEffect(() => {
-    if (id) {
       loadCliente();
-      checkShopifyConnection();
-      loadMagicLinks();
-    }
-  }, [id, loadCliente, checkShopifyConnection, loadMagicLinks]);
+  }, [loadCliente]);
 
-  // Gestione Connessione Shopify da URL
-  useEffect(() => {
-    const urlParams = new URLSearchParams(window.location.search);
-    if (urlParams.get('shopify_connected') === 'true') {
-      setShopifyConnected(true);
-      loadShopifyMetrics();
-      window.history.replaceState({}, '', window.location.pathname);
-      toast.success('Shopify connesso con successo!');
+  const handleSave = async () => {
+    if (!cliente || !id) return;
+    try {
+      setSaving(true);
+      await clientiApi.updateCliente(id, cliente);
+      setToastMessage('Cliente salvato con successo');
+    } catch (err: any) {
+      setToastMessage(`Errore salvataggio: ${err.message}`);
+    } finally {
+      setSaving(false);
     }
-  }, []);
-
-  // Azioni
-  const handleConnectShopify = () => {
-    if (!id || !shopName) return;
-    let shop = shopName.trim().toLowerCase();
-    if (shop.endsWith('.myshopify.com')) {
-      shop = shop.replace('.myshopify.com', '');
-    }
-    shop = `${shop}.myshopify.com`;
-    shopifyApi.connectShopify(id, shop);
-    setShowShopifyModal(false);
   };
 
-  const handleTestConnection = async () => {
-    if (!id) return;
-    try {
-      setTestingConnection(true);
-      const result = await shopifyApi.testShopifyConnection(id);
-      setTestResult(result);
-      if (result.connected) {
-        setShopifyConnected(true);
-        loadShopifyMetrics();
-        toast.success('Connessione attiva');
-      } else {
-        setShopifyConnected(false);
-        toast.error('Connessione fallita');
+  const updateDettagli = (key: keyof DettagliCliente, value: any) => {
+    if (!cliente) return;
+    setCliente({
+      ...cliente,
+      dettagli: {
+        ...cliente.dettagli,
+        [key]: value
       }
-    } catch (err: any) {
-      setTestResult({ connected: false, error: err.message });
-      toast.error('Errore test connessione');
-    } finally {
-      setTestingConnection(false);
-    }
+    });
   };
 
-  const handleCreateMagicLink = async () => {
-    if (!id) return;
-    try {
-      setCreatingLink(true);
-      const newLink = await clientiApi.createMagicLink(id);
-      setMagicLinks(prev => [newLink, ...prev]);
-      navigator.clipboard.writeText(newLink.url);
-      toast.success('Link generato e copiato!');
-    } catch (err: any) {
-      toast.error('Errore creazione link');
-    } finally {
-      setCreatingLink(false);
-    }
+  // Handlers for specific sections
+  const handleReferenteChange = (field: string, value: string) => {
+    if (!cliente?.dettagli) return;
+    updateDettagli('referente', { ...cliente.dettagli.referente, [field]: value });
   };
 
-  const handleRevokeLink = async (linkId: string) => {
-    if (!window.confirm('Revocare questo link?')) return;
-    try {
-      await clientiApi.revokeMagicLink(linkId);
-      setMagicLinks(prev => prev.filter(l => l.id !== linkId));
-      toast.success('Link revocato');
-    } catch (err) {
-      toast.error('Errore revoca link');
-    }
+  const handleBrandChange = (field: string, value: string) => {
+    if (!cliente?.dettagli) return;
+    updateDettagli('brand_manual', { ...cliente.dettagli.brand_manual, [field]: value });
   };
 
-  const handleDeleteCliente = async () => {
-    if (!id) return;
-    try {
-      setDeleting(true);
-      await clientiApi.deleteCliente(id);
-      toast.success('Cliente eliminato');
-      navigate('/anagrafica-clienti');
-    } catch (err) {
-      toast.error('Errore eliminazione');
-      setDeleting(false);
-      setShowDeleteModal(false);
-    }
+  const handleAddCanale = () => {
+    if (!cliente?.dettagli) return;
+    const newCanale = { id: Date.now().toString(), url_sito: '', nome_utente: '' };
+    updateDettagli('canali', [...(cliente.dettagli.canali || []), newCanale]);
   };
 
-  // UI Helpers
-  if (loading) return <SkeletonPage primaryAction />;
+  const handleRemoveCanale = (canaleId: string) => {
+    if (!cliente?.dettagli?.canali) return;
+    updateDettagli('canali', cliente.dettagli.canali.filter(c => c.id !== canaleId));
+  };
 
-  if (error || !cliente) {
-    return (
-      <Page>
-        <Banner tone="critical" title="Cliente non trovato">
-          <p>{error || 'Impossibile trovare il cliente specificato.'}</p>
-          <Button onClick={() => navigate('/anagrafica-clienti')}>Torna alla lista</Button>
-        </Banner>
-      </Page>
+  const handleChangeCanale = (canaleId: string, field: string, value: string) => {
+    if (!cliente?.dettagli?.canali) return;
+    const newCanali = cliente.dettagli.canali.map(c => 
+      c.id === canaleId ? { ...c, [field]: value } : c
     );
-  }
+    updateDettagli('canali', newCanali);
+  };
+
+  const handleStatsChange = (type: 'inizio' | 'attuale', field: string, value: any) => {
+    if (!cliente?.dettagli) return;
+    const key = type === 'inizio' ? 'situazione_inizio' : 'situazione_attuale';
+    // ensure sub-object exists
+    const currentStats = cliente.dettagli[key] || {};
+    updateDettagli(key, { ...currentStats, [field]: value });
+  };
+
+  const handleAddRecording = () => {
+    if (!cliente?.dettagli) return;
+    const newRec = { id: Date.now().toString(), data: new Date().toISOString().split('T')[0] };
+    updateDettagli('registrazioni', [...(cliente.dettagli.registrazioni || []), newRec]);
+  };
+
+  const handleChangeRecording = (recId: string, field: string, value: string) => {
+    if (!cliente?.dettagli?.registrazioni) return;
+    const newRecs = cliente.dettagli.registrazioni.map(r => 
+      r.id === recId ? { ...r, [field]: value } : r
+    );
+    updateDettagli('registrazioni', newRecs);
+  };
+
+  // Task Handlers
+  const handleAddTask = (newTask: Task) => {
+    if (!cliente?.dettagli) return;
+    const currentTasks = cliente.dettagli.tasks || [];
+    updateDettagli('tasks', [...currentTasks, newTask]);
+  };
+
+  const handleUpdateTask = (taskId: string, field: keyof Task, value: any) => {
+    if (!cliente?.dettagli?.tasks) return;
+    const newTasks = cliente.dettagli.tasks.map(t => 
+        t.id === taskId ? { ...t, [field]: value } : t
+    );
+    updateDettagli('tasks', newTasks);
+  };
+
+  const handleRemoveTask = (taskId: string) => {
+    if (!cliente?.dettagli?.tasks) return;
+    updateDettagli('tasks', cliente.dettagli.tasks.filter(t => t.id !== taskId));
+  };
+
+
+  // Preparazione dati per la tabella Deal History
+  const dealsHistory = [
+      ...documents.preventivi.map(p => ({
+          id: p.id,
+          data: p.data,
+          tipo: 'Preventivo' as const,
+          numero: p.numero,
+          valore: p.totale || 0
+      })),
+      ...documents.contratti.map(c => ({
+          id: c.id,
+          data: c.data,
+          tipo: 'Contratto' as const,
+          numero: c.numero,
+          valore: c.totale || 0
+      }))
+  ].sort((a, b) => new Date(b.data).getTime() - new Date(a.data).getTime());
+
+  if (loading) return <SkeletonPage primaryAction />;
+  if (error || !cliente) return <Banner tone="critical">{error || 'Cliente non trovato'}</Banner>;
 
   return (
+    <Frame>
     <Page
       title={cliente.nome_azienda}
-      backAction={{ content: 'Clienti', onAction: () => navigate('/anagrafica-clienti') }}
+        backAction={{ content: 'Lista Clienti', onAction: () => navigate('/anagrafica-clienti') }}
+        primaryAction={{
+            content: 'Salva Modifiche',
+            onAction: handleSave,
+            loading: saving,
+            icon: SaveIcon
+        }}
       secondaryActions={[
         {
-          content: 'Elimina Cliente',
-          onAction: () => setShowDeleteModal(true),
+            content: 'Elimina',
           destructive: true,
-          icon: DeleteIcon
+            icon: DeleteIcon,
+            onAction: async () => {
+                if(window.confirm("Sei sicuro?")) {
+                    await clientiApi.deleteCliente(cliente.id);
+                    navigate('/anagrafica-clienti');
+                }
+            }
         }
       ]}
     >
       <Layout>
-        {/* INFORMAZIONI GENERALI */}
+          {/* HEADER SECTION */}
         <Layout.Section>
-          <LegacyCard title="Informazioni Cliente" sectioned>
-            <BlockStack gap="400">
-                <Grid>
-                    <Grid.Cell columnSpan={{xs: 6, sm: 6, md: 4, lg: 6, xl: 6}}>
-                        <BlockStack gap="100">
-                            <Text variant="headingSm" as="h6">Contatti</Text>
-                            <Text variant="bodyMd" as="p">{cliente.contatti?.email || '-'}</Text>
-                            <Text variant="bodyMd" as="p">{cliente.contatti?.telefono || '-'}</Text>
-                        </BlockStack>
-                    </Grid.Cell>
-                    <Grid.Cell columnSpan={{xs: 6, sm: 6, md: 6, lg: 6, xl: 6}}>
-                        <BlockStack gap="100">
-                            <Text variant="headingSm" as="h6">Note</Text>
-                            <Text variant="bodyMd" as="p" tone="subdued">
-                                {cliente.note || 'Nessuna nota presente.'}
-                            </Text>
-                        </BlockStack>
-                    </Grid.Cell>
-                </Grid>
-                <Divider />
-                <Text variant="bodySm" as="p" tone="subdued">
-                    Registrato il {new Date(cliente.created_at).toLocaleDateString()}
-                </Text>
-            </BlockStack>
+            <LegacyCard sectioned>
+              <ClienteHeader 
+                nomeAzienda={cliente.nome_azienda}
+                dataInizio={cliente.dettagli?.data_inizio}
+                dataFine={cliente.dettagli?.data_fine}
+                statoUmore={cliente.dettagli?.stato_umore}
+              />
+              <Box paddingBlockStart="400">
+                <FormLayout>
+                  <FormLayout.Group>
+                    <TextField
+                      label="Data Inizio Rapporto"
+                      type="date"
+                      value={cliente.dettagli?.data_inizio || ''}
+                      onChange={(val) => updateDettagli('data_inizio', val)}
+                      autoComplete="off"
+                    />
+                    <TextField
+                      label="Data Fine Rapporto"
+                      type="date"
+                      value={cliente.dettagli?.data_fine || ''}
+                      onChange={(val) => updateDettagli('data_fine', val)}
+                      autoComplete="off"
+                    />
+                    <Select
+                       label="Stato Umore"
+                       options={[
+                           {label: 'Felice 😃', value: 'felice'},
+                           {label: 'Neutrale 😐', value: 'neutrale'},
+                           {label: 'Triste 😞', value: 'triste'},
+                       ]}
+                       value={cliente.dettagli?.stato_umore || 'neutrale'}
+                       onChange={(val) => updateDettagli('stato_umore', val)}
+                    />
+                  </FormLayout.Group>
+                </FormLayout>
+              </Box>
           </LegacyCard>
         </Layout.Section>
 
-        {/* INTEGRAZIONE SHOPIFY */}
+          {/* MAIN GRID */}
         <Layout.Section>
-          <LegacyCard 
-            title="Shopify Store" 
-            actions={[
-                {
-                    content: testingConnection ? 'Test in corso...' : 'Test Connessione', 
-                    onAction: handleTestConnection, 
-                    disabled: testingConnection
-                }
-            ]}
-          >
-            <LegacyCard.Section>
-                {!shopifyConnected ? (
-                    <Banner tone="warning" title="Shopify non connesso">
-                        <p>Collega lo store Shopify per vedere le metriche e sincronizzare gli ordini.</p>
-                        <Box paddingBlockStart="200">
-                            <Button onClick={() => setShowShopifyModal(true)}>Connetti Ora</Button>
-                        </Box>
-                    </Banner>
-                ) : (
                     <BlockStack gap="400">
-                        <Banner tone="success" title="Connessione Attiva">
-                            <p>Lo store è connesso e sincronizzato.</p>
-                        </Banner>
-                        
-                        {shopifyMetrics && (
-                            <Grid>
-                                <Grid.Cell columnSpan={{xs: 6, sm: 4, md: 4, lg: 4, xl: 4}}>
-                                    <Box background="bg-surface-secondary" padding="400" borderRadius="200">
-                                        <BlockStack gap="200">
-                                            <Text variant="headingSm" as="h6" tone="subdued">Revenue (30gg)</Text>
-                                            <Text variant="headingLg" as="p">
-                                                €{shopifyMetrics.total_revenue.toLocaleString()}
-                                            </Text>
-                                        </BlockStack>
-                                    </Box>
-                                </Grid.Cell>
-                                <Grid.Cell columnSpan={{xs: 6, sm: 4, md: 4, lg: 4, xl: 4}}>
-                                    <Box background="bg-surface-secondary" padding="400" borderRadius="200">
-                                        <BlockStack gap="200">
-                                            <Text variant="headingSm" as="h6" tone="subdued">Ordini</Text>
-                                            <Text variant="headingLg" as="p">
-                                                {shopifyMetrics.total_orders}
-                                            </Text>
-                                        </BlockStack>
-                                    </Box>
-                                </Grid.Cell>
-                                <Grid.Cell columnSpan={{xs: 6, sm: 4, md: 4, lg: 4, xl: 4}}>
-                                    <Box background="bg-surface-secondary" padding="400" borderRadius="200">
-                                        <BlockStack gap="200">
-                                            <Text variant="headingSm" as="h6" tone="subdued">AOV</Text>
-                                            <Text variant="headingLg" as="p">
-                                                €{shopifyMetrics.average_order_value.toFixed(2)}
-                                            </Text>
-                                        </BlockStack>
-                                    </Box>
-                                </Grid.Cell>
-                            </Grid>
-                        )}
-                    </BlockStack>
-                )}
-            </LegacyCard.Section>
-          </LegacyCard>
-        </Layout.Section>
+                <ClienteReferente 
+                    referente={cliente.dettagli?.referente || emptyDettagli.referente!} 
+                    documents={documents}
+                    onChange={handleReferenteChange} 
+                />
+                
+                <ClienteCanali 
+                    canali={cliente.dettagli?.canali || []}
+                    onAdd={handleAddCanale}
+                    onRemove={handleRemoveCanale}
+                    onChange={handleChangeCanale}
+                />
 
-        {/* MAGIC LINKS */}
-        <Layout.Section>
-            <LegacyCard 
-                title="Link Installazione (Magic Links)" 
-                actions={[{
-                    content: creatingLink ? 'Generazione...' : 'Genera Link', 
-                    onAction: handleCreateMagicLink, 
-                    disabled: creatingLink
-                }]}
-            >
-                {loadingLinks ? (
-                    <Box padding="400"><Text as="p" tone="subdued">Caricamento...</Text></Box>
-                ) : magicLinks.length === 0 ? (
-                    <EmptyState
-                        heading="Nessun link generato"
-                        action={{content: 'Genera primo link', onAction: handleCreateMagicLink}}
-                        image=""
-                    >
-                        <p>Genera un link sicuro da inviare al cliente per l'installazione dell'app.</p>
-                    </EmptyState>
-                ) : (
-                    <Box>
-                        {magicLinks.map((link, idx) => (
-                            <Box key={link.id} padding="400" borderBlockStartWidth={idx > 0 ? '025' : '0'} borderColor="border">
-                                <InlineStack align="space-between" blockAlign="center">
-                                    <BlockStack gap="100">
-                                        <InlineStack gap="200">
-                                            <Badge tone={link.status === 'active' ? 'success' : 'critical'}>{link.status}</Badge>
-                                            <Text variant="bodySm" as="span" tone="subdued">
-                                                Scade: {new Date(link.expires_at).toLocaleDateString()}
-                                            </Text>
-                                        </InlineStack>
-                                        <Text variant="bodyMd" as="p" truncate>
-                                            {link.url}
-                                        </Text>
-                                    </BlockStack>
-                                    <InlineStack gap="200">
-                                        <Button 
-                                            icon={ClipboardIcon} 
-                                            onClick={() => {
-                                                navigator.clipboard.writeText(link.url);
-                                                toast.success("Copiato");
-                                            }}
-                                            accessibilityLabel="Copia"
-                                        />
-                                        {link.status === 'active' && (
-                                            <Button 
-                                                icon={DeleteIcon} 
-                                                tone="critical" 
-                                                onClick={() => handleRevokeLink(link.id)}
-                                                accessibilityLabel="Revoca"
-                                            />
-                                        )}
-                                    </InlineStack>
-                                </InlineStack>
-                            </Box>
-                        ))}
-                    </Box>
-                )}
+                <ClienteBrand
+                    brand={cliente.dettagli?.brand_manual || {}}
+                    onChange={handleBrandChange}
+                />
+
+                <ClienteStats
+                    situazioneInizio={cliente.dettagli?.situazione_inizio || { fatturato: 0, spesa_adv: 0 }}
+                    situazioneAttuale={cliente.dettagli?.situazione_attuale || { fatturato: 0, spesa_adv: 0 }}
+                    obiettivo={cliente.dettagli?.obiettivo || ''}
+                    onInizioChange={(f, v) => handleStatsChange('inizio', f as string, v)}
+                    onAttualeChange={(f, v) => handleStatsChange('attuale', f as string, v)}
+                    onObiettivoChange={(val) => updateDettagli('obiettivo', val)}
+                />
+
+                <ClienteRecordings 
+                    registrazioni={cliente.dettagli?.registrazioni || []}
+                    onAdd={handleAddRecording}
+                    onChange={handleChangeRecording}
+                />
+
+                <ClienteTasks 
+                    tasks={cliente.dettagli?.tasks || []}
+                    onAdd={handleAddTask}
+                    onUpdate={handleUpdateTask}
+                    onRemove={handleRemoveTask}
+                />
+
+                <ClienteDealHistory deals={dealsHistory} />
+
+                <LegacyCard title="Note Rapide" sectioned>
+                    <TextField
+                        label="Nota"
+                        value={cliente.dettagli?.note_rapide || ''}
+                        onChange={(val) => updateDettagli('note_rapide', val)}
+                        multiline={4}
+                        autoComplete="off"
+                    />
             </LegacyCard>
+             </BlockStack>
         </Layout.Section>
       </Layout>
 
-      {/* MODAL CONNECT */}
-      <Modal
-        open={showShopifyModal}
-        onClose={() => setShowShopifyModal(false)}
-        title="Connetti Shopify Store"
-        primaryAction={{
-            content: 'Connetti',
-            onAction: handleConnectShopify,
-            disabled: !shopName
-        }}
-        secondaryActions={[{ content: 'Annulla', onAction: () => setShowShopifyModal(false) }]}
-      >
-        <Modal.Section>
-            <BlockStack gap="400">
-                <p>Inserisci il nome del tuo store Shopify (es. <code>mystore.myshopify.com</code>)</p>
-                <TextField
-                    label="Store URL"
-                    value={shopName}
-                    onChange={(val) => setShopName(val)}
-                    autoComplete="off"
-                    placeholder="mystore.myshopify.com"
-                    prefix={<Icon source={StoreIcon} />}
-                />
-            </BlockStack>
-        </Modal.Section>
-      </Modal>
-
-      {/* MODAL DELETE */}
-      <Modal
-        open={showDeleteModal}
-        onClose={() => setShowDeleteModal(false)}
-        title="Elimina Cliente"
-        primaryAction={{
-            content: 'Elimina Definitivamente',
-            onAction: handleDeleteCliente,
-            destructive: true,
-            loading: deleting // Modal actions support loading in recent versions, if not I'll handle in button
-        }}
-        secondaryActions={[{ content: 'Annulla', onAction: () => setShowDeleteModal(false) }]}
-      >
-        <Modal.Section>
-            <Banner tone="critical">
-                <p>
-                    Sei sicuro di voler eliminare <strong>{cliente?.nome_azienda}</strong>? 
-                    Questa azione è irreversibile e cancellerà tutti i dati associati.
-                </p>
-            </Banner>
-        </Modal.Section>
-      </Modal>
+        {toastMessage && (
+            <Toast content={toastMessage} onDismiss={() => setToastMessage(null)} />
+        )}
     </Page>
+    </Frame>
   );
 };
 

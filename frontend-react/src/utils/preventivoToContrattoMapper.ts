@@ -2,12 +2,19 @@ import type { PreventivoData } from '../types/preventivo';
 import type { ContrattoData, ServizioContratto } from '../types/contratto';
 import { 
   generateArticolo2Oggetto, 
+  generateArticolo2SitoWeb,
+  generateArticolo2Marketing,
+  generateArticolo2Linkbuilding,
+  generateArticolo3Modalita,
   generateArticolo4Durata, 
   generateArticolo5Compenso,
   generateArticolo6Proprieta,
   generateArticolo7Responsabilita,
   generateArticolo8NormeRinvio,
-  generateArticolo9ForoCompetente
+  generateArticolo9ForoCompetente,
+  hasSitoWeb as checkHasSitoWeb,
+  hasMarketing as checkHasMarketing,
+  hasLinkbuilding as checkHasLinkbuilding
 } from './contrattoUtils';
 
 // Mappatura servizi preventivo -> servizi contratto
@@ -68,27 +75,45 @@ export function mapServizioPreventivoToContratto(servizioId: string, categoriaId
 }
 
 // Funzione per determinare la tipologia di servizio del contratto
-export function determineContrattoTipologia(servizi: any): 'sito_marketing_linkbuilding' | 'sito_marketing' | 'marketing_content_adv' | 'marketing_adv' {
-  const hasSitoWeb = Object.keys(servizi).some(categoria => 
-    categoria === 'ecommerce' && servizi[categoria] && servizi[categoria].length > 0
+export function determineContrattoTipologia(servizi: any): ContrattoData['tipologiaServizio'] {
+  const ecommerceServices = servizi.ecommerce || [];
+  const hasLinkbuilding = ecommerceServices.includes('linkbuilding');
+  
+  // Rimuoviamo linkbuilding dal check per "sito web puro" per vedere se c'è altro
+  const otherEcommerceServices = ecommerceServices.filter((s: string) => s !== 'linkbuilding');
+  const hasSitoWeb = otherEcommerceServices.length > 0;
+  
+  const marketingCategories = ['emailMarketing', 'videoPost', 'metaAds', 'googleAds', 'seo'];
+  const activeMarketingCategories = marketingCategories.filter(cat => 
+    servizi[cat] && servizi[cat].length > 0
   );
+  const hasMarketing = activeMarketingCategories.length > 0;
   
-  const hasMarketing = Object.keys(servizi).some(categoria => 
-    ['emailMarketing', 'videoPost', 'metaAds', 'googleAds', 'seo'].includes(categoria) && 
-    servizi[categoria] && servizi[categoria].length > 0
-  );
-  
-  const hasLinkbuilding = servizi.ecommerce?.includes('linkbuilding') || false;
-  
-  if (hasSitoWeb && hasMarketing && hasLinkbuilding) {
-    return 'sito_marketing_linkbuilding';
-  } else if (hasSitoWeb && hasMarketing) {
-    return 'sito_marketing';
+  const hasAdv = (servizi.metaAds && servizi.metaAds.length > 0) || (servizi.googleAds && servizi.googleAds.length > 0);
+  const hasContent = (servizi.videoPost && servizi.videoPost.length > 0) || (servizi.emailMarketing && servizi.emailMarketing.length > 0);
+
+  if (hasSitoWeb) {
+    if (hasMarketing) {
+      if (hasLinkbuilding) {
+        return 'sito_marketing_linkbuilding';
+      }
+      return 'sito_marketing';
+    }
+    return 'solo_sito';
   } else if (hasMarketing) {
+    if (hasContent && hasAdv) {
+      return 'marketing_content_adv';
+    } else if (hasContent && !hasAdv) {
+      return 'marketing_content';
+    } else if (!hasContent && hasAdv) {
+      return 'marketing_adv';
+    }
+    // Fallback
     return 'marketing_content_adv';
-  } else {
-    return 'marketing_adv';
   }
+  
+  // Default fallback
+  return 'marketing_adv';
 }
 
 // Funzione per convertire i servizi del preventivo in servizi del contratto
@@ -204,6 +229,23 @@ export function convertPreventivoToContratto(preventivo: PreventivoData): Partia
   
   // Genera gli articoli del contratto
   const articolo2Oggetto = generateArticolo2Oggetto(tipologiaServizio);
+  
+  let articolo2SitoWeb = '';
+  if (checkHasSitoWeb(tipologiaServizio)) {
+    articolo2SitoWeb = generateArticolo2SitoWeb(tipologiaServizio);
+  }
+
+  let articolo2Marketing = '';
+  if (checkHasMarketing(tipologiaServizio)) {
+    articolo2Marketing = generateArticolo2Marketing(tipologiaServizio);
+  }
+
+  let articolo2Linkbuilding = '';
+  if (checkHasLinkbuilding(tipologiaServizio)) {
+    articolo2Linkbuilding = generateArticolo2Linkbuilding();
+  }
+
+  const articolo3Modalita = generateArticolo3Modalita();
   const articolo4Durata = generateArticolo4Durata('12_mesi_con_rinnovo', new Date().toISOString().split('T')[0], new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]);
   
   // Crea un oggetto temporaneo per generare l'articolo 5
@@ -241,6 +283,10 @@ export function convertPreventivoToContratto(preventivo: PreventivoData): Partia
     note: `Contratto generato automaticamente da preventivo ${preventivo.numero}`,
     // Articoli del contratto
     articolo2Oggetto,
+    articolo2SitoWeb,
+    articolo2Marketing,
+    articolo2Linkbuilding,
+    articolo3Modalita,
     articolo4Durata,
     articolo5Compenso,
     articolo6Proprieta,

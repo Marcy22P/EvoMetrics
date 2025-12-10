@@ -2,7 +2,7 @@
 Clienti Service - Microservizio per gestione clienti e magic links
 """
 
-from fastapi import FastAPI, HTTPException, status, Depends, Request
+from fastapi import FastAPI, HTTPException, status, Depends, Request, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Dict, Any, Optional
 import os
@@ -15,6 +15,13 @@ from datetime import datetime, timedelta
 from jose import JWTError, jwt
 from contextlib import asynccontextmanager
 import httpx
+import re
+import io
+
+try:
+    from pypdf import PdfReader
+except ImportError:
+    PdfReader = None
 
 from database import database, init_database, close_database, clienti_table, magic_links_table
 from models import (
@@ -219,32 +226,17 @@ def serialize_cliente(row: Dict[str, Any]) -> Dict[str, Any]:
     cliente_dict = dict(row)
     
     # Parsifica campi JSON
-    if cliente_dict.get("contatti"):
-        if isinstance(cliente_dict["contatti"], str):
-            try:
-                cliente_dict["contatti"] = json.loads(cliente_dict["contatti"])
-            except:
-                cliente_dict["contatti"] = {}
-        elif not cliente_dict["contatti"]:
-            cliente_dict["contatti"] = {}
-    
-    if cliente_dict.get("servizi_attivi"):
-        if isinstance(cliente_dict["servizi_attivi"], str):
-            try:
-                cliente_dict["servizi_attivi"] = json.loads(cliente_dict["servizi_attivi"])
-            except:
-                cliente_dict["servizi_attivi"] = []
-        elif not cliente_dict["servizi_attivi"]:
-            cliente_dict["servizi_attivi"] = []
-    
-    if cliente_dict.get("integrazioni"):
-        if isinstance(cliente_dict["integrazioni"], str):
-            try:
-                cliente_dict["integrazioni"] = json.loads(cliente_dict["integrazioni"])
-            except:
-                cliente_dict["integrazioni"] = {}
-        elif not cliente_dict["integrazioni"]:
-            cliente_dict["integrazioni"] = {}
+    for field in ["contatti", "servizi_attivi", "integrazioni", "dettagli"]:
+        if cliente_dict.get(field):
+            if isinstance(cliente_dict[field], str):
+                try:
+                    cliente_dict[field] = json.loads(cliente_dict[field])
+                except:
+                    cliente_dict[field] = {} if field != "servizi_attivi" else []
+            elif not cliente_dict[field]:
+                 cliente_dict[field] = {} if field != "servizi_attivi" else []
+        else:
+             cliente_dict[field] = {} if field != "servizi_attivi" else []
     
     # Converti datetime in ISO string
     for field in ['created_at', 'updated_at']:
@@ -283,6 +275,11 @@ async def create_cliente(
         cliente_id = str(uuid.uuid4())
         now = datetime.now()
         
+        # Serialize Pydantic models to dict, then JSON
+        dettagli_json = None
+        if cliente_data.dettagli:
+             dettagli_json = cliente_data.dettagli.model_dump_json() # Pydantic v2
+        
         await database.execute(
             clienti_table.insert().values(
                 id=cliente_id,
@@ -293,6 +290,7 @@ async def create_cliente(
                 note=cliente_data.note,
                 source=cliente_data.source or "manual",
                 source_id=cliente_data.source_id,
+                dettagli=dettagli_json,
                 created_at=now,
                 updated_at=now
             )
@@ -315,6 +313,56 @@ async def get_cliente(
         if not cliente:
             raise HTTPException(status_code=404, detail="Cliente non trovato")
         return serialize_cliente(dict(cliente))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Errore: {str(e)}")
+
+
+@app.put("/api/clienti/{cliente_id}", response_model=Dict[str, Any])
+async def update_cliente(
+    cliente_id: str,
+    cliente_data: ClienteData,
+    current_user: Dict[str, Any] = Depends(check_clienti_update)
+):
+    """Aggiorna un cliente esistente"""
+    try:
+        # Verifica esistenza
+        existing = await database.fetch_one(
+            clienti_table.select().where(clienti_table.c.id == cliente_id)
+        )
+        if not existing:
+            raise HTTPException(status_code=404, detail="Cliente non trovato")
+            
+        now = datetime.now()
+        
+        dettagli_json = None
+        if cliente_data.dettagli:
+             dettagli_json = cliente_data.dettagli.model_dump_json()
+
+        values = {
+            "nome_azienda": cliente_data.nome_azienda,
+            "contatti": json.dumps(cliente_data.contatti) if cliente_data.contatti else None,
+            "servizi_attivi": json.dumps(cliente_data.servizi_attivi) if cliente_data.servizi_attivi else None,
+            "integrazioni": json.dumps(cliente_data.integrazioni) if cliente_data.integrazioni else None,
+            "note": cliente_data.note,
+            "updated_at": now
+        }
+        
+        if dettagli_json:
+            values["dettagli"] = dettagli_json
+            
+        if cliente_data.source:
+             values["source"] = cliente_data.source
+        if cliente_data.source_id:
+             values["source_id"] = cliente_data.source_id
+
+        await database.execute(
+            clienti_table.update()
+            .where(clienti_table.c.id == cliente_id)
+            .values(**values)
+        )
+        return {"id": cliente_id, "status": "updated"}
     except HTTPException:
         raise
     except Exception as e:
@@ -384,13 +432,8 @@ async def get_import_sources(
             
             for prev in preventivi_list:
                 prev_id = prev.get("id")
-                # Verifica se già importato e se ha stato valido (es. ACCETTATO)
-                # Per ora prendiamo tutti, filtro stato lato preventivi se necessario
                 if prev_id and prev_id not in source_ids_importati:
-                    # Usa colonne dedicate se disponibili (migrazione DB)
                     cliente_nome = prev.get("nome_cliente") or prev.get("cliente", "")
-                    
-                    # Fallback: cerca in client_info
                     if not cliente_nome:
                         client_info = prev.get("client_info") or {}
                         if isinstance(client_info, str):
@@ -417,10 +460,8 @@ async def get_import_sources(
             for contr in contratti_list:
                 contr_id = contr.get("id")
                 if contr_id and contr_id not in source_ids_importati:
-                    # Usa colonne dedicate se disponibili (migrazione DB)
                     ragione_sociale = contr.get("nome_cliente")
                     
-                    # Recupero e parsifico dati_committente per fallback e altri campi
                     dati_committente = contr.get("dati_committente", {})
                     if isinstance(dati_committente, str):
                         try: dati_committente = json.loads(dati_committente)
@@ -496,20 +537,16 @@ async def import_cliente(
             if not nome_azienda:
                 raise HTTPException(status_code=400, detail="Preventivo senza nome cliente")
             
-            # Logica estrazione servizi (da migliorare con parsing strutturato se possibile)
             servizi_preventivo = preventivo.get("servizi", [])
             if isinstance(servizi_preventivo, str):
-                try:
-                    servizi_preventivo = json.loads(servizi_preventivo)
-                except:
-                    servizi_preventivo = []
+                try: servizi_preventivo = json.loads(servizi_preventivo)
+                except: servizi_preventivo = []
 
             servizi_attivi = []
-            # Semplificazione logica estrazione servizi
             if isinstance(servizi_preventivo, list):
                 for s in servizi_preventivo:
                     if isinstance(s, dict) and s.get("descrizione"):
-                        servizi_attivi.append(s.get("descrizione")[:20]) # Prendi i primi char come tag
+                        servizi_attivi.append(s.get("descrizione")[:20]) 
             
             await database.execute(
                 clienti_table.insert().values(
@@ -535,22 +572,17 @@ async def import_cliente(
             
             dati_committente = contratto.get("dati_committente", {})
             if isinstance(dati_committente, str):
-                try:
-                    dati_committente = json.loads(dati_committente)
-                except:
-                    dati_committente = {}
+                try: dati_committente = json.loads(dati_committente)
+                except: dati_committente = {}
             
             ragione_sociale = dati_committente.get("ragioneSociale") or dati_committente.get("ragione_sociale") or ""
             if not ragione_sociale:
                 raise HTTPException(status_code=400, detail="Contratto senza ragione sociale")
             
-            # Estrazione servizi
             servizi_contratto = contratto.get("servizi", [])
             if isinstance(servizi_contratto, str):
-                try:
-                    servizi_contratto = json.loads(servizi_contratto)
-                except:
-                    servizi_contratto = []
+                try: servizi_contratto = json.loads(servizi_contratto)
+                except: servizi_contratto = []
             
             servizi_attivi = []
             if isinstance(servizi_contratto, list):
@@ -585,7 +617,180 @@ async def import_cliente(
         raise HTTPException(status_code=500, detail=f"Errore: {str(e)}")
 
 
-# ... magic links endpoints rimangono uguali ...
+# =========================
+# DOCUMENTS ENDPOINTS
+# =========================
+
+@app.get("/api/clienti/{cliente_id}/documents", response_model=Dict[str, List[Dict[str, Any]]])
+async def get_cliente_documents(
+    cliente_id: str,
+    request: Request,
+    current_user: Dict[str, Any] = Depends(check_clienti_read)
+):
+    """Recupera preventivi e contratti associati al cliente"""
+    try:
+        # Recupera il cliente
+        cliente_row = await database.fetch_one(
+            clienti_table.select().where(clienti_table.c.id == cliente_id)
+        )
+        if not cliente_row:
+            raise HTTPException(status_code=404, detail="Cliente non trovato")
+        
+        cliente = serialize_cliente(dict(cliente_row))
+        nome_azienda = cliente.get("nome_azienda", "").lower()
+        email_contatto = cliente.get("contatti", {}).get("email", "").lower()
+        
+        # Token per chiamate interne
+        auth_header = request.headers.get("Authorization", "")
+        token = auth_header.replace("Bearer ", "") if auth_header.startswith("Bearer ") else None
+        
+        # Fetch preventivi
+        preventivi_match = []
+        try:
+            preventivi = await get_preventivi_internal(token)
+            for p in preventivi:
+                # Cerca match per nome o email
+                p_cliente = (p.get("cliente") or "").lower()
+                p_client_info = p.get("client_info") or {}
+                if isinstance(p_client_info, str):
+                    try: p_client_info = json.loads(p_client_info)
+                    except: p_client_info = {}
+                
+                p_nome = (p_client_info.get("ragione_sociale") or p_client_info.get("name") or "").lower()
+                p_email = (p_client_info.get("email") or "").lower()
+                
+                match = False
+                if nome_azienda and (nome_azienda in p_cliente or nome_azienda in p_nome):
+                    match = True
+                if email_contatto and email_contatto == p_email:
+                    match = True
+                
+                if match:
+                    preventivi_match.append({
+                        "id": p.get("id"),
+                        "numero": p.get("numero"),
+                        "data": p.get("data"),
+                        "totale": p.get("totale") or p.get("importo_totale"),
+                        "type": "preventivo"
+                    })
+        except Exception as e:
+            print(f"Error fetching preventivi for cliente {cliente_id}: {e}")
+
+        # Fetch contratti
+        contratti_match = []
+        try:
+            contratti = await get_contratti_internal(token)
+            for c in contratti:
+                c_cliente = (c.get("nome_cliente") or "").lower()
+                c_dati = c.get("dati_committente") or {}
+                if isinstance(c_dati, str):
+                    try: c_dati = json.loads(c_dati)
+                    except: c_dati = {}
+                
+                c_nome = (c_dati.get("ragioneSociale") or c_dati.get("ragione_sociale") or "").lower()
+                c_email = (c_dati.get("email") or "").lower()
+                
+                match = False
+                if nome_azienda and (nome_azienda in c_cliente or nome_azienda in c_nome):
+                    match = True
+                if email_contatto and email_contatto == c_email:
+                    match = True
+                
+                if match:
+                    # Calcolo valore contratto se possibile
+                    valore = 0
+                    compenso = c.get("compenso") or {}
+                    if isinstance(compenso, str):
+                         try: compenso = json.loads(compenso)
+                         except: compenso = {}
+                    
+                    if compenso:
+                        sito = compenso.get("sitoWeb", {})
+                        mkt = compenso.get("marketing", {})
+                        valore += float(sito.get("importoTotale", 0) or 0)
+                        # Stima annuale marketing
+                        valore += float(mkt.get("importoMensile", 0) or 0) * 12
+
+                    contratti_match.append({
+                        "id": c.get("id"),
+                        "numero": c.get("numero"),
+                        "data": c.get("created_at"),
+                        "totale": valore,
+                        "type": "contratto"
+                    })
+        except Exception as e:
+            print(f"Error fetching contratti for cliente {cliente_id}: {e}")
+
+        return {
+            "preventivi": preventivi_match,
+            "contratti": contratti_match
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Errore recupero documenti: {str(e)}")
+
+
+@app.post("/api/documents/analyze")
+async def analyze_document(
+    file: UploadFile = File(...),
+    current_user: Dict[str, Any] = Depends(check_clienti_create)
+):
+    """Analizza un documento (PDF) caricato per estrarre il valore economico"""
+    try:
+        if not file.filename.endswith(".pdf"):
+            return {"error": "Solo file PDF supportati", "value": 0}
+
+        content = await file.read()
+        
+        extracted_text = ""
+        value = 0.0
+
+        if PdfReader:
+            try:
+                pdf_file = io.BytesIO(content)
+                reader = PdfReader(pdf_file)
+                for page in reader.pages:
+                    extracted_text += page.extract_text()
+                
+                # Cerca pattern di importo (es. € 1.000,00 o 1000.00 €)
+                # Regex semplificata per trovare l'importo totale (spesso vicino a "Totale" o "Total")
+                
+                # Cerca l'ultimo numero vicino a "Totale" (case insensitive)
+                matches = re.findall(r"(?i)totale.*?([\d\.,]+)", extracted_text)
+                if matches:
+                    # Prendi l'ultimo match che sembra un numero valido
+                    possible_value = matches[-1]
+                    # Pulisci il valore (rimuovi punti migliaia, sostituisci virgola con punto)
+                    clean_val = possible_value.replace(".", "").replace(",", ".")
+                    try:
+                        value = float(clean_val)
+                    except ValueError:
+                        pass
+                
+                # Se non trova totale, prova a cercare numeri grandi > 100
+                if value == 0:
+                     pass # Fallback logic could go here
+
+            except Exception as e:
+                print(f"PDF parsing error: {e}")
+                return {"error": "Errore lettura PDF", "value": 0}
+        else:
+             return {"error": "Libreria PDF non disponibile", "value": 0}
+
+        return {
+            "filename": file.filename,
+            "extracted_text_preview": extracted_text[:100] + "...",
+            "value": value,
+            "message": "Analisi completata (beta)"
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Errore analisi: {str(e)}")
+
+
+# ... magic links endpoints unchanged ...
 @app.post("/api/clienti/{cliente_id}/magic-link", response_model=CreateMagicLinkResponse)
 async def create_magic_link(
     cliente_id: str,
@@ -594,20 +799,17 @@ async def create_magic_link(
 ):
     """Genera un magic link per installazione Shopify (valido 24h)"""
     try:
-        # Verifica che il cliente esista
         cliente = await database.fetch_one(
             clienti_table.select().where(clienti_table.c.id == cliente_id)
         )
         if not cliente:
             raise HTTPException(status_code=404, detail="Cliente non trovato")
         
-        # Genera token univoco
         token = secrets.token_urlsafe(32)
         link_id = str(uuid.uuid4())
         now = datetime.now()
         expires_at = now + timedelta(hours=24)
         
-        # Salva nel database
         await database.execute(
             magic_links_table.insert().values(
                 id=link_id,
@@ -620,15 +822,7 @@ async def create_magic_link(
             )
         )
         
-        # Determina URL frontend
         request_host = request.headers.get("host", "")
-        is_local = (
-            "localhost" in BASE_URL or 
-            "127.0.0.1" in BASE_URL or
-            "localhost" in request_host or 
-            "127.0.0.1" in request_host
-        )
-        
         magic_link_url = f"{FRONTEND_URL}/shopify-install/{token}"
         
         return CreateMagicLinkResponse(
@@ -650,7 +844,6 @@ async def get_magic_links(
     request: Request,
     current_user: Dict[str, Any] = Depends(check_clienti_read)
 ):
-    """Ottieni tutti i magic links di un cliente"""
     try:
         links = await database.fetch_all(
             magic_links_table.select()
@@ -659,25 +852,16 @@ async def get_magic_links(
         )
         
         result = []
-        request_host = request.headers.get("host", "")
-        is_local = (
-            "localhost" in BASE_URL or 
-            "127.0.0.1" in BASE_URL or
-            "localhost" in request_host or 
-            "127.0.0.1" in request_host
-        )
         base_url = FRONTEND_URL
         
         for link in links:
             link_dict = dict(link)
-            # Converti datetime in ISO string
             for field in ['expires_at', 'created_at', 'used_at', 'revoked_at']:
                 if link_dict.get(field):
                     if isinstance(link_dict[field], datetime):
                         link_dict[field] = link_dict[field].isoformat()
             
             link_dict['url'] = f"{base_url}/shopify-install/{link_dict['token']}"
-            
             result.append(MagicLinkResponse(**link_dict))
         
         return result
@@ -690,16 +874,13 @@ async def revoke_magic_link(
     link_id: str,
     current_user: Dict[str, Any] = Depends(check_clienti_update)
 ):
-    """Revoca un magic link"""
     try:
-        # Verifica che il link esista
         link = await database.fetch_one(
             magic_links_table.select().where(magic_links_table.c.id == link_id)
         )
         if not link:
             raise HTTPException(status_code=404, detail="Magic link non trovato")
         
-        # Revoca il link
         await database.execute(
             magic_links_table.update()
             .where(magic_links_table.c.id == link_id)
@@ -720,7 +901,6 @@ async def revoke_magic_link(
 async def verify_magic_link(
     token: str
 ):
-    """Verifica un magic link e restituisce i dati del cliente (pubblico, senza autenticazione)"""
     try:
         link = await database.fetch_one(
             magic_links_table.select().where(magic_links_table.c.token == token)
@@ -732,7 +912,6 @@ async def verify_magic_link(
         link_dict = dict(link)
         cliente_id = link_dict.get("cliente_id")
         
-        # Ottieni dati cliente
         cliente = await database.fetch_one(
             clienti_table.select().where(clienti_table.c.id == cliente_id)
         )
@@ -741,7 +920,6 @@ async def verify_magic_link(
         
         cliente_dict = dict(cliente)
         
-        # Verifica validità
         expires_at = link_dict.get("expires_at")
         if isinstance(expires_at, str):
             expires_at = datetime.fromisoformat(expires_at.replace('Z', '+00:00'))
@@ -768,5 +946,5 @@ async def verify_magic_link(
 
 if __name__ == "__main__":
     import uvicorn
-    port = int(os.environ.get("PORT", 8000)) # Default port added
+    port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)

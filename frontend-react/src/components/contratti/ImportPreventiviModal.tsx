@@ -1,27 +1,20 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
+import {
+  Modal,
+  ResourceList,
+  ResourceItem,
+  Text,
+  Badge,
+  Box,
+  LegacyCard,
+  EmptyState,
+  Spinner
+} from '@shopify/polaris';
 import type { PreventivoData } from '../../types/preventivo';
 import type { ContrattoData } from '../../types/contratto';
 import { convertPreventivoToContratto } from '../../utils/preventivoToContrattoMapper';
-import { formatCurrencyWithWords } from '../../utils/contrattoUtils';
 import { preventiviApi } from '../../services/preventiviApi';
 import { contrattiApi } from '../../services/contrattiApi';
-import './ImportPreventiviModal.css';
-
-// Funzione helper per estrarre i servizi selezionati dal preventivo
-const getServiziSelezionati = (preventivo: PreventivoData): string[] => {
-  const servizi: string[] = [];
-  
-  Object.keys(preventivo.servizi).forEach(categoria => {
-    const serviziCategoria = preventivo.servizi[categoria as keyof typeof preventivo.servizi];
-    if (serviziCategoria && Array.isArray(serviziCategoria)) {
-      serviziCategoria.forEach(servizioId => {
-        servizi.push(servizioId);
-      });
-    }
-  });
-  
-  return servizi;
-};
 
 interface ImportPreventiviModalProps {
   isOpen: boolean;
@@ -35,49 +28,47 @@ export const ImportPreventiviModal: React.FC<ImportPreventiviModalProps> = ({
   onContrattoCreated
 }) => {
   const [preventivi, setPreventivi] = useState<PreventivoData[]>([]);
-  const [selectedPreventivo, setSelectedPreventivo] = useState<PreventivoData | null>(null);
-  const [previewContratto, setPreviewContratto] = useState<Partial<ContrattoData> | null>(null);
+  const [selectedItems, setSelectedItems] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
       loadPreventivi();
+      setSelectedItems([]);
     }
   }, [isOpen]);
 
   const loadPreventivi = async () => {
     try {
       setLoading(true);
-      setError(null);
       const response = await preventiviApi.getAllPreventivi();
-      console.log('Preventivi caricati:', response);
-      if (response && response.length > 0) {
-        console.log('Primo preventivo:', response[0]);
-        console.log('Servizi primo preventivo:', response[0].servizi);
-      }
-      setPreventivi(response || []);
+      // Ordina per data decrescente
+      const sorted = (response || []).sort((a, b) => 
+        new Date(b.data).getTime() - new Date(a.data).getTime()
+      );
+      setPreventivi(sorted);
     } catch (err) {
       console.error('Errore nel caricamento preventivi:', err);
-      setError('Errore nel caricamento dei preventivi');
     } finally {
       setLoading(false);
     }
   };
 
-  const handlePreventivoSelect = (preventivo: PreventivoData) => {
-    console.log('Preventivo selezionato:', preventivo);
-    console.log('Servizi preventivo selezionato:', preventivo.servizi);
-    setSelectedPreventivo(preventivo);
-    const contrattoPreview = convertPreventivoToContratto(preventivo);
-    console.log('Contratto preview generato:', contrattoPreview);
-    console.log('Servizi contratto preview:', contrattoPreview.servizi);
-    setPreviewContratto(contrattoPreview);
-  };
+  const handleSelectionChange = useCallback((selectedIds: string[]) => {
+    // Permetti solo una selezione alla volta per ora
+    setSelectedItems(selectedIds.slice(-1));
+  }, []);
 
   const handleCreateContratto = async () => {
-    if (!selectedPreventivo || !previewContratto) return;
+    if (selectedItems.length === 0) return;
+    
+    const selectedId = selectedItems[0];
+    const selectedPreventivo = preventivi.find(p => p.id === selectedId) || preventivi.find(p => p.numero === selectedId);
+
+    if (!selectedPreventivo) return;
+
+    const previewContratto = convertPreventivoToContratto(selectedPreventivo);
 
     try {
       setCreating(true);
@@ -115,7 +106,6 @@ export const ImportPreventiviModal: React.FC<ImportPreventiviModalProps> = ({
       };
 
       const response = await contrattiApi.createContratto(contrattoCompleto);
-      // La risposta contiene il contratto creato con ID reale
       const createdContratto = {
         ...contrattoCompleto,
         id: response.id,
@@ -125,139 +115,89 @@ export const ImportPreventiviModal: React.FC<ImportPreventiviModalProps> = ({
       onClose();
     } catch (err) {
       console.error('Errore nella creazione del contratto:', err);
-      setError('Errore nella creazione del contratto');
     } finally {
       setCreating(false);
     }
   };
 
-  if (!isOpen) return null;
-
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-container" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-header">
-          <h2>Importa Preventivo come Contratto</h2>
-          <button className="close-button" onClick={onClose}>×</button>
-        </div>
-
-        <div className="modal-body">
-          {loading ? (
-            <div className="loading">Caricamento preventivi...</div>
-          ) : error ? (
-            <div className="error">{error}</div>
-          ) : (
-            <div className="content-grid">
-              {/* Left Side - Preventivi Selection */}
-              <div className="preventivi-section">
-                <h3>Seleziona Preventivo</h3>
-                <div className="preventivi-list">
-                  {preventivi.map((preventivo) => (
-                    <div
-                      key={preventivo.id}
-                      className={`preventivo-card ${selectedPreventivo?.id === preventivo.id ? 'selected' : ''}`}
-                      onClick={() => handlePreventivoSelect(preventivo)}
-                    >
-                      <div className="preventivo-header">
-                        <h4>{preventivo.numero}</h4>
-                        <span className="preventivo-date">
-                          {new Date(preventivo.data).toLocaleDateString('it-IT')}
-                        </span>
-                      </div>
-                      <div className="preventivo-client">
-                        <strong>{preventivo.cliente}</strong>
-                        <p>{preventivo.oggetto}</p>
-                      </div>
-                      <div className="preventivo-servizi">
-                        <h5>Servizi Inclusi:</h5>
-                        <div className="servizi-list">
-                          {getServiziSelezionati(preventivo).length > 0 ? (
-                            getServiziSelezionati(preventivo).slice(0, 3).map((servizio, index) => (
-                              <span key={index} className="servizio-tag">
-                                {servizio.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
-                              </span>
-                            ))
-                          ) : (
-                            <span className="no-servizi">Nessun servizio selezionato</span>
-                          )}
-                          {getServiziSelezionati(preventivo).length > 3 && (
-                            <span className="servizi-more">
-                              +{getServiziSelezionati(preventivo).length - 3} altri
-                            </span>
-                          )}
+    <Modal
+      open={isOpen}
+      onClose={onClose}
+      title="Importa Preventivo come Contratto"
+      primaryAction={{
+        content: creating ? 'Creazione in corso...' : 'Importa Selezionato',
+        onAction: handleCreateContratto,
+        disabled: selectedItems.length === 0 || creating,
+        loading: creating
+      }}
+      secondaryActions={[
+        {
+          content: 'Annulla',
+          onAction: onClose,
+        },
+      ]}
+    >
+      <Modal.Section>
+        {loading ? (
+          <div style={{ display: 'flex', justifyContent: 'center', padding: '2rem' }}>
+            <Spinner size="large" />
+          </div>
+        ) : preventivi.length === 0 ? (
+          <EmptyState
+            heading="Nessun preventivo trovato"
+            image="https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png"
+          >
+            <p>Crea prima un preventivo per poterlo importare come contratto.</p>
+          </EmptyState>
+        ) : (
+          <LegacyCard>
+            <ResourceList
+              resourceName={{ singular: 'preventivo', plural: 'preventivi' }}
+              items={preventivi}
+              selectedItems={selectedItems}
+              onSelectionChange={handleSelectionChange}
+              selectable
+              renderItem={(item) => {
+                const { id, numero, cliente, data, totale, oggetto } = item;
+                const itemId = id || numero || `prev-${Math.random()}`; 
+                
+                return (
+                  <ResourceItem
+                    id={itemId}
+                    url="#"
+                    accessibilityLabel={`Visualizza dettagli per ${numero}`}
+                    onClick={() => {}} 
+                  >
+                    <Box padding="200">
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div>
+                          <Text variant="bodyMd" fontWeight="bold" as="h3">
+                            {numero} - {cliente}
+                          </Text>
+                          <Text variant="bodySm" as="p" tone="subdued">
+                            {oggetto}
+                          </Text>
+                          <div style={{ marginTop: '4px' }}>
+                            <Badge tone="info">
+                              {new Date(data).toLocaleDateString('it-IT')}
+                            </Badge>
+                          </div>
+                        </div>
+                        <div style={{ textAlign: 'right' }}>
+                          <Text variant="bodyMd" fontWeight="bold" as="span">
+                            €{totale?.toLocaleString('it-IT', { minimumFractionDigits: 2 })}
+                          </Text>
                         </div>
                       </div>
-                      <div className="preventivo-total">
-                        <strong>Totale: {formatCurrencyWithWords(preventivo.totale || 0)}</strong>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Right Side - Contratto Preview */}
-              <div className="contratto-section">
-                <h3>Anteprima Contratto</h3>
-                <div className="contratto-preview">
-                  {previewContratto ? (
-                    <div className="preview-content">
-                      <div className="preview-section">
-                        <h4>Dati Cliente</h4>
-                        <p><strong>Ragione Sociale:</strong> {previewContratto.datiCommittente?.ragioneSociale}</p>
-                        <p><strong>Email:</strong> {previewContratto.datiCommittente?.email}</p>
-                        <p><strong>Città:</strong> {previewContratto.datiCommittente?.citta}</p>
-                      </div>
-
-                      <div className="preview-section">
-                        <h4>Tipologia Servizio</h4>
-                        <p>{previewContratto.tipologiaServizio?.replace(/_/g, ' ').toUpperCase()}</p>
-                      </div>
-
-                      <div className="preview-section">
-                        <h4>Servizi Inclusi</h4>
-                        <ul>
-                          {previewContratto.servizi?.map((servizio, index) => (
-                            <li key={index}>
-                              <strong>{servizio.nome}:</strong> {servizio.descrizione}
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-
-                      <div className="preview-section">
-                        <h4>Compenso</h4>
-                        {previewContratto.compenso?.sitoWeb && (
-                          <p><strong>Sito Web:</strong> €{previewContratto.compenso.sitoWeb.importoTotale?.toLocaleString('it-IT')}</p>
-                        )}
-                        {previewContratto.compenso?.marketing && (
-                          <p><strong>Marketing Mensile:</strong> €{previewContratto.compenso.marketing.importoMensile?.toLocaleString('it-IT')}</p>
-                        )}
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="preview-placeholder">
-                      <p>Seleziona un preventivo per vedere l'anteprima del contratto</p>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-
-        <div className="modal-footer">
-          <button className="btn-secondary" onClick={onClose}>
-            Annulla
-          </button>
-          <button 
-            className="btn-primary" 
-            onClick={handleCreateContratto}
-            disabled={!selectedPreventivo || creating}
-          >
-            {creating ? 'Creazione...' : 'Crea Contratto'}
-          </button>
-        </div>
-      </div>
-    </div>
+                    </Box>
+                  </ResourceItem>
+                );
+              }}
+            />
+          </LegacyCard>
+        )}
+      </Modal.Section>
+    </Modal>
   );
 };

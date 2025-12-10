@@ -101,12 +101,61 @@ Tale ecosistema sarà costruito attraverso l'utilizzo strategico dei canali soci
 
 Tale ecosistema sarà costruito attraverso l'utilizzo strategico dei canali social, mediante campagne META finalizzate all'aumento del traffico verso i profili social e il punto vendita online.`;
 
+    case 'solo_sito':
+      return `L'oggetto del presente contratto è la fornitura, da parte di Evoluzione Imprese, di un servizio professionale volto alla creazione, progettazione e sviluppo di un sito web per il Committente.
+
+Il sito sarà realizzato con l'obiettivo di valorizzare l'immagine aziendale, ottimizzare la user experience e migliorare la presenza digitale del Committente, garantendo una struttura funzionale, coerente con l'identità del brand e conforme agli standard tecnici e di design più aggiornati.
+
+Il presente contratto riguarda esclusivamente la realizzazione del sito web e non include attività di gestione social media, advertising o marketing digitale, che potranno essere oggetto di un separato accordo tra le Parti.`;
+
+    case 'marketing_content':
+      return `L'oggetto del presente contratto è la fornitura, da parte di Evoluzione Imprese, di un servizio professionale di creazione, gestione e sviluppo di contenuti organici per i canali social del Committente.
+
+L'attività è finalizzata al potenziamento della presenza digitale del Committente attraverso la produzione strategica e continuativa di contenuti coerenti con la propria identità di brand, volti ad accrescere l'interesse, il coinvolgimento e la fidelizzazione della community online.
+
+Il servizio oggetto del presente contratto non include attività di advertising a pagamento o gestione di campagne META (Facebook, Instagram o altre piattaforme), le quali potranno essere eventualmente concordate in un separato accordo.`;
+
     default:
       return '';
   }
 };
 
-export const generateArticolo2SitoWeb = (): string => {
+export const generateArticolo2SitoWeb = (tipologiaServizio?: string): string => {
+  if (tipologiaServizio === 'solo_sito') {
+    return `Evoluzione Imprese si impegna a progettare, sviluppare e consegnare un sito web professionale basato su piattaforma Shopify, WordPress o altra piattaforma concordata, in linea con le esigenze operative e gli obiettivi comunicativi del Committente.
+
+In particolare, saranno realizzate le seguenti attività:
+a) Analisi preliminare del brand, del target di riferimento e dei competitor;
+b) Progettazione della struttura informativa e definizione dell'alberatura di navigazione;
+c) Progettazione UX/UI (User Experience e User Interface) del sito, in linea con l'identità visiva del Committente;
+d) Creazione della homepage e delle pagine interne principali (es. Chi siamo, Servizi, Contatti);
+e) Creazione di eventuali sezioni aggiuntive quali blog, portfolio, area riservata o integrazioni personalizzate, se previste dal brief iniziale;
+f) Ottimizzazione del sito per dispositivi mobili (responsive design);
+g) Integrazione dei moduli di contatto, mappe, form, newsletter o altri strumenti concordati;
+h) Implementazione delle impostazioni SEO di base (meta title, meta description, URL ottimizzati);
+i) Collegamento ai canali social e agli strumenti di monitoraggio (Google Analytics, Search Console, Meta Pixel, ecc.);
+j) Test di funzionamento, revisione e consegna finale del progetto.
+
+Qualora ritenuto necessario, Evoluzione Imprese potrà occuparsi anche della realizzazione di contenuti visivi e testuali (fotografie, video, copywriting, grafiche) a supporto del sito web, previo accordo scritto e definizione del relativo compenso aggiuntivo.
+
+Il progetto sarà consegnato entro un periodo stimato di 8 settimane dalla data di approvazione definitiva del brief iniziale e dalla consegna completa di tutto il materiale necessario da parte del Committente.
+
+Sono previste fino a 3 revisioni per ciascuna fase intermedia di consegna (wireframe, design, contenuti). Ulteriori modifiche rispetto a quanto previsto saranno considerate attività extra e oggetto di un preventivo dedicato.
+
+Tutti gli elaborati grafici, testuali e funzionali saranno sottoposti all'approvazione del Committente prima della pubblicazione online.
+
+Evoluzione Imprese garantisce che il sito sarà sviluppato nel rispetto delle best practices della piattaforma scelta e ottimizzato per la fruizione su desktop, tablet e mobile.
+
+Per l'esecuzione delle attività, il Committente si impegna a fornire tempestivamente:
+• Tutti i materiali necessari (loghi, testi, immagini, video, cataloghi, credenziali di accesso, ecc.);
+• Gli accessi agli eventuali strumenti o piattaforme già in uso (hosting, dominio, CMS, ecc.).
+
+Evoluzione Imprese si impegna a garantire la massima riservatezza e sicurezza nella gestione dei dati di accesso e delle informazioni ricevute.
+
+Le comunicazioni operative tra le Parti avverranno esclusivamente nei seguenti orari:
+dal lunedì al venerdì, dalle ore 09:00 alle ore 19:00, attraverso i canali concordati (e-mail, telefono, WhatsApp).`;
+  }
+
   return `Evoluzione Imprese si impegna a progettare, sviluppare e consegnare un sito web e-commerce basato su piattaforma Shopify, coerente con l'identità e gli obiettivi commerciali del Committente.
 In particolare, saranno realizzate le seguenti attività:
 a) Progettazione UX/UI del sito;
@@ -156,6 +205,30 @@ Per lo svolgimento delle attività, il Committente autorizza Evoluzione Imprese 
 Evoluzione Imprese s'impegna a garantire la massima riservatezza e sicurezza nella gestione dei dati di accesso e delle informazioni ricevute.
 Le comunicazioni operative tra le Parti avverranno esclusivamente nei seguenti orari:
 dal lunedì al venerdì, dalle ore 09:00 alle ore 19:00, attraverso i canali concordati (e-mail, telefono, WhatsApp).`;
+  } else if (tipologiaServizio === 'marketing_content') {
+    return `Le attività di comunicazione saranno sviluppate e distribuite sui seguenti canali di social media:
+• Instagram
+• Facebook
+• Tiktok
+
+In particolare, Evoluzione Imprese si impegna a fornire:
+a) Lo studio, la pianificazione e la definizione di una strategia editoriale organica, coerente con il posizionamento, i valori e gli obiettivi del Committente;
+b) La redazione e la condivisione di un piano editoriale mensile contenente le tematiche, le tipologie di contenuto e la calendarizzazione delle pubblicazioni;
+c) La creazione, produzione e pubblicazione di contenuti foto, video e grafici, ottimizzati per i canali social indicati, nel rispetto delle linee guida del brand;
+d) La redazione dei copy e delle descrizioni dei post, in linea con il tono di voce e la strategia concordata;
+e) L'analisi e il monitoraggio delle performance dei contenuti pubblicati, con la predisposizione di un report periodico sulle attività svolte e sui risultati ottenuti.
+
+Evoluzione Imprese garantirà che le attività siano realizzate nel pieno rispetto delle policy delle piattaforme social e delle indicazioni del Committente.
+
+Eventuali servizi aggiuntivi, non espressamente indicati nel presente contratto (quali, a titolo esemplificativo, la gestione di campagne ADV, shooting esterni aggiuntivi, influencer marketing, o consulenze extra), saranno considerati attività accessorie e potranno essere erogati solo previo accordo scritto tra le Parti e relativa approvazione di un preventivo dedicato.
+
+Tutti i contenuti prodotti dovranno essere approvati preventivamente dal Committente prima della pubblicazione sui canali social. Una volta approvati, i contenuti non potranno essere modificati o ritirati, salvo diversa intesa scritta tra le Parti, al fine di garantire coerenza strategica e rispetto delle tempistiche operative.
+
+Per lo svolgimento delle attività, il Committente autorizza Evoluzione Imprese all'utilizzo del proprio nome, marchio e materiali visivi (loghi, immagini, video, grafiche, testi, ecc.) necessari alla realizzazione dei contenuti, impegnandosi altresì a fornire tempestivamente tutti gli accessi e le risorse richieste per l'esecuzione del servizio.
+
+Evoluzione Imprese si impegna a mantenere la massima riservatezza e sicurezza nella gestione dei dati di accesso e delle informazioni ricevute.
+
+Le comunicazioni operative tra le Parti avverranno esclusivamente nei seguenti orari: dal lunedì al venerdì, dalle ore 09:00 alle ore 19:00, attraverso i canali concordati (e-mail, telefono, WhatsApp).`;
   } else {
     // marketing_content_adv, sito_marketing, sito_marketing_linkbuilding
     return `Le attività di comunicazione saranno sviluppate e distribuite sui seguenti canali di social media:
@@ -217,7 +290,12 @@ export const generateArticolo3Modalita = (): string => {
 Evoluzione Imprese svolge la propria attività senza vincolo di orario e con mezzi propri.`;
 };
 
-export const generateArticolo4Durata = (tipo: string, dataDecorrenza: string = '', dataScadenza: string = ''): string => {
+export const generateArticolo4Durata = (
+  tipo: string, 
+  dataDecorrenza: string = '', 
+  dataScadenza: string = '',
+  options?: { mesi?: number, rinnovo?: boolean }
+): string => {
   const formatDate = (date: string) => {
     if (!date) return '__/__/____';
     const d = new Date(date);
@@ -228,6 +306,26 @@ export const generateArticolo4Durata = (tipo: string, dataDecorrenza: string = '
   const scadenza = formatDate(dataScadenza);
 
   switch (tipo) {
+    case 'custom': {
+      const mesi = options?.mesi || 0;
+      const rinnovo = options?.rinnovo || false;
+      const mesiParole = numberToWords(mesi);
+      const preavvisoGiorni = mesi >= 6 ? 60 : 30;
+      const preavvisoParole = numberToWords(preavvisoGiorni);
+
+      if (rinnovo) {
+        return `Il presente contratto ha una durata di ${mesi} (${mesiParole}) mesi, con decorrenza dal ${decorrenza} e scadenza al ${scadenza}.
+
+Alla scadenza del termine contrattuale sopra indicato, il presente contratto si intenderà tacitamente rinnovato per un ulteriore periodo di ${mesi} (${mesiParole}) mesi, salvo disdetta da comunicarsi da una delle Parti all'altra, a mezzo di posta elettronica certificata (PEC), con un preavviso minimo di ${preavvisoGiorni} (${preavvisoParole}) giorni rispetto alla data di scadenza.
+
+Resta inteso che, alla naturale scadenza del rapporto contrattuale, in mancanza di tempestiva disdetta, il rinnovo avverrà automaticamente alle medesime condizioni economiche e contrattuali, salvo diverso accordo scritto tra le Parti.`;
+      } else {
+        return `Il presente contratto ha una durata di ${mesi} (${mesiParole}) mesi, con decorrenza dal ${decorrenza} e scadenza al ${scadenza}.
+
+Alla scadenza naturale del termine sopra indicato, il contratto cesserà automaticamente senza necessità di disdetta da parte di alcuna delle Parti e senza che ciò comporti alcun obbligo di rinnovo o prosecuzione del rapporto contrattuale.`;
+      }
+    }
+
     case '12_mesi_senza_rinnovo':
       return `Il presente contratto ha una durata di 12 (dodici) mesi, con decorrenza dal ${decorrenza} e scadenza al ${scadenza}.
 
@@ -267,6 +365,11 @@ Resta inteso che, alla naturale scadenza del rapporto contrattuale, in mancanza 
 
 Alla scadenza naturale del termine sopra indicato, il contratto cesserà automaticamente senza necessità di disdetta da parte di alcuna delle Parti e senza che ciò comporti alcun obbligo di rinnovo o prosecuzione del rapporto contrattuale.`;
     
+    case 'spot_una_tantum':
+      return `Il presente contratto ha durata limitata all'esecuzione del progetto (indicativamente 8 settimane), con decorrenza dalla data di approvazione del brief e consegna materiali. 
+      
+Si intenderà concluso con la consegna finale del progetto e il pagamento del saldo dovuto.`;
+
     default:
       return '';
   }
@@ -283,7 +386,7 @@ export const generateArticolo5Compenso = (contrattoData: ContrattoData): string 
     return `${formatted} (${words}/00)`;
   };
   
-  if (tipologiaServizio === 'sito_marketing_linkbuilding' || tipologiaServizio === 'sito_marketing') {
+  if (tipologiaServizio === 'sito_marketing_linkbuilding' || tipologiaServizio === 'sito_marketing' || tipologiaServizio === 'solo_sito') {
     // Include compenso sito web
     const sitoWeb = compenso.sitoWeb;
     if (sitoWeb) {
@@ -307,19 +410,25 @@ export const generateArticolo5Compenso = (contrattoData: ContrattoData): string 
     }
   }
   
-  // Compenso marketing (sempre presente)
-  const marketing = compenso.marketing;
-  const importoMensile = formatAmount(marketing.importoMensile);
-  const giornoPagamento = marketing.giornoPagamento;
-  
-  if (tipologiaServizio === 'marketing_content_adv' || tipologiaServizio === 'marketing_adv') {
-    // Solo marketing
-    testo += `Il compenso per le prestazioni previste nel presente contratto al 'punto 2.2 Marketing' è così suddiviso:
-• ${importoMensile} euro mensili, oltre IVA di legge, da corrispondersi in via anticipata il ${giornoPagamento} (${numberToWords(giornoPagamento)}) di ogni mese dalla chiusura dell'attività al 'punto 2.2 Sito Web'.`;
-  } else {
-    // Sito web + marketing
-    testo += `Il compenso per le prestazioni previste nel presente contratto al 'punto 2.3 Marketing' è così suddiviso:
-• ${importoMensile} euro mensili, oltre IVA di legge, da corrispondersi in via anticipata il ${giornoPagamento} (${numberToWords(giornoPagamento)}) di ogni mese dalla chiusura dell'attività al 'punto 2.2 Sito Web'.`;
+  if (tipologiaServizio !== 'solo_sito') {
+    // Compenso marketing (sempre presente tranne in solo_sito)
+    const marketing = compenso.marketing;
+    const importoMensile = formatAmount(marketing.importoMensile);
+    const giornoPagamento = marketing.giornoPagamento;
+    
+    if (tipologiaServizio === 'marketing_content_adv' || tipologiaServizio === 'marketing_adv') {
+      // Solo marketing
+      testo += `Il compenso per le prestazioni previste nel presente contratto al 'punto 2.2 Marketing' è così suddiviso:
+  • ${importoMensile} euro mensili, oltre IVA di legge, da corrispondersi in via anticipata il ${giornoPagamento} (${numberToWords(giornoPagamento)}) di ogni mese dalla chiusura dell'attività al 'punto 2.2 Sito Web'.`;
+    } else if (tipologiaServizio === 'marketing_content') {
+      // Solo marketing content
+      testo += `Il compenso per le prestazioni previste nel presente contratto al 'punto 2.2 Marketing' è così suddiviso:
+  • ${importoMensile} euro mensili, oltre IVA di legge, da corrispondersi in via anticipata il ${giornoPagamento} (${numberToWords(giornoPagamento)}) di ogni mese dalla chiusura dell'attività al 'punto 2.2 Sito Web'.`;
+    } else {
+      // Sito web + marketing
+      testo += `Il compenso per le prestazioni previste nel presente contratto al 'punto 2.3 Marketing' è così suddiviso:
+  • ${importoMensile} euro mensili, oltre IVA di legge, da corrispondersi in via anticipata il ${giornoPagamento} (${numberToWords(giornoPagamento)}) di ogni mese dalla chiusura dell'attività al 'punto 2.2 Sito Web'.`;
+    }
   }
   
   // Clausole comuni
@@ -334,11 +443,11 @@ Il puntuale rispetto delle scadenze di pagamento costituisce condizione essenzia
 
 // Funzioni per determinare la visibilità delle sezioni
 export const hasSitoWeb = (tipologiaServizio: string): boolean => {
-  return tipologiaServizio === 'sito_marketing_linkbuilding' || tipologiaServizio === 'sito_marketing';
+  return tipologiaServizio === 'sito_marketing_linkbuilding' || tipologiaServizio === 'sito_marketing' || tipologiaServizio === 'solo_sito';
 };
 
-export const hasMarketing = (): boolean => {
-  return true; // Marketing è sempre presente
+export const hasMarketing = (tipologiaServizio: string): boolean => {
+  return tipologiaServizio !== 'solo_sito'; 
 };
 
 export const hasLinkbuilding = (tipologiaServizio: string): boolean => {

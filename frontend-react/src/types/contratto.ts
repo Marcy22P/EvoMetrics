@@ -18,9 +18,11 @@ export interface ServizioContratto {
 }
 
 export interface DurataContratto {
-  tipo: '12_mesi_senza_rinnovo' | '12_mesi_con_rinnovo' | '6_6_mesi_senza_rinnovo' | '3_mesi_con_rinnovo' | '3_mesi_senza_rinnovo';
+  tipo: '12_mesi_senza_rinnovo' | '12_mesi_con_rinnovo' | '6_6_mesi_senza_rinnovo' | '3_mesi_con_rinnovo' | '3_mesi_senza_rinnovo' | 'spot_una_tantum' | 'custom';
   dataDecorrenza: string;
   dataScadenza: string;
+  customMesi?: number;
+  customRinnovo?: boolean;
 }
 
 export interface CompensoSitoWeb {
@@ -45,7 +47,7 @@ export interface ContrattoData {
   id: string;
   numero: string;
   datiCommittente: DatiCommittente;
-  tipologiaServizio: 'sito_marketing_linkbuilding' | 'sito_marketing' | 'marketing_content_adv' | 'marketing_adv';
+  tipologiaServizio: 'sito_marketing_linkbuilding' | 'sito_marketing' | 'marketing_content_adv' | 'marketing_adv' | 'solo_sito' | 'marketing_content';
   servizi: ServizioContratto[];
   durata: DurataContratto;
   compenso: CompensoContratto;
