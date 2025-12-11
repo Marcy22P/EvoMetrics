@@ -2,7 +2,7 @@
 Clienti Service - Microservizio per gestione clienti e magic links
 """
 
-from fastapi import FastAPI, HTTPException, status, Depends, Request, UploadFile, File
+from fastapi import FastAPI, HTTPException, status, Depends, Request, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Dict, Any, Optional
 import os
@@ -23,6 +23,12 @@ try:
 except ImportError:
     PdfReader = None
 
+try:
+    from drive_utils import drive_service
+except ImportError:
+    print("⚠️ Modulo drive_utils non trovato")
+    drive_service = None
+
 from database import database, init_database, close_database, clienti_table, magic_links_table
 from models import (
     ClienteData,
@@ -32,7 +38,8 @@ from models import (
     VerifyMagicLinkResponse,
     ImportSourcesResponse,
     ImportClienteRequest,
-    ImportSource
+    ImportSource,
+    DettagliCliente
 )
 
 # Carica variabili d'ambiente dalla root del progetto
@@ -790,7 +797,146 @@ async def analyze_document(
         raise HTTPException(status_code=500, detail=f"Errore analisi: {str(e)}")
 
 
-# ... magic links endpoints unchanged ...
+# =========================
+# GOOGLE DRIVE ENDPOINTS
+# =========================
+
+@app.post("/api/clienti/{cliente_id}/drive/init")
+async def init_drive_folder(
+    cliente_id: str,
+    current_user: Dict[str, Any] = Depends(check_clienti_update)
+):
+    """Inizializza la cartella Drive per il cliente"""
+    try:
+        if not drive_service or not drive_service.is_ready():
+            raise HTTPException(status_code=503, detail="Google Drive Service non configurato")
+
+        cliente = await database.fetch_one(
+            clienti_table.select().where(clienti_table.c.id == cliente_id)
+        )
+        if not cliente:
+            raise HTTPException(status_code=404, detail="Cliente non trovato")
+        
+        cliente_dict = serialize_cliente(dict(cliente))
+        dettagli = cliente_dict.get("dettagli") or {}
+        
+        # Se ha già un folder_id, verifica se esiste ancora (opzionale, per ora ci fidiamo)
+        folder_id = dettagli.get("drive_folder_id")
+        
+        if not folder_id:
+            nome_cartella = cliente_dict["nome_azienda"]
+            # Cerca se esiste già
+            folder_id = drive_service.search_folder(nome_cartella)
+            
+            if not folder_id:
+                # Crea nuova
+                folder_id = drive_service.create_folder(nome_cartella)
+            
+            if folder_id:
+                # Aggiorna cliente
+                dettagli["drive_folder_id"] = folder_id
+                
+                # Serializza dettagli usando il modello per validazione, poi dump json
+                # Attenzione: qui stiamo usando il modello Pydantic per serializzare
+                # Assicuriamoci che i campi esistano nel modello
+                try:
+                    dettagli_obj = DettagliCliente(**dettagli)
+                    dettagli_json = dettagli_obj.model_dump_json()
+                except Exception as model_err:
+                    print(f"Errore validazione modello dettagli: {model_err}")
+                    # Fallback a json.dumps se il modello non matcha perfettamente
+                    dettagli_json = json.dumps(dettagli)
+                
+                await database.execute(
+                    clienti_table.update()
+                    .where(clienti_table.c.id == cliente_id)
+                    .values(dettagli=dettagli_json)
+                )
+            else:
+                raise HTTPException(status_code=500, detail="Impossibile creare cartella Drive")
+        
+        return {"folder_id": folder_id, "folder_url": f"https://drive.google.com/drive/folders/{folder_id}"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Errore Drive init: {str(e)}")
+
+@app.get("/api/clienti/{cliente_id}/drive/files")
+async def list_drive_files(
+    cliente_id: str,
+    folder_id: Optional[str] = None, # Per navigare sottocartelle
+    current_user: Dict[str, Any] = Depends(check_clienti_read)
+):
+    try:
+        if not drive_service or not drive_service.is_ready():
+            raise HTTPException(status_code=503, detail="Google Drive Service non configurato")
+
+        # Se folder_id non è specificato, usa la root del cliente
+        if not folder_id:
+            cliente = await database.fetch_one(
+                clienti_table.select().where(clienti_table.c.id == cliente_id)
+            )
+            if not cliente:
+                raise HTTPException(status_code=404, detail="Cliente non trovato")
+            
+            cliente_dict = serialize_cliente(dict(cliente))
+            dettagli = cliente_dict.get("dettagli") or {}
+            folder_id = dettagli.get("drive_folder_id")
+            
+            if not folder_id:
+                return {"files": [], "current_folder_id": None, "message": "Cartella non inizializzata"}
+
+        files = drive_service.list_files(folder_id)
+        return {"files": files, "current_folder_id": folder_id}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Errore listing Drive: {str(e)}")
+
+@app.post("/api/clienti/{cliente_id}/drive/upload")
+async def upload_drive_file(
+    cliente_id: str,
+    file: UploadFile = File(...),
+    folder_id: Optional[str] = Form(None),
+    current_user: Dict[str, Any] = Depends(check_clienti_update)
+):
+    try:
+        if not drive_service or not drive_service.is_ready():
+            raise HTTPException(status_code=503, detail="Google Drive Service non configurato")
+
+        target_folder_id = folder_id
+        if not target_folder_id:
+             # Recupera root cliente
+            cliente = await database.fetch_one(
+                clienti_table.select().where(clienti_table.c.id == cliente_id)
+            )
+            if not cliente:
+                raise HTTPException(status_code=404, detail="Cliente non trovato")
+            dettagli = serialize_cliente(dict(cliente)).get("dettagli") or {}
+            target_folder_id = dettagli.get("drive_folder_id")
+            
+            if not target_folder_id:
+                raise HTTPException(status_code=400, detail="Cartella Drive non inizializzata")
+
+        content = await file.read()
+        uploaded_file = drive_service.upload_file(
+            content, 
+            file.filename, 
+            target_folder_id, 
+            file.content_type
+        )
+        
+        if not uploaded_file:
+             raise HTTPException(status_code=500, detail="Upload fallito")
+             
+        return uploaded_file
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Errore upload Drive: {str(e)}")
+
+
+# =========================
+# MAGIC LINKS ENDPOINTS
+# =========================
+
 @app.post("/api/clienti/{cliente_id}/magic-link", response_model=CreateMagicLinkResponse)
 async def create_magic_link(
     cliente_id: str,
