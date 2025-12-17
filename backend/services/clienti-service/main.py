@@ -154,6 +154,7 @@ async def load_user_permissions(user: Dict[str, Any]) -> Dict[str, bool]:
     if user["role"] == "superadmin":
         return {"__all__": True}
     
+    perms = {}
     row = await database.fetch_one(
         "SELECT permissions FROM user_permissions WHERE user_id = :uid",
         {"uid": user["id"]},
@@ -166,6 +167,12 @@ async def load_user_permissions(user: Dict[str, Any]) -> Dict[str, bool]:
             perms = {}
     else:
         perms = get_default_permissions(user["role"])
+    
+    # OVERRIDE: Garantisci sempre accesso al Drive (clienti:read/update) per il ruolo 'user'
+    # Questo serve perché vecchi utenti potrebbero avere permessi salvati nel DB che non includono queste nuove flag
+    if user["role"] == "user":
+        perms["clienti:read"] = True
+        perms["clienti:update"] = True
     
     return perms
 
