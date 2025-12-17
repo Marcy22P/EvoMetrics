@@ -24,6 +24,7 @@ import ClienteDetail from './pages/ClienteDetail'
 import ShopifyInstall from './pages/ShopifyInstall'
 import ShopifyThankYou from './pages/ShopifyThankYou'
 import TaskManager from './pages/TaskManager'
+import DrivePage from './pages/DrivePage'
 import ShopifyLayout from './components/Layout/ShopifyLayout' // Nuovo Layout Polaris
 
 // Componente per proteggere le route
@@ -229,6 +230,7 @@ const AppRoutes: React.FC = () => {
         <Route path="/investimenti" element={<div className="page-container"><h1>Investimenti</h1><p>Sezione in sviluppo</p></div>} />
         <Route path="/produttivita" element={<div className="page-container"><h1>Produttività Team</h1><p>Sezione in sviluppo</p></div>} />
         <Route path="/task" element={<TaskManager />} />
+        <Route path="/drive" element={<DrivePage />} />
         <Route path="/attenzione-clienti" element={<div className="page-container"><h1>Attenzione Clienti</h1><p>Sezione in sviluppo</p></div>} />
         <Route path="/team/indice-benessere" element={<div className="page-container"><h1>Indice di Benessere</h1><p>Sezione in sviluppo</p></div>} />
         <Route path="/team/bonus" element={<div className="page-container"><h1>Bonus</h1><p>Sezione in sviluppo</p></div>} />

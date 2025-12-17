@@ -64,6 +64,7 @@ class DettagliCliente(BaseModel):
     tasks: List[Task] = []
     stato_umore: Optional[str] = "neutrale" # "triste", "neutrale", "felice"
     note_rapide: Optional[str] = None
+    drive_folder_id: Optional[str] = None # ID cartella Google Drive
 
 
 # --- MODELLI ESISTENTI ---

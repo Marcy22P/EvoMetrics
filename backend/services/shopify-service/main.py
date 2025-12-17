@@ -328,16 +328,35 @@ async def shopify_oauth_callback(
                 pass  # Non critico
         
         # REQUISITO SHOPIFY: Reindirizza immediatamente all'interfaccia utente dell'app
-        # Determina frontend URL
-        host = request.headers.get("host", "")
-        if "localhost" in host or "127.0.0.1" in host:
-            frontend_url = FRONTEND_URL
-        else:
-            frontend_url = os.environ.get("FRONTEND_URL", FRONTEND_URL)
+        # Per app Embedded (App Bridge), il redirect deve essere fatto all'interno dell'admin Shopify
+        # URL formato: https://admin.shopify.com/store/{shop_name}/apps/{app_handle}/...
         
-        # Redirect immediato all'app UI (requisito Shopify)
-        redirect_url = f"{frontend_url}/shopify_integrations/{cliente_id}?shopify_connected=true"
-        return RedirectResponse(url=redirect_url)
+        # Estrai nome shop dal dominio (es. test.myshopify.com -> test)
+        shop_name = shop_normalized.replace(".myshopify.com", "")
+        
+        # App Handle (dovrebbe essere in env o config, qui usiamo un default o variabile)
+        app_handle = os.environ.get("SHOPIFY_APP_HANDLE", "evometrics") # Sostituire con vero handle
+        
+        # Costruisci URL Admin per App Bridge
+        # Nota: questo URL è per l'embedded app. Se non è embedded, usa frontend_url diretto.
+        # Assumiamo embedded app per Shopify Store.
+        
+        # Deep link alla pagina specifica dell'integrazione nel tuo frontend
+        # Il frontend deve gestire il routing App Bridge
+        target_path = f"/shopify_integrations/{cliente_id}?shopify_connected=true"
+        encoded_target = target_path # Potrebbe richiedere encoding
+        
+        # Redirect finale
+        # Se è un'installazione gestita da Shopify (senza magic link token), 
+        # Shopify si aspetta redirect a https://admin.shopify.com/store/{shop}/apps/{api_key}
+        # o App Handle.
+        
+        # Usiamo l'approccio standard: redirect all'Admin Shopify che caricherà l'app iframe
+        api_key = os.environ.get("SHOPIFY_API_KEY")
+        admin_url = f"https://admin.shopify.com/store/{shop_name}/apps/{api_key}{target_path}"
+        
+        return RedirectResponse(url=admin_url)
+
         
     except HTTPException:
         raise
@@ -390,28 +409,61 @@ async def shopify_webhook_app_uninstalled(
         raise HTTPException(status_code=500, detail=f"Error processing webhook: {str(e)}")
 
 
-@app.post("/api/shopify/webhooks/shop/update")
-async def shopify_webhook_shop_update(
+@app.post("/api/shopify/webhooks/customers/data_request")
+async def shopify_webhook_customers_data_request(
     request: Request,
     x_shopify_shop_domain: str = Header(..., alias="X-Shopify-Shop-Domain"),
     x_shopify_hmac_sha256: str = Header(..., alias="X-Shopify-Hmac-Sha256")
 ):
     """
-    Webhook: shop/update
-    Conforme ai requisiti Shopify App Store:
-    - Verifica firma HMAC
+    Webhook GDPR Obbligatorio: customers/data_request
+    Richiesta dati cliente.
     """
-    # Leggi body raw per verifica HMAC
     body = await request.body()
-    
-    # Verifica HMAC (requisito Shopify)
     if not verify_webhook_hmac(body, x_shopify_hmac_sha256):
         raise HTTPException(status_code=401, detail="Invalid webhook HMAC")
     
-    # Processa aggiornamento shop (se necessario)
-    # Per ora solo log, in futuro si può sincronizzare dati
+    # Logica per recuperare e inviare dati cliente (via email al merchant o response diretta se sincrono)
+    # Per ora logghiamo e confermiamo ricezione
+    print(f"GDPR Data Request received for shop {x_shopify_shop_domain}")
+    return {"status": "success"}
+
+@app.post("/api/shopify/webhooks/customers/redact")
+async def shopify_webhook_customers_redact(
+    request: Request,
+    x_shopify_shop_domain: str = Header(..., alias="X-Shopify-Shop-Domain"),
+    x_shopify_hmac_sha256: str = Header(..., alias="X-Shopify-Hmac-Sha256")
+):
+    """
+    Webhook GDPR Obbligatorio: customers/redact
+    Richiesta cancellazione dati cliente.
+    """
+    body = await request.body()
+    if not verify_webhook_hmac(body, x_shopify_hmac_sha256):
+        raise HTTPException(status_code=401, detail="Invalid webhook HMAC")
     
-    return {"status": "success", "message": "Shop update processed"}
+    print(f"GDPR Customer Redact received for shop {x_shopify_shop_domain}")
+    # Logica cancellazione dati
+    return {"status": "success"}
+
+@app.post("/api/shopify/webhooks/shop/redact")
+async def shopify_webhook_shop_redact(
+    request: Request,
+    x_shopify_shop_domain: str = Header(..., alias="X-Shopify-Shop-Domain"),
+    x_shopify_hmac_sha256: str = Header(..., alias="X-Shopify-Hmac-Sha256")
+):
+    """
+    Webhook GDPR Obbligatorio: shop/redact
+    Richiesta cancellazione dati negozio (48h dopo disinstallazione).
+    """
+    body = await request.body()
+    if not verify_webhook_hmac(body, x_shopify_hmac_sha256):
+        raise HTTPException(status_code=401, detail="Invalid webhook HMAC")
+    
+    print(f"GDPR Shop Redact received for shop {x_shopify_shop_domain}")
+    # Logica cancellazione totale dati shop
+    return {"status": "success"}
+
 
 
 # =========================

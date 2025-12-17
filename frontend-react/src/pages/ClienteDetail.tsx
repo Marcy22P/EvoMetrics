@@ -26,6 +26,7 @@ import ClienteStats from '../components/clienti/ClienteStats';
 import ClienteRecordings from '../components/clienti/ClienteRecordings';
 import ClienteTasks from '../components/clienti/ClienteTasks';
 import ClienteDealHistory from '../components/clienti/ClienteDealHistory';
+import ClienteDrive from '../components/clienti/ClienteDrive';
 
 const ClienteDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -285,6 +286,11 @@ const ClienteDetail: React.FC = () => {
                     onChange={handleReferenteChange} 
                 />
                 
+                <ClienteDrive 
+                    clienteId={cliente.id}
+                    folderId={cliente.dettagli?.drive_folder_id}
+                />
+
                 <ClienteCanali 
                     canali={cliente.dettagli?.canali || []}
                     onAdd={handleAddCanale}

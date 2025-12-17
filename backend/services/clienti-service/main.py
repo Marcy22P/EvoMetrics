@@ -3,6 +3,7 @@ Clienti Service - Microservizio per gestione clienti e magic links
 """
 
 from fastapi import FastAPI, HTTPException, status, Depends, Request, UploadFile, File, Form
+from fastapi.responses import RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Dict, Any, Optional
 import os
@@ -223,9 +224,40 @@ app.add_middleware(
 )
 
 
+@app.get("/api/drive/google/login")
+async def google_drive_login():
+    """Avvia il flow OAuth specificamente per l'integrazione Drive"""
+    try:
+        # Usa un redirect URI specifico per Drive per evitare conflitti con il login utente
+        redirect_uri = f"{BASE_URL}/api/drive/google/callback"
+        
+        # Se siamo in produzione, assicuriamoci di usare HTTPS
+        if "evolutioneimprese.com" in redirect_uri:
+             redirect_uri = redirect_uri.replace("http://", "https://")
+             
+        auth_url = drive_service.get_auth_url(redirect_uri)
+        return {"url": auth_url}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Errore generazione auth url: {str(e)}")
+
+@app.get("/api/drive/google/callback")
+async def google_drive_callback(code: str, state: Optional[str] = None):
+    """Callback specifica per OAuth Google Drive"""
+    try:
+        redirect_uri = f"{BASE_URL}/api/drive/google/callback"
+        if "evolutioneimprese.com" in redirect_uri:
+             redirect_uri = redirect_uri.replace("http://", "https://")
+
+        drive_service.complete_auth(code, redirect_uri)
+        
+        return RedirectResponse(url=f"{FRONTEND_URL}/drive?connected=true")
+    except Exception as e:
+        return RedirectResponse(url=f"{FRONTEND_URL}/drive?error={str(e)}")
+
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy", "service": "clienti-service"}
+    drive_status = "connected" if drive_service.is_ready() else "disconnected"
+    return {"status": "healthy", "service": "clienti-service", "drive": drive_status}
 
 
 def serialize_cliente(row: Dict[str, Any]) -> Dict[str, Any]:
@@ -873,7 +905,10 @@ async def list_drive_files(
             raise HTTPException(status_code=503, detail="Google Drive Service non configurato")
 
         # Se folder_id non è specificato, usa la root del cliente
-        if not folder_id:
+        current_folder_id = folder_id
+        parents = []
+        
+        if not current_folder_id:
             cliente = await database.fetch_one(
                 clienti_table.select().where(clienti_table.c.id == cliente_id)
             )
@@ -882,15 +917,44 @@ async def list_drive_files(
             
             cliente_dict = serialize_cliente(dict(cliente))
             dettagli = cliente_dict.get("dettagli") or {}
-            folder_id = dettagli.get("drive_folder_id")
+            current_folder_id = dettagli.get("drive_folder_id")
             
-            if not folder_id:
-                return {"files": [], "current_folder_id": None, "message": "Cartella non inizializzata"}
+            if not current_folder_id:
+                return {"files": [], "current_folder_id": None, "parents": [], "message": "Cartella non inizializzata"}
+        else:
+             # Se stiamo navigando una sottocartella, prova a recuperare info sul parent per breadcrumbs
+             # Nota: L'API Drive v3 non dà facilmente tutto l'albero padre in una chiamata, 
+             # qui semplifichiamo recuperando solo info della cartella corrente
+             folder_meta = drive_service.get_file_metadata(current_folder_id)
+             if folder_meta and 'parents' in folder_meta:
+                  # TODO: In futuro implementare breadcrumbs completi risalendo l'albero
+                  pass
 
-        files = drive_service.list_files(folder_id)
-        return {"files": files, "current_folder_id": folder_id}
+        files = drive_service.list_files(current_folder_id)
+        return {"files": files, "current_folder_id": current_folder_id, "parents": parents}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Errore listing Drive: {str(e)}")
+
+@app.post("/api/clienti/{cliente_id}/drive/folder")
+async def create_drive_folder(
+    cliente_id: str,
+    name: str = Form(...),
+    parent_id: str = Form(...),
+    current_user: Dict[str, Any] = Depends(check_clienti_update)
+):
+    """Crea una nuova sottocartella"""
+    try:
+        if not drive_service or not drive_service.is_ready():
+            raise HTTPException(status_code=503, detail="Google Drive Service non configurato")
+            
+        folder_id = drive_service.create_folder(name, parent_id)
+        if not folder_id:
+            raise HTTPException(status_code=500, detail="Impossibile creare la cartella")
+            
+        return {"id": folder_id, "name": name, "mimeType": "application/vnd.google-apps.folder"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Errore creazione cartella: {str(e)}")
+
 
 @app.post("/api/clienti/{cliente_id}/drive/upload")
 async def upload_drive_file(
@@ -917,9 +981,13 @@ async def upload_drive_file(
             if not target_folder_id:
                 raise HTTPException(status_code=400, detail="Cartella Drive non inizializzata")
 
-        content = await file.read()
+        # Per evitare di caricare tutto in memoria con await file.read(),
+        # passiamo lo spool file (temp file su disco) direttamente a drive_utils.
+        # FastAPI usa SpooledTemporaryFile per UploadFile.
+        
+        # Nota: file.file è un oggetto Python file-like standard
         uploaded_file = drive_service.upload_file(
-            content, 
+            file.file, 
             file.filename, 
             target_folder_id, 
             file.content_type

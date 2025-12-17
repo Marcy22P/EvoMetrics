@@ -69,6 +69,7 @@ export interface DettagliCliente {
   tasks?: Task[];
   stato_umore?: 'triste' | 'neutrale' | 'felice';
   note_rapide?: string;
+  drive_folder_id?: string;
 }
 
 export interface Cliente {
@@ -115,6 +116,16 @@ export interface MagicLink {
   created_at: string;
   used_at?: string;
   status: 'active' | 'used' | 'expired' | 'revoked';
+}
+
+export interface DriveFile {
+  id: string;
+  name: string;
+  mimeType: string;
+  webViewLink: string;
+  iconLink: string;
+  createdTime?: string;
+  size?: string;
 }
 
 class ClientiApiService {
@@ -331,6 +342,71 @@ class ClientiApiService {
         return { filename: file.name, value: 0, error: errorMessage };
     }
     return await response.json();
+  }
+
+  // --- GOOGLE DRIVE METHODS ---
+
+  async initDriveFolder(clienteId: string): Promise<{ folder_id: string, folder_url: string }> {
+    const headers = await this.getAuthHeaders();
+    const response = await fetch(`${CLIENTI_SERVICE_URL}/api/clienti/${clienteId}/drive/init`, {
+        method: 'POST',
+        headers
+    });
+    if (!response.ok) {
+        throw new Error(`Errore init drive: ${response.status}`);
+    }
+    return await response.json();
+  }
+
+  async listDriveFiles(clienteId: string, folderId?: string): Promise<{ files: DriveFile[], current_folder_id: string, message?: string }> {
+    const headers = await this.getAuthHeaders();
+    let url = `${CLIENTI_SERVICE_URL}/api/clienti/${clienteId}/drive/files`;
+    if (folderId) url += `?folder_id=${folderId}`;
+    
+    const response = await fetch(url, {
+        method: 'GET',
+        headers
+    });
+    if (!response.ok) {
+        throw new Error(`Errore listing drive: ${response.status}`);
+    }
+    return await response.json();
+  }
+
+  async uploadDriveFile(clienteId: string, file: File, folderId?: string): Promise<DriveFile> {
+    const headers = await this.getAuthHeaders(true);
+    const formData = new FormData();
+    formData.append('file', file);
+    if (folderId) formData.append('folder_id', folderId);
+
+    const response = await fetch(`${CLIENTI_SERVICE_URL}/api/clienti/${clienteId}/drive/upload`, {
+        method: 'POST',
+        headers,
+        body: formData
+    });
+    
+    if (!response.ok) {
+        throw new Error(`Errore upload drive: ${response.status}`);
+    }
+    return await response.json();
+  }
+
+  async createDriveFolder(clienteId: string, name: string, parentId: string): Promise<DriveFile> {
+      const headers = await this.getAuthHeaders(true); // Uso multipart/form-data
+      const formData = new FormData();
+      formData.append('name', name);
+      formData.append('parent_id', parentId);
+
+      const response = await fetch(`${CLIENTI_SERVICE_URL}/api/clienti/${clienteId}/drive/folder`, {
+          method: 'POST',
+          headers,
+          body: formData
+      });
+
+      if (!response.ok) {
+          throw new Error(`Errore creazione cartella: ${response.status}`);
+      }
+      return await response.json();
   }
 
   // NOTA: I metodi Shopify sono stati spostati in shopifyApi.ts

@@ -206,11 +206,23 @@ const ShopifyLayout: React.FC = () => {
             icon: ListBulletedIcon,
             url: '/task',
             onClick: () => navigate('/task'),
-            selected: location.pathname.startsWith('/task')
+            selected: location.pathname.startsWith('/task') || location.pathname.startsWith('/drive'),
+            subNavigationItems: [
+              {
+                  label: 'Task',
+                  url: '/task',
+                  onClick: () => navigate('/task'),
+              },
+              {
+                  label: 'Drive',
+                  url: '/drive',
+                  onClick: () => navigate('/drive'),
+              }
+            ]
           },
           {
             label: 'Workflow',
-            icon: ClipboardIcon, // Sostituito LayoutIcon non trovato
+            icon: ClipboardIcon,
             url: '/workflow',
             onClick: () => navigate('/workflow'),
             selected: location.pathname.startsWith('/workflow')
