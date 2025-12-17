@@ -177,10 +177,52 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Middleware per Headers di Sicurezza (CSP per Shopify)
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    # Permetti embedding solo da domini Shopify
+    response.headers["Content-Security-Policy"] = "frame-ancestors https://*.myshopify.com https://admin.shopify.com;"
+    return response
+
 
 # =========================
 # OAUTH ENDPOINTS
 # =========================
+
+@app.get("/api/shopify/entry")
+async def shopify_app_entry(
+    shop: str,
+    request: Request
+):
+    """
+    Entry point principale per l'App URL di Shopify.
+    Gestisce l'ingresso dallo store Shopify.
+    """
+    # Normalizza shop
+    shop_normalized = shop.strip().lower()
+    if not shop_normalized.endswith('.myshopify.com'):
+        shop_normalized = f"{shop_normalized}.myshopify.com"
+
+    # Verifica se lo shop è già installato
+    integration = await database.fetch_one(
+        shopify_integrations_table.select()
+        .where(shopify_integrations_table.c.shop == shop_normalized)
+        .where(shopify_integrations_table.c.is_active == True)
+    )
+
+    if integration:
+        # Shop già connesso -> Redirect all'app (o admin Shopify se embedded)
+        # Se siamo in embedded app, dovremmo tornare un HTML con App Bridge
+        # Per ora redirigiamo alla dashboard admin dove l'app è ospitata
+        app_handle = os.environ.get("SHOPIFY_APP_HANDLE") or os.environ.get("SHOPIFY_API_KEY")
+        shop_name = shop_normalized.replace(".myshopify.com", "")
+        return RedirectResponse(f"https://admin.shopify.com/store/{shop_name}/apps/{app_handle}")
+    else:
+        # Shop non connesso -> Istruzioni installazione
+        # Non possiamo iniziare OAuth senza cliente_id
+        return RedirectResponse(f"{FRONTEND_URL}/login?shopify_install_instructions=true&shop={shop}")
+
 
 @app.get("/api/shopify/oauth/authorize")
 async def shopify_oauth_authorize(
