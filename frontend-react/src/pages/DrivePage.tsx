@@ -7,6 +7,7 @@ import {
     ExternalIcon, LogoGoogleIcon, FolderIcon, FileIcon, NoteIcon, 
     ImageIcon, ArrowLeftIcon, PlusIcon, UploadIcon, ImportIcon
 } from '@shopify/polaris-icons';
+import { useAuth } from '../hooks/useAuth';
 
 interface DriveFile {
     id: string;
@@ -332,7 +333,8 @@ const DrivePage: React.FC = () => {
     // URL Backend Clienti Service
     const CLIENTI_SERVICE_URL = import.meta.env.VITE_CLIENTI_SERVICE_URL || 
         (window.location.hostname === 'localhost' ? 'http://localhost:10000' : window.location.origin);
-
+    
+    const { user } = useAuth();
     const [isConnected, setIsConnected] = useState<boolean | null>(null);
 
     const checkStatus = async () => {
@@ -417,20 +419,30 @@ const DrivePage: React.FC = () => {
                                     </div>
                                     
                                     <BlockStack gap="400">
-                                        <Banner tone="warning">
-                                            <p>Drive non connesso. Chiedi all'amministratore di configurare il Service Account o connetti manualmente.</p>
-                                        </Banner>
+                                        {(user?.role === 'admin' || user?.role === 'superadmin') ? (
+                                            <>
+                                                <Banner tone="warning">
+                                                    <p>Drive non connesso. Connetti l'account Google "info@evoluzioneimprese.com" per abilitare il servizio per tutti gli utenti.</p>
+                                                </Banner>
 
-                                        <InlineStack align="center" gap="400">
-                                            <Button 
-                                                variant="primary" 
-                                                size="large"
-                                                icon={LogoGoogleIcon} 
-                                                onClick={handleConnectDrive}
-                                            >
-                                                Connetti Google Drive (Utente)
-                                            </Button>
-                                            
+                                                <InlineStack align="center" gap="400">
+                                                    <Button 
+                                                        variant="primary" 
+                                                        size="large"
+                                                        icon={LogoGoogleIcon} 
+                                                        onClick={handleConnectDrive}
+                                                    >
+                                                        Connetti Google Drive (Admin)
+                                                    </Button>
+                                                </InlineStack>
+                                            </>
+                                        ) : (
+                                            <Banner tone="critical">
+                                                <p>Il sistema Drive non è attualmente connesso. Contatta l'amministratore per attivare il servizio.</p>
+                                            </Banner>
+                                        )}
+                                        
+                                        <InlineStack align="center">
                                             <Button 
                                                 icon={ExternalIcon} 
                                                 size="large"
