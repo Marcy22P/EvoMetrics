@@ -858,8 +858,8 @@ async def analyze_document(
 # =========================
 
 @app.get("/api/drive/status")
-async def get_drive_status(current_user: Dict[str, Any] = Depends(check_clienti_read)):
-    """Verifica lo stato della connessione Drive"""
+async def get_drive_status(current_user: Dict[str, Any] = Depends(get_current_user)):
+    """Verifica lo stato della connessione Drive (Accessibile a tutti gli utenti loggati)"""
     is_connected = drive_service.is_ready() if drive_service else False
     auth_type = drive_service.auth_type if drive_service else None
     return {"connected": is_connected, "auth_type": auth_type}
