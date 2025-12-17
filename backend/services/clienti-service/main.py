@@ -2,7 +2,7 @@
 Clienti Service - Microservizio per gestione clienti e magic links
 """
 
-from fastapi import FastAPI, HTTPException, status, Depends, Request, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, status, Depends, Request, UploadFile, File, Form, Query
 from fastapi.responses import RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Dict, Any, Optional
@@ -90,25 +90,40 @@ DEFAULT_PERMISSIONS_BY_ROLE: Dict[str, Any] = {
         "clienti:update": True,
         "clienti:delete": True,
     },
-    "user": {},
+    "user": {
+        "clienti:read": True,
+        "clienti:update": True,
+    },
 }
 
 
-async def get_current_user(request: Request) -> Dict[str, Any]:
+async def get_current_user_token(
+    request: Request,
+    token_query: Optional[str] = Query(None, alias="token")
+) -> str:
+    """Estrae il token da Header Bearer O Query param (per download diretti)"""
+    auth_header = request.headers.get("Authorization")
+    if auth_header and auth_header.startswith("Bearer "):
+        return auth_header.split(" ")[1]
+    
+    if token_query:
+        return token_query
+        
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Token mancante",
+    )
+
+
+async def get_current_user(
+    token: str = Depends(get_current_user_token)
+) -> Dict[str, Any]:
     """Ottieni l'utente corrente dal token JWT"""
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
-    
-    auth_header = request.headers.get("Authorization")
-    if not auth_header or not auth_header.startswith("Bearer "):
-        raise credentials_exception
-    
-    token = auth_header.split(" ")[1]
-    if not token:
-        raise credentials_exception
     
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])

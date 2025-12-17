@@ -150,23 +150,18 @@ const GlobalDriveBrowser: React.FC = () => {
     const handleDownload = async (fileId: string, fileName: string) => {
         try {
             const token = localStorage.getItem('auth_token');
-            const res = await fetch(`${CLIENTI_SERVICE_URL}/api/drive/download/${fileId}`, {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
+            // Costruisci URL per download diretto (triggera download nativo browser)
+            const downloadUrl = `${CLIENTI_SERVICE_URL}/api/drive/download/${fileId}?token=${token}`;
             
-            if (res.ok) {
-                const blob = await res.blob();
-                const url = window.URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = fileName;
-                document.body.appendChild(a);
-                a.click();
-                window.URL.revokeObjectURL(url);
-                document.body.removeChild(a);
-            } else {
-                alert("Errore download file");
-            }
+            // Usa window.open o location.href per attivare il download manager
+            // Questo evita il buffering in memoria di fetch/blob che rallenta tutto
+            const link = document.createElement('a');
+            link.href = downloadUrl;
+            link.download = fileName; // Suggerisce nome file (anche se backend manda header)
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            
         } catch (e) {
             console.error(e);
             alert("Errore download");

@@ -13,6 +13,7 @@ import uuid
 import secrets
 import hmac
 import hashlib
+import base64
 from pathlib import Path
 from datetime import datetime
 from jose import JWTError, jwt
@@ -91,16 +92,18 @@ def decrypt_shopify_token(encrypted_token: str) -> str:
 
 
 def verify_webhook_hmac(data: bytes, hmac_header: str) -> bool:
-    """Verifica HMAC signature per webhook Shopify"""
+    """Verifica HMAC signature per webhook Shopify (Base64 encoded)"""
     api_secret = os.environ.get("SHOPIFY_API_SECRET")
     if not api_secret:
         return False
     
-    calculated_hmac = hmac.new(
+    digest = hmac.new(
         api_secret.encode(),
         data,
         hashlib.sha256
-    ).hexdigest()
+    ).digest()
+    
+    calculated_hmac = base64.b64encode(digest).decode('utf-8')
     
     return hmac.compare_digest(calculated_hmac, hmac_header)
 
@@ -329,31 +332,29 @@ async def shopify_oauth_callback(
         
         # REQUISITO SHOPIFY: Reindirizza immediatamente all'interfaccia utente dell'app
         # Per app Embedded (App Bridge), il redirect deve essere fatto all'interno dell'admin Shopify
-        # URL formato: https://admin.shopify.com/store/{shop_name}/apps/{app_handle}/...
+        # URL formato: https://admin.shopify.com/store/{shop_name}/apps/{app_handle_or_api_key}
         
         # Estrai nome shop dal dominio (es. test.myshopify.com -> test)
         shop_name = shop_normalized.replace(".myshopify.com", "")
         
-        # App Handle (dovrebbe essere in env o config, qui usiamo un default o variabile)
-        app_handle = os.environ.get("SHOPIFY_APP_HANDLE", "evometrics") # Sostituire con vero handle
+        # Preferisci App Handle se configurato (più pulito), altrimenti usa API Key
+        app_identifier = os.environ.get("SHOPIFY_APP_HANDLE")
+        if not app_identifier:
+            app_identifier = os.environ.get("SHOPIFY_API_KEY")
+            
+        # Costruisci URL Admin
+        # Nota: Per passare parametri alla app embedded, dovremmo usarli come query params o path
+        # ma per la conformità iniziale è meglio reindirizzare alla home dell'app.
+        # Possiamo appendere il deep link se necessario, ma assicuriamoci che sia valido.
         
-        # Costruisci URL Admin per App Bridge
-        # Nota: questo URL è per l'embedded app. Se non è embedded, usa frontend_url diretto.
-        # Assumiamo embedded app per Shopify Store.
+        admin_url = f"https://admin.shopify.com/store/{shop_name}/apps/{app_identifier}"
         
-        # Deep link alla pagina specifica dell'integrazione nel tuo frontend
-        # Il frontend deve gestire il routing App Bridge
-        target_path = f"/shopify_integrations/{cliente_id}?shopify_connected=true"
-        encoded_target = target_path # Potrebbe richiedere encoding
-        
-        # Redirect finale
-        # Se è un'installazione gestita da Shopify (senza magic link token), 
-        # Shopify si aspetta redirect a https://admin.shopify.com/store/{shop}/apps/{api_key}
-        # o App Handle.
-        
-        # Usiamo l'approccio standard: redirect all'Admin Shopify che caricherà l'app iframe
-        api_key = os.environ.get("SHOPIFY_API_KEY")
-        admin_url = f"https://admin.shopify.com/store/{shop_name}/apps/{api_key}{target_path}"
+        # Aggiungi deep link come query param gestito dal frontend o path se supportato
+        if target_path:
+             # Shopify Admin gestisce i path appesi all'URL dell'app
+             # Rimuovi lo slash iniziale per evitare doppi slash se necessario, ma admin.shopify.com/.../apps/key/path funziona
+             # admin_url = f"{admin_url}{target_path}"
+             pass # Per sicurezza durante la review, mandiamo alla home. Il frontend gestirà lo stato.
         
         return RedirectResponse(url=admin_url)
 
