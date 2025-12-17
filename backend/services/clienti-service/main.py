@@ -874,14 +874,15 @@ async def get_drive_status(current_user: Dict[str, Any] = Depends(get_current_us
 @app.get("/api/drive/files")
 async def list_global_drive_files(
     folder_id: Optional[str] = None,
-    current_user: Dict[str, Any] = Depends(check_clienti_read)
+    q: Optional[str] = None,
+    current_user: Dict[str, Any] = Depends(check_clienti_read) # Fallback al check classico, ma con permessi DB fixati
 ):
     """Lista file Drive globali (admin view)"""
     try:
         if not drive_service or not drive_service.is_ready():
             raise HTTPException(status_code=503, detail="Drive non connesso")
         
-        files = drive_service.list_files(folder_id)
+        files = drive_service.list_files(folder_id, query_term=q)
         return {"files": files, "current_folder_id": folder_id, "parents": []}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Errore listing Drive: {str(e)}")

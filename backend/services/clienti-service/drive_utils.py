@@ -131,28 +131,26 @@ class DriveService:
     def is_ready(self) -> bool:
         return self.service is not None
 
-    def list_files(self, folder_id: str = None) -> List[Dict[str, Any]]:
-        """Elenca file e cartelle in una specifica cartella"""
+    def list_files(self, folder_id: str = None, query_term: str = None) -> List[Dict[str, Any]]:
+        """Elenca file e cartelle in una specifica cartella o cerca per nome"""
         if not self.is_ready():
             return []
 
-        # Se folder_id è None, cerca nella root E nei file condivisi
-        if folder_id:
-            query = f"'{folder_id}' in parents"
-        else:
-            # Trick: Cerca nella root OPPURE file condivisi con me che non hanno parent (shared roots)
-            # Ma per semplicità, se non c'è folder_id, spesso vogliamo vedere la 'root' virtuale
-            # che include cartelle condivise.
-            # 'sharedWithMe' mostra i file condivisi.
-            # Proviamo una logica ibrida: se folder_id è nullo, cerchiamo cartelle condivise o root
-            pass 
+        # Costruzione query base
+        query_parts = ["trashed = false"]
 
-        # Query migliorata per vedere tutto alla prima chiamata
         if folder_id:
-             query = f"'{folder_id}' in parents and trashed = false"
-        else:
-             # Mostra root e cartelle condivise
-             query = "( 'root' in parents or sharedWithMe = true ) and trashed = false"
+            query_parts.append(f"'{folder_id}' in parents")
+        elif not query_term:
+             # Se non c'è folder e non c'è ricerca, mostra root/shared
+             query_parts.append("( 'root' in parents or sharedWithMe = true )")
+        
+        if query_term:
+            # Escape semplice per evitare injection banali
+            safe_term = query_term.replace("'", "\\'")
+            query_parts.append(f"name contains '{safe_term}'")
+
+        query = " and ".join(query_parts)
         
         try:
             results = self.service.files().list(

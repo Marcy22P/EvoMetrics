@@ -27,6 +27,10 @@ const GlobalDriveBrowser: React.FC = () => {
     const [currentFolderId, setCurrentFolderId] = useState<string | undefined>(undefined);
     const [breadcrumbs, setBreadcrumbs] = useState<{id: string, name: string}[]>([]);
     
+    // Search
+    const [searchTerm, setSearchTerm] = useState("");
+    const [debouncedSearch, setDebouncedSearch] = useState("");
+
     // Create Folder Modal
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [newFolderName, setNewFolderName] = useState("");
@@ -38,13 +42,22 @@ const GlobalDriveBrowser: React.FC = () => {
     // Error Banner
     const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-    const fetchFiles = async (folderId?: string) => {
+    // Debounce Search Effect
+    useEffect(() => {
+        const timer = setTimeout(() => {
+            setDebouncedSearch(searchTerm);
+        }, 500);
+        return () => clearTimeout(timer);
+    }, [searchTerm]);
+
+    const fetchFiles = async (folderId?: string, query?: string) => {
         setLoading(true);
         setErrorMsg(null);
         try {
             const token = localStorage.getItem('auth_token');
             const url = new URL(`${CLIENTI_SERVICE_URL}/api/drive/files`);
             if (folderId) url.searchParams.append('folder_id', folderId);
+            if (query) url.searchParams.append('q', query);
             
             const response = await fetch(url.toString(), {
                 headers: { 'Authorization': `Bearer ${token}` }
@@ -53,7 +66,10 @@ const GlobalDriveBrowser: React.FC = () => {
             if (response.ok) {
                 const data = await response.json();
                 setFiles(data.files);
-                setCurrentFolderId(data.current_folder_id);
+                // Se è una ricerca, non aggiorniamo breadcrumbs o folder ID per evitare confusione
+                if (!query) {
+                    setCurrentFolderId(data.current_folder_id);
+                }
             } else {
                 setErrorMsg("Errore caricamento file");
             }
@@ -65,22 +81,35 @@ const GlobalDriveBrowser: React.FC = () => {
         }
     };
 
+    // Reload when folder or search changes
     useEffect(() => {
-        fetchFiles(undefined);
-    }, []);
+        // Se c'è una ricerca attiva, ignoriamo folderId e cerchiamo globalmente (o nella cartella corrente se backend lo supportasse in combo, 
+        // ma la nostra logica backend usa folderId O query.
+        // Se vogliamo cercare DENTRO la cartella corrente, dovremmo passare entrambi.
+        // Attuale logica Backend: if folder_id ... elif query ...
+        // Quindi la ricerca è globale se non c'è folder_id, oppure è ignorata se c'è folder_id.
+        // FIX Backend richiesto se vogliamo cercare OVUNQUE o DENTRO cartella.
+        // La mia modifica backend usa: if folder_id ... elif not q ...
+        // E POI if q -> append. Quindi supporta entrambi!
+        
+        // Se cerchiamo, rimaniamo nella "vista" corrente ma filtriamo
+        fetchFiles(currentFolderId, debouncedSearch);
+    }, [debouncedSearch, currentFolderId]);
 
     const handleFolderClick = (folderId: string, folderName: string) => {
+        setSearchTerm(""); // Reset search on navigation
         setBreadcrumbs([...breadcrumbs, { id: folderId, name: folderName }]);
-        fetchFiles(folderId);
+        setCurrentFolderId(folderId); // Triggera useEffect
     };
 
     const handleBackClick = () => {
+        setSearchTerm("");
         const newBreadcrumbs = [...breadcrumbs];
         newBreadcrumbs.pop();
         setBreadcrumbs(newBreadcrumbs);
         
         const parentId = newBreadcrumbs.length > 0 ? newBreadcrumbs[newBreadcrumbs.length - 1].id : undefined;
-        fetchFiles(parentId);
+        setCurrentFolderId(parentId);
     };
 
     const handleCreateFolder = async () => {
@@ -241,7 +270,7 @@ const GlobalDriveBrowser: React.FC = () => {
                     )}
 
                     <InlineStack align="space-between">
-                        <InlineStack gap="200">
+                        <InlineStack gap="200" align="center">
                             {breadcrumbs.length > 0 && (
                                 <Button icon={ArrowLeftIcon} onClick={handleBackClick}>Indietro</Button>
                             )}
@@ -249,6 +278,21 @@ const GlobalDriveBrowser: React.FC = () => {
                                 {breadcrumbs.length > 0 ? breadcrumbs[breadcrumbs.length - 1].name : 'Il tuo Drive (Root & Condivisi)'}
                             </Text>
                         </InlineStack>
+                        
+                        <div style={{ minWidth: '300px' }}>
+                            <TextField 
+                                label="Cerca file" 
+                                labelHidden 
+                                placeholder="Cerca file o cartelle..." 
+                                value={searchTerm} 
+                                onChange={setSearchTerm}
+                                autoComplete="off"
+                                clearButton
+                                onClearButtonClick={() => setSearchTerm("")}
+                                prefix={<Icon source={NoteIcon} />}
+                            />
+                        </div>
+
                         <InlineStack gap="200">
                             <input 
                                 type="file" 
