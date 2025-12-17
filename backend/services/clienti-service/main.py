@@ -838,6 +838,121 @@ async def analyze_document(
 # GOOGLE DRIVE ENDPOINTS
 # =========================
 
+# =========================
+# GOOGLE DRIVE GLOBAL ENDPOINTS (ADMIN VIEW)
+# =========================
+
+@app.get("/api/drive/status")
+async def get_drive_status(current_user: Dict[str, Any] = Depends(check_clienti_read)):
+    """Verifica lo stato della connessione Drive"""
+    is_connected = drive_service.is_ready() if drive_service else False
+    auth_type = drive_service.auth_type if drive_service else None
+    return {"connected": is_connected, "auth_type": auth_type}
+
+@app.get("/api/drive/files")
+async def list_global_drive_files(
+    folder_id: Optional[str] = None,
+    current_user: Dict[str, Any] = Depends(check_clienti_read)
+):
+    """Lista file Drive globali (admin view)"""
+    try:
+        if not drive_service or not drive_service.is_ready():
+            raise HTTPException(status_code=503, detail="Drive non connesso")
+        
+        files = drive_service.list_files(folder_id)
+        return {"files": files, "current_folder_id": folder_id, "parents": []}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Errore listing Drive: {str(e)}")
+
+@app.post("/api/drive/folder")
+async def create_global_drive_folder(
+    name: str = Form(...),
+    parent_id: Optional[str] = Form(None),
+    current_user: Dict[str, Any] = Depends(check_clienti_update)
+):
+    """Crea cartella globale"""
+    try:
+        if not drive_service or not drive_service.is_ready():
+            raise HTTPException(status_code=503, detail="Drive non connesso")
+            
+        folder_id = drive_service.create_folder(name, parent_id)
+        if not folder_id:
+            raise HTTPException(status_code=500, detail="Errore creazione cartella")
+            
+        return {"id": folder_id, "name": name}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Errore: {str(e)}")
+
+from fastapi.responses import RedirectResponse, StreamingResponse
+
+# ... (imports esistenti)
+
+@app.get("/api/drive/download/{file_id}")
+async def download_drive_file(
+    file_id: str,
+    current_user: Dict[str, Any] = Depends(check_clienti_read)
+):
+    """Scarica un file da Drive (proxy)"""
+    try:
+        if not drive_service or not drive_service.is_ready():
+             raise HTTPException(status_code=503, detail="Drive non connesso")
+
+        # Ottieni metadata per nome e size
+        meta = drive_service.get_file_metadata(file_id)
+        if not meta:
+            raise HTTPException(status_code=404, detail="File non trovato")
+
+        # Scarica stream
+        # Nota: serve implementare un metodo download_stream in drive_utils
+        # Per ora usiamo webContentLink se disponibile, o redirect
+        # Ma l'utente vuole scaricare "dalla webapp", quindi meglio proxy se vogliamo evitare auth cookie issues su drive.google.com
+        
+        # Implementiamo download_file_stream in drive_utils
+        stream, content_type, filename = drive_service.download_file_stream(file_id)
+        
+        return StreamingResponse(
+            stream, 
+            media_type=content_type,
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Errore download: {str(e)}")
+
+@app.post("/api/drive/upload")
+async def upload_global_drive_file(
+    file: UploadFile = File(...),
+    folder_id: Optional[str] = Form(None),
+    current_user: Dict[str, Any] = Depends(check_clienti_update)
+):
+    """Upload file globale"""
+    try:
+        print(f"📂 DRIVE UPLOAD REQUEST: folder_id='{folder_id}', filename='{file.filename}'")
+
+        if not drive_service or not drive_service.is_ready():
+            raise HTTPException(status_code=503, detail="Drive non connesso")
+        
+        if not folder_id:
+             print("❌ ERRORE: Tentativo di upload senza folder_id (Root Service Account vietata)")
+             raise HTTPException(status_code=400, detail="Devi selezionare una cartella condivisa per caricare file.")
+
+        uploaded = drive_service.upload_file(
+            file.file,
+            file.filename,
+            folder_id,
+            file.content_type
+        )
+        if not uploaded:
+             raise HTTPException(status_code=500, detail="Upload fallito")
+        return uploaded
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Upload exception: {e}")
+        raise HTTPException(status_code=500, detail=f"Errore upload: {str(e)}")
+
+
 @app.post("/api/clienti/{cliente_id}/drive/init")
 async def init_drive_folder(
     cliente_id: str,

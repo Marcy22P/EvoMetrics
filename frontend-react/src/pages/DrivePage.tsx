@@ -1,15 +1,375 @@
-import React from 'react';
-import { Page, Layout, Card, Text, BlockStack, Button, Box, InlineStack } from '@shopify/polaris';
-import { ExternalIcon, LogoGoogleIcon } from '@shopify/polaris-icons';
+import React, { useState, useEffect, useRef } from 'react';
+import { 
+    Page, Layout, Card, Text, BlockStack, Button, Box, InlineStack, 
+    IndexTable, Icon, Spinner, Modal, TextField, Banner, Tooltip
+} from '@shopify/polaris';
+import { 
+    ExternalIcon, LogoGoogleIcon, FolderIcon, FileIcon, NoteIcon, 
+    ImageIcon, ArrowLeftIcon, PlusIcon, UploadIcon, ImportIcon
+} from '@shopify/polaris-icons';
+
+interface DriveFile {
+    id: string;
+    name: string;
+    mimeType: string;
+    webViewLink: string;
+    iconLink?: string;
+    size?: string;
+}
+
+const GlobalDriveBrowser: React.FC = () => {
+    const CLIENTI_SERVICE_URL = import.meta.env.VITE_CLIENTI_SERVICE_URL || 
+        (window.location.hostname === 'localhost' ? 'http://localhost:10000' : window.location.origin);
+
+    const [files, setFiles] = useState<DriveFile[]>([]);
+    const [loading, setLoading] = useState(false);
+    const [currentFolderId, setCurrentFolderId] = useState<string | undefined>(undefined);
+    const [breadcrumbs, setBreadcrumbs] = useState<{id: string, name: string}[]>([]);
+    
+    // Create Folder Modal
+    const [isModalOpen, setIsModalOpen] = useState(false);
+    const [newFolderName, setNewFolderName] = useState("");
+    
+    // Upload
+    const fileInputRef = useRef<HTMLInputElement>(null);
+    const [uploading, setUploading] = useState(false);
+
+    // Error Banner
+    const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+    const fetchFiles = async (folderId?: string) => {
+        setLoading(true);
+        setErrorMsg(null);
+        try {
+            const token = localStorage.getItem('auth_token');
+            const url = new URL(`${CLIENTI_SERVICE_URL}/api/drive/files`);
+            if (folderId) url.searchParams.append('folder_id', folderId);
+            
+            const response = await fetch(url.toString(), {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            
+            if (response.ok) {
+                const data = await response.json();
+                setFiles(data.files);
+                setCurrentFolderId(data.current_folder_id);
+            } else {
+                setErrorMsg("Errore caricamento file");
+            }
+        } catch (error) {
+            console.error("Error fetching files:", error);
+            setErrorMsg("Errore di connessione");
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        fetchFiles(undefined);
+    }, []);
+
+    const handleFolderClick = (folderId: string, folderName: string) => {
+        setBreadcrumbs([...breadcrumbs, { id: folderId, name: folderName }]);
+        fetchFiles(folderId);
+    };
+
+    const handleBackClick = () => {
+        const newBreadcrumbs = [...breadcrumbs];
+        newBreadcrumbs.pop();
+        setBreadcrumbs(newBreadcrumbs);
+        
+        const parentId = newBreadcrumbs.length > 0 ? newBreadcrumbs[newBreadcrumbs.length - 1].id : undefined;
+        fetchFiles(parentId);
+    };
+
+    const handleCreateFolder = async () => {
+        if (!newFolderName) return;
+        try {
+            const token = localStorage.getItem('auth_token');
+            const formData = new FormData();
+            formData.append('name', newFolderName);
+            if (currentFolderId) formData.append('parent_id', currentFolderId);
+
+            const res = await fetch(`${CLIENTI_SERVICE_URL}/api/drive/folder`, {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${token}` },
+                body: formData
+            });
+
+            if (res.ok) {
+                setNewFolderName("");
+                setIsModalOpen(false);
+                fetchFiles(currentFolderId);
+            } else {
+                setErrorMsg("Impossibile creare cartella qui. Assicurati di essere in una cartella condivisa.");
+            }
+        } catch (e) {
+            console.error(e);
+            setErrorMsg("Errore creazione cartella");
+        }
+    };
+
+    const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0];
+        if (!file) return;
+
+        setUploading(true);
+        setErrorMsg(null);
+        try {
+            const token = localStorage.getItem('auth_token');
+            const formData = new FormData();
+            formData.append('file', file);
+            if (currentFolderId) formData.append('folder_id', currentFolderId);
+
+            const res = await fetch(`${CLIENTI_SERVICE_URL}/api/drive/upload`, {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${token}` },
+                body: formData
+            });
+
+            if (res.ok) {
+                fetchFiles(currentFolderId);
+            } else {
+                const data = await res.json();
+                console.error(data);
+                if (res.status === 500 && JSON.stringify(data).includes("storageQuotaExceeded")) {
+                     setErrorMsg("Errore Quota: Non puoi caricare file nella Root del Service Account. Entra prima in una cartella condivisa.");
+                } else {
+                     setErrorMsg("Errore upload file. Assicurati di avere i permessi.");
+                }
+            }
+        } catch (e) {
+            console.error(e);
+            setErrorMsg("Errore upload file");
+        } finally {
+            setUploading(false);
+            if (fileInputRef.current) fileInputRef.current.value = "";
+        }
+    };
+
+    const handleDownload = async (fileId: string, fileName: string) => {
+        try {
+            const token = localStorage.getItem('auth_token');
+            const res = await fetch(`${CLIENTI_SERVICE_URL}/api/drive/download/${fileId}`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            
+            if (res.ok) {
+                const blob = await res.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = fileName;
+                document.body.appendChild(a);
+                a.click();
+                window.URL.revokeObjectURL(url);
+                document.body.removeChild(a);
+            } else {
+                alert("Errore download file");
+            }
+        } catch (e) {
+            console.error(e);
+            alert("Errore download");
+        }
+    };
+
+    const getFileIcon = (mimeType: string) => {
+        if (mimeType.includes('folder')) return FolderIcon;
+        if (mimeType.includes('image')) return ImageIcon;
+        if (mimeType.includes('pdf')) return NoteIcon;
+        return FileIcon;
+    };
+
+    const formatSize = (bytes?: string) => {
+        if (!bytes) return '-';
+        const b = parseInt(bytes);
+        if (b < 1024) return b + ' B';
+        if (b < 1024 * 1024) return (b / 1024).toFixed(1) + ' KB';
+        return (b / (1024 * 1024)).toFixed(1) + ' MB';
+    };
+
+    const resourceName = { singular: 'file', plural: 'files' };
+    const rowMarkup = files.map(
+        ({ id, name, mimeType, webViewLink, size }, index) => (
+            <IndexTable.Row id={id} key={id} position={index}>
+                <IndexTable.Cell>
+                    <InlineStack gap="200" align="start" blockAlign="center">
+                        <div style={{ color: mimeType.includes('folder') ? '#5C6AC4' : 'inherit' }}>
+                             <Icon source={getFileIcon(mimeType)} tone={mimeType.includes('folder') ? "base" : "subdued"} />
+                        </div>
+                        {mimeType === 'application/vnd.google-apps.folder' ? (
+                            <Button variant="plain" onClick={() => handleFolderClick(id, name)}>{name}</Button>
+                        ) : (
+                            <a href={webViewLink} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none', color: 'inherit' }}>
+                                <Text as="span" variant="bodyMd">{name}</Text>
+                            </a>
+                        )}
+                    </InlineStack>
+                </IndexTable.Cell>
+                <IndexTable.Cell>{mimeType.includes('folder') ? 'Cartella' : formatSize(size)}</IndexTable.Cell>
+                <IndexTable.Cell>
+                    <InlineStack gap="200">
+                        {!mimeType.includes('folder') && (
+                            <Tooltip content="Scarica File">
+                                <Button 
+                                    icon={ImportIcon} 
+                                    variant="plain" 
+                                    onClick={() => handleDownload(id, name)}
+                                />
+                            </Tooltip>
+                        )}
+                        <Tooltip content="Apri su Drive">
+                            <Button 
+                                icon={ExternalIcon} 
+                                variant="plain" 
+                                url={webViewLink} 
+                                target="_blank"
+                            />
+                        </Tooltip>
+                    </InlineStack>
+                </IndexTable.Cell>
+            </IndexTable.Row>
+        ),
+    );
+
+    const isRoot = !currentFolderId;
+
+    return (
+        <Card>
+            <Box padding="400">
+                <BlockStack gap="400">
+                    {errorMsg && (
+                        <Banner tone="critical" onDismiss={() => setErrorMsg(null)}>
+                            <p>{errorMsg}</p>
+                        </Banner>
+                    )}
+
+                    <InlineStack align="space-between">
+                        <InlineStack gap="200">
+                            {breadcrumbs.length > 0 && (
+                                <Button icon={ArrowLeftIcon} onClick={handleBackClick}>Indietro</Button>
+                            )}
+                            <Text as="h2" variant="headingMd">
+                                {breadcrumbs.length > 0 ? breadcrumbs[breadcrumbs.length - 1].name : 'Il tuo Drive (Root & Condivisi)'}
+                            </Text>
+                        </InlineStack>
+                        <InlineStack gap="200">
+                            <input 
+                                type="file" 
+                                ref={fileInputRef} 
+                                style={{ display: 'none' }} 
+                                onChange={handleFileUpload}
+                            />
+                             <Tooltip content={isRoot ? "Entra in una cartella condivisa per caricare file" : "Carica File"}>
+                                <Button 
+                                    icon={UploadIcon} 
+                                    onClick={() => fileInputRef.current?.click()} 
+                                    loading={uploading}
+                                    disabled={isRoot}
+                                >
+                                    Carica File
+                                </Button>
+                            </Tooltip>
+                            <Tooltip content={isRoot ? "Entra in una cartella condivisa per creare sottocartelle" : "Nuova Cartella"}>
+                                <Button 
+                                    icon={PlusIcon} 
+                                    onClick={() => setIsModalOpen(true)}
+                                    disabled={isRoot}
+                                >
+                                    Nuova Cartella
+                                </Button>
+                            </Tooltip>
+                        </InlineStack>
+                    </InlineStack>
+
+                    {isRoot && (
+                        <Banner tone="info">
+                            <p>Sei nella vista principale. Per caricare file o creare cartelle, <strong>entra prima in una cartella condivisa</strong>.</p>
+                        </Banner>
+                    )}
+
+                    {loading ? (
+                        <Box padding="800"><InlineStack align="center"><Spinner /></InlineStack></Box>
+                    ) : (
+                        <IndexTable
+                            resourceName={resourceName}
+                            itemCount={files.length}
+                            headings={[
+                                { title: 'Nome' },
+                                { title: 'Dimensione' },
+                                { title: 'Azioni' },
+                            ]}
+                            selectable={false}
+                        >
+                            {rowMarkup}
+                        </IndexTable>
+                    )}
+                </BlockStack>
+            </Box>
+
+            <Modal
+                open={isModalOpen}
+                onClose={() => setIsModalOpen(false)}
+                title="Crea Nuova Cartella"
+                primaryAction={{
+                    content: 'Crea',
+                    onAction: handleCreateFolder,
+                }}
+                secondaryActions={[{
+                    content: 'Annulla',
+                    onAction: () => setIsModalOpen(false),
+                }]}
+            >
+                <Modal.Section>
+                    <TextField
+                        label="Nome Cartella"
+                        value={newFolderName}
+                        onChange={setNewFolderName}
+                        autoComplete="off"
+                    />
+                </Modal.Section>
+            </Modal>
+        </Card>
+    );
+};
 
 const DrivePage: React.FC = () => {
     // URL Backend Clienti Service
     const CLIENTI_SERVICE_URL = import.meta.env.VITE_CLIENTI_SERVICE_URL || 
         (window.location.hostname === 'localhost' ? 'http://localhost:10000' : window.location.origin);
 
+    const [isConnected, setIsConnected] = useState<boolean | null>(null);
+
+    const checkStatus = async () => {
+        try {
+            const token = localStorage.getItem('auth_token');
+            console.log("Checking Drive Status... Token present:", !!token);
+            
+            const response = await fetch(`${CLIENTI_SERVICE_URL}/api/drive/status`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            
+            if (response.ok) {
+                const data = await response.json();
+                console.log("Drive Status Response:", data);
+                setIsConnected(data.connected);
+            } else {
+                const text = await response.text();
+                console.error("Drive Status Error:", response.status, text);
+                setIsConnected(false); // Fallback
+            }
+        } catch (e) {
+            console.error("Error checking drive status (Network/CORS):", e);
+            setIsConnected(false);
+        }
+    };
+
+    useEffect(() => {
+        checkStatus();
+    }, []);
+
     const handleConnectDrive = async () => {
         try {
-            // Richiedi URL auth al backend (endpoint specifico per Drive)
             const token = localStorage.getItem('auth_token');
             const response = await fetch(`${CLIENTI_SERVICE_URL}/api/drive/google/login`, {
                 headers: { 'Authorization': `Bearer ${token}` }
@@ -25,6 +385,22 @@ const DrivePage: React.FC = () => {
             alert("Errore connessione backend");
         }
     };
+
+    if (isConnected === null) {
+        return <Page fullWidth><Box padding="800"><InlineStack align="center"><Spinner size="large"/></InlineStack></Box></Page>;
+    }
+
+    if (isConnected) {
+        return (
+            <Page title="Google Drive Aziendale" fullWidth>
+                <Layout>
+                    <Layout.Section>
+                        <GlobalDriveBrowser />
+                    </Layout.Section>
+                </Layout>
+            </Page>
+        );
+    }
 
     return (
         <Page title="Google Drive Aziendale" fullWidth>
@@ -46,15 +422,9 @@ const DrivePage: React.FC = () => {
                                     </div>
                                     
                                     <BlockStack gap="400">
-                                        <Box background="bg-surface-secondary" padding="400" borderRadius="200">
-                                            <BlockStack gap="200">
-                                                <Text as="h3" variant="headingMd">Stato Connessione</Text>
-                                                <Text as="p">
-                                                    Per abilitare le funzionalità avanzate (navigazione deep, upload, creazione cartelle), 
-                                                    è necessario connettere l'account Google Drive aziendale.
-                                                </Text>
-                                            </BlockStack>
-                                        </Box>
+                                        <Banner tone="warning">
+                                            <p>Drive non connesso. Chiedi all'amministratore di configurare il Service Account o connetti manualmente.</p>
+                                        </Banner>
 
                                         <InlineStack align="center" gap="400">
                                             <Button 
@@ -63,7 +433,7 @@ const DrivePage: React.FC = () => {
                                                 icon={LogoGoogleIcon} 
                                                 onClick={handleConnectDrive}
                                             >
-                                                Connetti Google Drive
+                                                Connetti Google Drive (Utente)
                                             </Button>
                                             
                                             <Button 
@@ -86,4 +456,3 @@ const DrivePage: React.FC = () => {
 };
 
 export default DrivePage;
-

@@ -2,102 +2,67 @@ import os
 import json
 import io
 import pickle
+from pathlib import Path
 from typing import List, Dict, Any, Optional
 from google.oauth2 import service_account
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseUpload
+from googleapiclient.http import MediaIoBaseUpload, MediaIoBaseDownload
 
 # Scopes richiesti
 SCOPES = ['https://www.googleapis.com/auth/drive']
 
 class DriveService:
     def __init__(self):
+        # Determina path assoluto per token.pickle per evitare errori di CWD
+        self.token_path = Path(__file__).parent / 'token.pickle'
         self.creds = None
         self.service = None
-        self.auth_type = None
+        self.auth_type = 'oauth'
         # Non autentichiamo subito nel costruttore per evitare blocchi
         self._authenticate() 
 
     def _authenticate(self):
-        """Autentica usando Service Account (Prioritario) o OAuth 2.0 User Flow"""
+        """Autentica usando SOLO OAuth 2.0 User Flow (Persistente)"""
+        print(f"🔍 DRIVE AUTH: Inizio procedura di autenticazione OAuth... (Token path: {self.token_path})")
         self.creds = None
-        self.auth_type = None # 'service_account' o 'oauth'
         
-        # 1. Prova Service Account da File
-        service_account_path = 'service-account.json'
-        # Supporto per path relativo alla root del servizio o assoluto
-        if not os.path.exists(service_account_path):
-             # Prova a cercare nella directory corrente o parent
-             potential_paths = [
-                 'service-account.json',
-                 'backend/services/clienti-service/service-account.json',
-                 '../service-account.json',
-                 '../../service-account.json'
-             ]
-             for p in potential_paths:
-                 if os.path.exists(p):
-                     service_account_path = p
-                     break
-        
-        if os.path.exists(service_account_path):
-            try:
-                self.creds = service_account.Credentials.from_service_account_file(
-                    service_account_path, scopes=SCOPES
-                )
-                self.auth_type = 'service_account'
-                print(f"✅ Drive: Usando Service Account da {service_account_path}")
-            except Exception as e:
-                print(f"⚠️ Drive: Errore caricamento Service Account file: {e}")
-
-        # 2. Prova Service Account da Variabile d'Ambiente (JSON Content)
-        if not self.creds and os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON"):
-            try:
-                info = json.loads(os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON"))
-                self.creds = service_account.Credentials.from_service_account_info(
-                    info, scopes=SCOPES
-                )
-                self.auth_type = 'service_account'
-                print("✅ Drive: Usando Service Account da ENV")
-            except Exception as e:
-                print(f"⚠️ Drive: Errore parsing Service Account JSON da ENV: {e}")
-
-        # 3. Fallback a OAuth 2.0 User Token (token.pickle)
-        if not self.creds:
-            self._load_stored_credentials()
+        # Carica token salvato
+        self._load_stored_credentials()
 
         if self.creds:
             try:
                 self.service = build('drive', 'v3', credentials=self.creds)
-                print(f"✅ Drive Service inizializzato (Mode: {self.auth_type})")
+                print(f"✅ DRIVE AUTH: Service build completato (OAuth)")
             except Exception as e:
-                print(f"❌ Errore inizializzazione servizio Drive: {e}")
+                print(f"❌ DRIVE AUTH: Errore build service: {e}")
                 self.service = None
+        else:
+             print("⚠️ DRIVE AUTH: Nessun token trovato. Richiesto login manuale.")
 
     def _load_stored_credentials(self):
         """Carica credenziali OAuth utente salvate"""
-        token_path = 'token.pickle'
-        if os.path.exists(token_path):
+        if self.token_path.exists():
             try:
-                with open(token_path, 'rb') as token:
+                with open(self.token_path, 'rb') as token:
                     self.creds = pickle.load(token)
                 
                 # Prova refresh se scaduto
                 if self.creds and self.creds.expired and self.creds.refresh_token:
                     try:
+                        print("🔄 DRIVE AUTH: Refreshing expired token...")
                         self.creds.refresh(Request())
-                        with open(token_path, 'wb') as token:
+                        with open(self.token_path, 'wb') as token:
                             pickle.dump(self.creds, token)
+                        print("✅ DRIVE AUTH: Token refreshed e salvato.")
                     except Exception as e:
                         print(f"⚠️ Errore refresh token: {e}")
                         self.creds = None
                 
                 if self.creds and self.creds.valid:
                     self.auth_type = 'oauth'
-                    self.service = build('drive', 'v3', credentials=self.creds)
-                    print("✅ Google Drive Service inizializzato (Token)")
             except Exception as e:
                 print(f"⚠️ Errore caricamento token: {e}")
 
@@ -152,9 +117,13 @@ class DriveService:
         flow.fetch_token(code=code)
         self.creds = flow.credentials
         
-        # Salva token
-        with open('token.pickle', 'wb') as token:
-            pickle.dump(self.creds, token)
+        # Salva token nel path assoluto
+        try:
+            with open(self.token_path, 'wb') as token:
+                pickle.dump(self.creds, token)
+            print(f"✅ Google Drive Service: Token salvato in {self.token_path}")
+        except Exception as e:
+            print(f"❌ ERRORE CRITICO SALVATAGGIO TOKEN: {e}")
             
         self.service = build('drive', 'v3', credentials=self.creds)
         print("✅ Google Drive Service autenticato con successo")
@@ -166,6 +135,17 @@ class DriveService:
         """Elenca file e cartelle in una specifica cartella"""
         if not self.is_ready():
             return []
+
+        # Se folder_id è None, cerca nella root E nei file condivisi
+        if folder_id:
+            query = f"'{folder_id}' in parents"
+        else:
+            # Trick: Cerca nella root OPPURE file condivisi con me che non hanno parent (shared roots)
+            # Ma per semplicità, se non c'è folder_id, spesso vogliamo vedere la 'root' virtuale
+            # che include cartelle condivise.
+            # 'sharedWithMe' mostra i file condivisi.
+            # Proviamo una logica ibrida: se folder_id è nullo, cerchiamo cartelle condivise o root
+            pass 
 
         # Query migliorata per vedere tutto alla prima chiamata
         if folder_id:
@@ -281,12 +261,37 @@ class DriveService:
         try:
             file = self.service.files().get(
                 fileId=file_id,
-                fields="id, name, mimeType, parents, webViewLink"
+                fields="id, name, mimeType, parents, webViewLink, thumbnailLink, webContentLink, size"
             ).execute()
             return file
         except Exception as e:
             print(f"❌ Drive get_file_metadata error: {e}")
             return None
+
+    def download_file_stream(self, file_id: str):
+        """Scarica file come stream"""
+        if not self.is_ready():
+            raise Exception("Drive service not ready")
+            
+        try:
+            # Get metadata first
+            meta = self.get_file_metadata(file_id)
+            if not meta:
+                raise Exception("File not found")
+                
+            request = self.service.files().get_media(fileId=file_id)
+            file_io = io.BytesIO()
+            downloader = MediaIoBaseDownload(file_io, request)
+            
+            done = False
+            while done is False:
+                status, done = downloader.next_chunk()
+                
+            file_io.seek(0)
+            return file_io, meta.get('mimeType'), meta.get('name')
+        except Exception as e:
+            print(f"❌ Drive download error: {e}")
+            raise e
 
 # Singleton instance
 drive_service = DriveService()
