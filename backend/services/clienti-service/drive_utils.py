@@ -3,6 +3,7 @@ import json
 import io
 import pickle
 from typing import List, Dict, Any, Optional
+from google.oauth2 import service_account
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 from google.auth.transport.requests import Request
@@ -33,7 +34,8 @@ class DriveService:
              potential_paths = [
                  'service-account.json',
                  'backend/services/clienti-service/service-account.json',
-                 '../service-account.json'
+                 '../service-account.json',
+                 '../../service-account.json'
              ]
              for p in potential_paths:
                  if os.path.exists(p):
@@ -165,15 +167,19 @@ class DriveService:
         if not self.is_ready():
             return []
 
-        query = f"'{folder_id}' in parents" if folder_id else "'root' in parents"
-        query += " and trashed = false"
+        # Query migliorata per vedere tutto alla prima chiamata
+        if folder_id:
+             query = f"'{folder_id}' in parents and trashed = false"
+        else:
+             # Mostra root e cartelle condivise
+             query = "( 'root' in parents or sharedWithMe = true ) and trashed = false"
         
         try:
             results = self.service.files().list(
                 q=query,
                 pageSize=100,
                 orderBy="folder,name",
-                fields="nextPageToken, files(id, name, mimeType, webViewLink, iconLink, createdTime, size, owners)"
+                fields="nextPageToken, files(id, name, mimeType, webViewLink, iconLink, createdTime, size, owners, parents)"
             ).execute()
             return results.get('files', [])
         except Exception as e:
