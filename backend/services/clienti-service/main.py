@@ -225,28 +225,33 @@ app.add_middleware(
 
 
 @app.get("/api/drive/google/login")
-async def google_drive_login():
+async def google_drive_login(request: Request):
     """Avvia il flow OAuth specificamente per l'integrazione Drive"""
     try:
-        # Usa un redirect URI specifico per Drive per evitare conflitti con il login utente
-        redirect_uri = f"{BASE_URL}/api/drive/google/callback"
+        # Determina redirect_uri dinamicamente in base all'host della richiesta
+        # Questo risolve il problema localhost vs produzione automaticamente
+        host = request.headers.get("host", "localhost:10000")
+        protocol = "https" if "evoluzioneimprese.com" in host else "http"
         
-        # Se siamo in produzione, assicuriamoci di usare HTTPS
-        if "evolutioneimprese.com" in redirect_uri:
-             redirect_uri = redirect_uri.replace("http://", "https://")
+        redirect_uri = f"{protocol}://{host}/api/drive/google/callback"
+        
+        print(f"DEBUG OAuth: Requesting URL with redirect_uri={redirect_uri}")
              
         auth_url = drive_service.get_auth_url(redirect_uri)
         return {"url": auth_url}
     except Exception as e:
+        print(f"Error generating auth url: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Errore generazione auth url: {str(e)}")
 
 @app.get("/api/drive/google/callback")
-async def google_drive_callback(code: str, state: Optional[str] = None):
+async def google_drive_callback(request: Request, code: str, state: Optional[str] = None):
     """Callback specifica per OAuth Google Drive"""
     try:
-        redirect_uri = f"{BASE_URL}/api/drive/google/callback"
-        if "evolutioneimprese.com" in redirect_uri:
-             redirect_uri = redirect_uri.replace("http://", "https://")
+        # Ricostruisce lo stesso redirect_uri usato nel login per la verifica
+        host = request.headers.get("host", "localhost:10000")
+        protocol = "https" if "evoluzioneimprese.com" in host else "http"
+        
+        redirect_uri = f"{protocol}://{host}/api/drive/google/callback"
 
         drive_service.complete_auth(code, redirect_uri)
         

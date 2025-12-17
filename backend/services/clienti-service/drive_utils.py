@@ -16,12 +16,66 @@ class DriveService:
     def __init__(self):
         self.creds = None
         self.service = None
+        self.auth_type = None
         # Non autentichiamo subito nel costruttore per evitare blocchi
-        # self._authenticate() 
-        self._load_stored_credentials()
+        self._authenticate() 
+
+    def _authenticate(self):
+        """Autentica usando Service Account (Prioritario) o OAuth 2.0 User Flow"""
+        self.creds = None
+        self.auth_type = None # 'service_account' o 'oauth'
+        
+        # 1. Prova Service Account da File
+        service_account_path = 'service-account.json'
+        # Supporto per path relativo alla root del servizio o assoluto
+        if not os.path.exists(service_account_path):
+             # Prova a cercare nella directory corrente o parent
+             potential_paths = [
+                 'service-account.json',
+                 'backend/services/clienti-service/service-account.json',
+                 '../service-account.json'
+             ]
+             for p in potential_paths:
+                 if os.path.exists(p):
+                     service_account_path = p
+                     break
+        
+        if os.path.exists(service_account_path):
+            try:
+                self.creds = service_account.Credentials.from_service_account_file(
+                    service_account_path, scopes=SCOPES
+                )
+                self.auth_type = 'service_account'
+                print(f"✅ Drive: Usando Service Account da {service_account_path}")
+            except Exception as e:
+                print(f"⚠️ Drive: Errore caricamento Service Account file: {e}")
+
+        # 2. Prova Service Account da Variabile d'Ambiente (JSON Content)
+        if not self.creds and os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON"):
+            try:
+                info = json.loads(os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON"))
+                self.creds = service_account.Credentials.from_service_account_info(
+                    info, scopes=SCOPES
+                )
+                self.auth_type = 'service_account'
+                print("✅ Drive: Usando Service Account da ENV")
+            except Exception as e:
+                print(f"⚠️ Drive: Errore parsing Service Account JSON da ENV: {e}")
+
+        # 3. Fallback a OAuth 2.0 User Token (token.pickle)
+        if not self.creds:
+            self._load_stored_credentials()
+
+        if self.creds:
+            try:
+                self.service = build('drive', 'v3', credentials=self.creds)
+                print(f"✅ Drive Service inizializzato (Mode: {self.auth_type})")
+            except Exception as e:
+                print(f"❌ Errore inizializzazione servizio Drive: {e}")
+                self.service = None
 
     def _load_stored_credentials(self):
-        """Carica credenziali salvate se presenti"""
+        """Carica credenziali OAuth utente salvate"""
         token_path = 'token.pickle'
         if os.path.exists(token_path):
             try:
@@ -32,7 +86,6 @@ class DriveService:
                 if self.creds and self.creds.expired and self.creds.refresh_token:
                     try:
                         self.creds.refresh(Request())
-                        # Salva aggiornato
                         with open(token_path, 'wb') as token:
                             pickle.dump(self.creds, token)
                     except Exception as e:
@@ -40,18 +93,21 @@ class DriveService:
                         self.creds = None
                 
                 if self.creds and self.creds.valid:
+                    self.auth_type = 'oauth'
                     self.service = build('drive', 'v3', credentials=self.creds)
                     print("✅ Google Drive Service inizializzato (Token)")
             except Exception as e:
                 print(f"⚠️ Errore caricamento token: {e}")
 
     def get_auth_url(self, redirect_uri: str) -> str:
-        """Genera URL per il login Google"""
+        """Genera URL per il login Google (Solo per OAuth User Mode)"""
         client_id = os.environ.get("GOOGLE_CLIENT_ID")
         client_secret = os.environ.get("GOOGLE_CLIENT_SECRET")
         
         if not client_id or not client_secret:
             raise Exception("GOOGLE_CLIENT_ID o GOOGLE_CLIENT_SECRET mancanti")
+
+        print(f"DEBUG OAuth: Generating URL with redirect_uri={redirect_uri}") 
 
         client_config = {
             "web": {
