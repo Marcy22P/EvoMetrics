@@ -102,3 +102,4 @@ site/
 *.bak
 *.backup
 *.old
+service-account.json
