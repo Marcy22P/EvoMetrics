@@ -362,7 +362,11 @@ async def contract_signed_hook(payload: Dict[str, Any], background_tasks: Backgr
     # 2. Lancia Background Task per creazione
     for tmpl_id in triggered_templates:
         template = await database.fetch_one("SELECT entity_type FROM workflow_templates WHERE id = :id", {"id": tmpl_id})
-        entity_type = template.get("entity_type", "client") if template else "client"
+        # database.fetch_one restituisce un Record, non un dict - accedi direttamente alla colonna
+        if template and "entity_type" in template:
+            entity_type = template["entity_type"] or "client"
+        else:
+            entity_type = "client"
         background_tasks.add_task(instantiate_workflow_logic, tmpl_id, client_id, start_date, entity_type)
 
     return {
