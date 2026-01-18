@@ -15,12 +15,16 @@ if DATABASE_URL.startswith("postgres://"):
 
 # SQLAlchemy (Sincrono per migrazioni/scripts)
 # Configurazione pool con pre-ping per gestire connessioni scadute
+# Connection pool size ridotto per evitare saturazione in produzione
+DB_POOL_SIZE = int(os.environ.get("DB_POOL_SIZE", "1"))  # Ridotto da 5 a 1
+DB_POOL_MAX_OVERFLOW = int(os.environ.get("DB_POOL_MAX_OVERFLOW", "2"))  # Ridotto da 10 a 2
+
 engine = create_engine(
     DATABASE_URL,
     pool_pre_ping=True,  # Verifica che la connessione sia valida prima di usarla
     pool_recycle=3600,   # Ricicla connessioni dopo 1 ora
-    pool_size=5,         # Dimensione pool
-    max_overflow=10      # Connessioni extra oltre al pool
+    pool_size=DB_POOL_SIZE,         # Dimensione pool ridotta
+    max_overflow=DB_POOL_MAX_OVERFLOW      # Connessioni extra ridotte
 )
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
@@ -34,5 +38,9 @@ if not DATABASE_URL.startswith("postgresql+asyncpg://"):
 else:
     ASYNC_DATABASE_URL = DATABASE_URL
 
-database = Database(ASYNC_DATABASE_URL)
+# Connection pool size configurabile - ridotto per evitare saturazione in produzione
+DB_POOL_MIN_SIZE = int(os.environ.get("DB_POOL_MIN_SIZE", "0"))  # 0 = nessuna connessione iniziale
+DB_POOL_MAX_SIZE = int(os.environ.get("DB_POOL_MAX_SIZE", "1"))  # 1 = massimo 1 connessione per servizio
+
+database = Database(ASYNC_DATABASE_URL, min_size=DB_POOL_MIN_SIZE, max_size=DB_POOL_MAX_SIZE)
 

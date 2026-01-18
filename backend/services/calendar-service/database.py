@@ -32,7 +32,12 @@ if not DATABASE_URL:
         DATABASE_URL = f"sqlite:///{DB_PATH}"
         print("⚠️ CALENDAR_DATABASE_URL non configurato, uso default locale (sviluppo)")
 
-database = databases.Database(DATABASE_URL)
+# Connection pool size configurabile - ridotto per evitare saturazione in produzione
+# In unified mode con molti servizi, ogni servizio deve usare poche connessioni
+DB_POOL_MIN_SIZE = int(os.environ.get("DB_POOL_MIN_SIZE", "0"))  # 0 = nessuna connessione iniziale
+DB_POOL_MAX_SIZE = int(os.environ.get("DB_POOL_MAX_SIZE", "1"))  # 1 = massimo 1 connessione per servizio
+
+database = databases.Database(DATABASE_URL, min_size=DB_POOL_MIN_SIZE, max_size=DB_POOL_MAX_SIZE)
 
 # Configurazioni default configurabili
 DEFAULT_TIMEZONE = os.environ.get("DEFAULT_TIMEZONE", "Europe/Rome")
