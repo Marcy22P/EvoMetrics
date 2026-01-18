@@ -721,7 +721,8 @@ async def get_google_calendar_auth_url(redirect_uri: str):
     authorization_url, state = flow.authorization_url(
         access_type='offline',
         include_granted_scopes='true',
-        prompt='consent' # Importante per ottenere refresh token ogni volta
+        prompt='consent', # Importante per ottenere refresh token ogni volta
+        approval_prompt='force' # Forza nuovo consenso per ottenere refresh_token
     )
     
     return {"authorization_url": authorization_url}
@@ -954,8 +955,14 @@ async def get_all_calendar_events_admin(
     
     def fetch_user_events(u):
         try:
-            if not u.get("google_refresh_token"): return []
-            service = gcal.get_calendar_service(access_token="", refresh_token=u.get("google_refresh_token"))
+            if not u.get("google_refresh_token"):
+                print(f"⚠️ User {u.get('id')} non ha refresh_token per calendario")
+                return []
+            # Costruisci service (refresh automatico se scaduto)
+            service = gcal.get_calendar_service(
+                access_token="", # Verrà refreshato automaticamente se necessario
+                refresh_token=u.get("google_refresh_token")
+            )
             dt_start = datetime.fromisoformat(start.replace("Z", "+00:00"))
             dt_end = datetime.fromisoformat(end.replace("Z", "+00:00"))
             events = gcal.list_events(service, time_min=dt_start, time_max=dt_end)
@@ -965,7 +972,9 @@ async def get_all_calendar_events_admin(
                 ev["owner_calendar_email"] = u.get("google_calendar_email")
             return events
         except Exception as e:
-            print(f"⚠️ Error {u['id']}: {e}")
+            print(f"⚠️ Error fetching events for user {u.get('id')}: {e}")
+            import traceback
+            traceback.print_exc()
             return []
 
     for u in target_users:
@@ -1031,8 +1040,9 @@ async def delete_calendar_event(
     loop = asyncio.get_event_loop()
     
     def do_delete():
+        # Costruisci service (refresh automatico se scaduto)
         service = gcal.get_calendar_service(
-            access_token="",
+            access_token="", # Verrà refreshato automaticamente se necessario
             refresh_token=target_user.get("google_refresh_token")
         )
         return gcal.delete_event(service, event_id)
