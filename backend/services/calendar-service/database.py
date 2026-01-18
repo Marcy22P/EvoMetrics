@@ -7,8 +7,8 @@ import os
 from pathlib import Path
 
 # Database URL configurabile
-# In produzione reale (su Render.com), questa variabile dovrebbe essere esplicita
-# In sviluppo, usa default locale per comodità
+# In produzione reale (su Render.com), usa PostgreSQL (DATABASE_URL principale)
+# In sviluppo, usa default SQLite locale per comodità
 # Rileva produzione reale SOLO se siamo effettivamente su Render.com
 # (RENDER_EXTERNAL_HOSTNAME è presente solo su Render.com, non nel .env locale)
 IS_REAL_PRODUCTION = os.environ.get("RENDER_EXTERNAL_HOSTNAME") is not None
@@ -17,8 +17,15 @@ DATABASE_URL = os.environ.get("CALENDAR_DATABASE_URL")
 
 if not DATABASE_URL:
     if IS_REAL_PRODUCTION:
-        # In produzione reale su Render.com, richiedi esplicitamente la configurazione
-        raise ValueError("CALENDAR_DATABASE_URL environment variable is required in production")
+        # In produzione su Render.com, usa DATABASE_URL principale (PostgreSQL)
+        # SQLite non è adatto per produzione cloud
+        MAIN_DATABASE_URL = os.environ.get("DATABASE_URL")
+        if MAIN_DATABASE_URL:
+            # Usa lo stesso database PostgreSQL principale
+            DATABASE_URL = MAIN_DATABASE_URL
+            print("⚠️ CALENDAR_DATABASE_URL non configurato, uso DATABASE_URL principale (PostgreSQL)")
+        else:
+            raise ValueError("CALENDAR_DATABASE_URL o DATABASE_URL environment variable is required in production")
     else:
         # In sviluppo (locale o con RENDER=true nel .env), usa default locale
         DB_PATH = Path(__file__).parent / "calendar.db"
