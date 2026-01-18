@@ -4,8 +4,20 @@ from sqlalchemy.orm import sessionmaker
 import datetime
 import os
 
-# Database URL configurabile, con fallback al default
-DATABASE_URL = os.environ.get("SALES_DATABASE_URL", "sqlite:///./sales.db")
+# Database URL configurabile
+# In produzione (RENDER=true), questa variabile dovrebbe essere esplicita
+# In sviluppo, usa default locale per comodità
+IS_PRODUCTION = os.environ.get("RENDER", "false").lower() == "true" or os.environ.get("ENVIRONMENT", "").lower() == "production"
+DATABASE_URL = os.environ.get("SALES_DATABASE_URL")
+
+if not DATABASE_URL:
+    if IS_PRODUCTION:
+        # In produzione, richiedi esplicitamente la configurazione
+        raise ValueError("SALES_DATABASE_URL environment variable is required in production")
+    else:
+        # In sviluppo, usa default locale
+        DATABASE_URL = "sqlite:///./sales.db"
+        print("⚠️ SALES_DATABASE_URL non configurato, uso default locale (sviluppo)")
 
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

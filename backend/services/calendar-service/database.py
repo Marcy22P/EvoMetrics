@@ -6,12 +6,21 @@ import databases
 import os
 from pathlib import Path
 
-# Database URL configurabile, con fallback al default
+# Database URL configurabile
+# In produzione (RENDER=true), questa variabile dovrebbe essere esplicita
+# In sviluppo, usa default locale per comodità
+IS_PRODUCTION = os.environ.get("RENDER", "false").lower() == "true" or os.environ.get("ENVIRONMENT", "").lower() == "production"
 DATABASE_URL = os.environ.get("CALENDAR_DATABASE_URL")
+
 if not DATABASE_URL:
-    # Fallback: usa path relativo alla directory del servizio
-    DB_PATH = Path(__file__).parent / "calendar.db"
-    DATABASE_URL = f"sqlite:///{DB_PATH}"
+    if IS_PRODUCTION:
+        # In produzione, richiedi esplicitamente la configurazione
+        raise ValueError("CALENDAR_DATABASE_URL environment variable is required in production")
+    else:
+        # In sviluppo, usa default locale
+        DB_PATH = Path(__file__).parent / "calendar.db"
+        DATABASE_URL = f"sqlite:///{DB_PATH}"
+        print("⚠️ CALENDAR_DATABASE_URL non configurato, uso default locale (sviluppo)")
 
 database = databases.Database(DATABASE_URL)
 
