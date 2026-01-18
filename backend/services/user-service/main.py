@@ -721,8 +721,7 @@ async def get_google_calendar_auth_url(redirect_uri: str):
     authorization_url, state = flow.authorization_url(
         access_type='offline',
         include_granted_scopes='true',
-        prompt='consent', # Importante per ottenere refresh token ogni volta
-        approval_prompt='force' # Forza nuovo consenso per ottenere refresh_token
+        prompt='consent' # Importante per ottenere refresh token ogni volta (forza nuovo consenso)
     )
     
     return {"authorization_url": authorization_url}
