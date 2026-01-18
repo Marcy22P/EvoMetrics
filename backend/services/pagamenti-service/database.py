@@ -27,9 +27,13 @@ if DATABASE_URL.startswith("postgresql://") and "+asyncpg" not in DATABASE_URL:
     DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
     print(f"✅ DATABASE_URL aggiornato con +asyncpg: {DATABASE_URL[:50]}...")
 
+# Connection pool size configurabile
+DB_POOL_MIN_SIZE = int(os.environ.get("DB_POOL_MIN_SIZE", "1"))
+DB_POOL_MAX_SIZE = int(os.environ.get("DB_POOL_MAX_SIZE", "3"))
+
 # Ottimizzazione pool per microservizi unificati: riduciamo le connessioni
 # In modalità unificata (10 servizi) evitiamosaturazione (max 100 conn)
-database = databases.Database(DATABASE_URL, min_size=1, max_size=3)
+database = databases.Database(DATABASE_URL, min_size=DB_POOL_MIN_SIZE, max_size=DB_POOL_MAX_SIZE)
 
 
 async def init_database():

@@ -682,6 +682,23 @@ async def update_user_password(
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET")
 
+# Google OAuth URIs configurabili (con fallback ai valori standard)
+GOOGLE_AUTH_URI = os.environ.get("GOOGLE_AUTH_URI", "https://accounts.google.com/o/oauth2/auth")
+GOOGLE_TOKEN_URI = os.environ.get("GOOGLE_TOKEN_URI", "https://oauth2.googleapis.com/token")
+GOOGLE_USERINFO_URI = os.environ.get("GOOGLE_USERINFO_URI", "https://www.googleapis.com/oauth2/v2/userinfo")
+
+# Google Calendar Scopes configurabili (CSV, con fallback ai valori standard)
+GOOGLE_CALENDAR_SCOPES_STR = os.environ.get("GOOGLE_CALENDAR_SCOPES")
+if GOOGLE_CALENDAR_SCOPES_STR:
+    GOOGLE_CALENDAR_SCOPES = [scope.strip() for scope in GOOGLE_CALENDAR_SCOPES_STR.split(",") if scope.strip()]
+else:
+    # Fallback ai valori standard
+    GOOGLE_CALENDAR_SCOPES = [
+        'https://www.googleapis.com/auth/calendar.events',
+        'https://www.googleapis.com/auth/calendar.readonly',
+        'https://www.googleapis.com/auth/userinfo.email'
+    ]
+
 @app.get("/api/auth/google/calendar/url")
 async def get_google_calendar_auth_url(redirect_uri: str):
     """Genera l'URL per l'autorizzazione di Google Calendar"""
@@ -693,11 +710,11 @@ async def get_google_calendar_auth_url(redirect_uri: str):
             "web": {
                 "client_id": GOOGLE_CLIENT_ID,
                 "client_secret": GOOGLE_CLIENT_SECRET,
-                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                "token_uri": "https://oauth2.googleapis.com/token",
+                "auth_uri": GOOGLE_AUTH_URI,
+                "token_uri": GOOGLE_TOKEN_URI,
             }
         },
-        scopes=['https://www.googleapis.com/auth/calendar.events', 'https://www.googleapis.com/auth/calendar.readonly', 'https://www.googleapis.com/auth/userinfo.email'],
+        scopes=GOOGLE_CALENDAR_SCOPES,
         redirect_uri=redirect_uri
     )
     
@@ -732,11 +749,11 @@ async def connect_google_calendar(
                     "web": {
                         "client_id": GOOGLE_CLIENT_ID,
                         "client_secret": GOOGLE_CLIENT_SECRET,
-                        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                        "token_uri": "https://oauth2.googleapis.com/token",
+                        "auth_uri": GOOGLE_AUTH_URI,
+                        "token_uri": GOOGLE_TOKEN_URI,
                     }
                 },
-                scopes=['https://www.googleapis.com/auth/calendar.events', 'https://www.googleapis.com/auth/calendar.readonly', 'https://www.googleapis.com/auth/userinfo.email'],
+                scopes=GOOGLE_CALENDAR_SCOPES,
                 redirect_uri=redirect_uri
             )
             flow.fetch_token(code=code)
@@ -747,7 +764,7 @@ async def connect_google_calendar(
         # Ottieni email dell'account collegato per verifica
         def get_user_info():
             resp = requests.get(
-                'https://www.googleapis.com/oauth2/v2/userinfo',
+                GOOGLE_USERINFO_URI,
                 headers={'Authorization': f'Bearer {credentials.token}'}
             )
             return resp.json()
