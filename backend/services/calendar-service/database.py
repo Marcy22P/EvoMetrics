@@ -7,14 +7,20 @@ import os
 from pathlib import Path
 
 # Database URL configurabile
-# In produzione (RENDER=true), questa variabile dovrebbe essere esplicita
+# In produzione reale (su Render.com), questa variabile dovrebbe essere esplicita
 # In sviluppo, usa default locale per comodità
-IS_PRODUCTION = os.environ.get("RENDER", "false").lower() == "true" or os.environ.get("ENVIRONMENT", "").lower() == "production"
+# Rileva produzione reale controllando se DATABASE_URL principale è remoto (non localhost)
+MAIN_DATABASE_URL = os.environ.get("DATABASE_URL", "")
+IS_REAL_PRODUCTION = (
+    os.environ.get("RENDER_EXTERNAL_HOSTNAME") is not None or  # Su Render.com
+    (MAIN_DATABASE_URL and "localhost" not in MAIN_DATABASE_URL and "127.0.0.1" not in MAIN_DATABASE_URL)  # Database remoto
+)
+
 DATABASE_URL = os.environ.get("CALENDAR_DATABASE_URL")
 
 if not DATABASE_URL:
-    if IS_PRODUCTION:
-        # In produzione, richiedi esplicitamente la configurazione
+    if IS_REAL_PRODUCTION:
+        # In produzione reale, richiedi esplicitamente la configurazione
         raise ValueError("CALENDAR_DATABASE_URL environment variable is required in production")
     else:
         # In sviluppo, usa default locale
