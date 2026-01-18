@@ -24,7 +24,9 @@ import { useAuth } from '../hooks/useAuth';
 import { useNavigate } from 'react-router-dom';
 
 // Configurazione Endpoint
-const API_GATEWAY_URL = window.location.hostname === 'localhost' ? 'http://localhost:10000' : window.location.origin;
+import { getServiceUrl } from '../utils/apiConfig';
+
+const API_GATEWAY_URL = getServiceUrl('api-gateway');
 
 interface DashboardStats {
   assessments: number;

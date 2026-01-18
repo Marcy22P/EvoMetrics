@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
+import { getServiceUrl } from '../../utils/apiConfig';
 import {
   BlockStack,
   InlineStack,
@@ -65,9 +66,7 @@ const PreventivoAIChat: React.FC<PreventivoAIChatProps> = ({ onApplyPreventivo }
 
   const loadSessions = async () => {
     try {
-      const API_BASE_URL = window.location.hostname === 'localhost' 
-        ? 'http://localhost:10000' 
-        : window.location.origin;
+      const API_BASE_URL = getServiceUrl('api-gateway');
         
       const response = await fetch(`${API_BASE_URL}/api/mcp/chat/sessions`, {
         headers: {
@@ -88,9 +87,7 @@ const PreventivoAIChat: React.FC<PreventivoAIChatProps> = ({ onApplyPreventivo }
     setIsLoading(true);
     setSessionId(id);
     try {
-      const API_BASE_URL = window.location.hostname === 'localhost' 
-        ? 'http://localhost:10000' 
-        : window.location.origin;
+      const API_BASE_URL = getServiceUrl('api-gateway');
 
       const response = await fetch(`${API_BASE_URL}/api/mcp/chat/history/${id}`, {
         headers: {
@@ -141,9 +138,7 @@ const PreventivoAIChat: React.FC<PreventivoAIChatProps> = ({ onApplyPreventivo }
     setIsLoading(true);
 
     try {
-      const API_BASE_URL = window.location.hostname === 'localhost' 
-        ? 'http://localhost:10000' 
-        : window.location.origin;
+      const API_BASE_URL = getServiceUrl('api-gateway');
 
       const response = await fetch(`${API_BASE_URL}/api/mcp/chat`, {
         method: 'POST',

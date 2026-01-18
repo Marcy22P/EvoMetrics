@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useAuth } from '../hooks/useAuth';
+import { getServiceUrl } from '../utils/apiConfig';
 import './ProfileForm.css';
 
 const ProfileForm: React.FC = () => {
@@ -144,11 +145,7 @@ const ProfileForm: React.FC = () => {
 
     try {
       // Usa API Gateway unificato (porta 10000 in sviluppo, window.location.origin in produzione)
-      const USER_SERVICE_URL =
-        import.meta.env.VITE_USER_SERVICE_URL ||
-        (window.location.hostname === 'localhost'
-          ? 'http://localhost:10000'
-          : window.location.origin);
+      const USER_SERVICE_URL = getServiceUrl('user');
       
       if (!user?.id) {
         throw new Error('ID utente non disponibile');

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, Navigate, useLocation, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { authApi } from '../services/authApi';
+import { getServiceUrl } from '../utils/apiConfig';
 import './Login.css';
 
 const Login: React.FC = () => {
@@ -193,11 +194,7 @@ const Login: React.FC = () => {
         }
 
         // Usa API Gateway unificato (porta 10000 in sviluppo, window.location.origin in produzione)
-        const AUTH_SERVICE_URL =
-          import.meta.env.VITE_AUTH_SERVICE_URL ||
-          (window.location.hostname === 'localhost'
-            ? 'http://localhost:10000'
-              : window.location.origin);
+        const AUTH_SERVICE_URL = getServiceUrl('auth');
 
         const response = await fetch(`${AUTH_SERVICE_URL}/api/auth/register-public`, {
           method: 'POST',

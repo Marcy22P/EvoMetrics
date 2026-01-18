@@ -8,7 +8,9 @@ import { Calendar, TrendingUp, TrendingDown, DollarSign, FileText } from 'lucide
 import { SpotlightCard } from '../components/UI/SpotlightCard';
 import './BilancioPage.css';
 
-const API_GATEWAY_URL = window.location.hostname === 'localhost' ? 'http://localhost:10000' : window.location.origin;
+import { getServiceUrl } from '../utils/apiConfig';
+
+const API_GATEWAY_URL = getServiceUrl('api-gateway');
 
 type DateRange = 'today' | 'yesterday' | 'last7' | 'last30' | 'month' | 'year';
 

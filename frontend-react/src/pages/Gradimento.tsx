@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../hooks/useAuth';
+import { getServiceUrl } from '../utils/apiConfig';
 import './Gradimento.css';
 import { CheckCircleIcon, SendIcon } from '../components/Icons';
 
@@ -98,11 +99,7 @@ const Gradimento: React.FC = () => {
 
     try {
       // Usa API Gateway unificato (porta 10000 in sviluppo, window.location.origin in produzione)
-      const GRADIMENTO_SERVICE_URL =
-        import.meta.env.VITE_GRADIMENTO_SERVICE_URL ||
-        (window.location.hostname === 'localhost'
-          ? 'http://localhost:10000'
-          : window.location.origin);
+      const GRADIMENTO_SERVICE_URL = getServiceUrl('gradimento');
       
       const response = await fetch(`${GRADIMENTO_SERVICE_URL}/api/gradimento`, {
         method: 'POST',

@@ -1,10 +1,8 @@
 import type { PagamentoSalvato, MarcaPagatoRequest } from '../types/pagamento';
+import { getServiceUrl } from '../utils/apiConfig';
 
-// URL Pagamenti Service - Usa API Gateway unificato (porta 10000 in sviluppo, window.location.origin in produzione)
-const PAGAMENTI_SERVICE_URL = import.meta.env.VITE_PAGAMENTI_SERVICE_URL ||
-  (window.location.hostname === 'localhost'
-    ? 'http://localhost:10000'
-    : window.location.origin);
+// URL Pagamenti Service - Usa API Gateway unificato
+const PAGAMENTI_SERVICE_URL = getServiceUrl('pagamenti');
 
 // Helper per ottenere il token di autenticazione
 const getAuthToken = (): string | null => {

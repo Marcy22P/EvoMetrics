@@ -1,10 +1,8 @@
 import type { AssessmentResponse } from '../types/assessment';
+import { getServiceUrl } from '../utils/apiConfig';
 
-// URL Assessments Service - Usa API Gateway unificato (porta 10000 in sviluppo, window.location.origin in produzione)
-const ASSESSMENTS_SERVICE_URL = import.meta.env.VITE_ASSESSMENTS_SERVICE_URL ||
-  (window.location.hostname === 'localhost'
-    ? 'http://localhost:10000'
-    : window.location.origin);
+// URL Assessments Service - Usa API Gateway unificato
+const ASSESSMENTS_SERVICE_URL = getServiceUrl('assessments');
 
 // Funzione per ottenere il token di autenticazione
 const getAuthToken = (): string | null => {
