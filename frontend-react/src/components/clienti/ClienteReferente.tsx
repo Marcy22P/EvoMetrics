@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { LegacyCard, FormLayout, TextField, BlockStack, Button, InlineStack, Box, List, Text, Modal } from '@shopify/polaris';
+import { LegacyCard, FormLayout, TextField, BlockStack, Button, InlineStack, Box, List, Text, Modal, Icon } from '@shopify/polaris';
 import { UploadIcon, SearchIcon, NoteIcon } from '@shopify/polaris-icons';
 import type { Referente } from '../../services/clientiApi';
 import { clientiApi } from '../../services/clientiApi';
@@ -9,9 +9,10 @@ interface ClienteReferenteProps {
   referente: Referente;
   documents: { preventivi: any[], contratti: any[] };
   onChange: (field: keyof Referente, value: string) => void;
+  clienteId?: string;
 }
 
-const ClienteReferente: React.FC<ClienteReferenteProps> = ({ referente, documents, onChange }) => {
+const ClienteReferente: React.FC<ClienteReferenteProps> = ({ referente, documents, onChange, clienteId }) => {
   const [isDbModalOpen, setIsDbModalOpen] = useState(false);
   const [analyzingFile, setAnalyzingFile] = useState(false);
   
@@ -53,15 +54,26 @@ const ClienteReferente: React.FC<ClienteReferenteProps> = ({ referente, document
     else contrFileRef.current?.click();
   };
 
-  const handleLinkDocument = (doc: any) => {
-      // Collega solo il riferimento al file
-      if (doc.type === 'preventivo') {
-          onChange('file_preventivo', `Preventivo #${doc.numero} (DB Link)`);
-      } else {
-          onChange('file_contratto', `Contratto #${doc.numero} (DB Link)`);
+  const handleLinkDocument = async (doc: any) => {
+      try {
+          if (doc.type === 'contratto' && clienteId && doc.id) {
+              // Collega il contratto al cliente nel database
+              await clientiApi.linkContrattoToCliente(doc.id, clienteId);
+              toast.success(`Contratto #${doc.numero} collegato al cliente`);
+          } else if (doc.type === 'preventivo') {
+              // Per i preventivi, solo riferimento testuale per ora
+              onChange('file_preventivo', `Preventivo #${doc.numero} (DB Link)`);
+              toast.success('Preventivo collegato');
+          } else {
+              // Fallback per contratti senza clienteId
+              onChange('file_contratto', `Contratto #${doc.numero} (DB Link)`);
+              toast.success('Documento collegato');
+          }
+          setIsDbModalOpen(false);
+      } catch (err: any) {
+          console.error(err);
+          toast.error(err.message || 'Errore nel collegamento del documento');
       }
-      toast.success('Documento collegato');
-      setIsDbModalOpen(false);
   };
 
   return (
@@ -210,7 +222,7 @@ const ClienteReferente: React.FC<ClienteReferenteProps> = ({ referente, document
             ) : (
                 <Box padding="400" background="bg-surface-secondary" borderRadius="200">
                     <BlockStack gap="200" align="center">
-                        <NoteIcon color="subdued" />
+                        <Icon source={NoteIcon} tone="subdued" />
                         <Text as="p" tone="subdued" alignment="center">Nessun documento trovato automaticamente per questo cliente.</Text>
                     </BlockStack>
                 </Box>

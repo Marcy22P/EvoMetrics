@@ -319,6 +319,33 @@ class ClientiApiService {
     return await response.json();
   }
 
+  async linkContrattoToCliente(contrattoId: string, clienteId: string): Promise<{ status: string }> {
+    const headers = await this.getAuthHeaders();
+    const CONTRATTI_SERVICE_URL = import.meta.env.VITE_CONTRATTI_SERVICE_URL || 
+      (window.location.hostname === 'localhost' ? 'http://localhost:10000' : window.location.origin);
+    
+    const response = await fetch(`${CONTRATTI_SERVICE_URL}/api/contratti/${contrattoId}/link-cliente`, {
+      method: 'PUT',
+      headers: {
+        ...headers,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ cliente_id: clienteId }),
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      let errorMessage = `Errore nel collegamento del contratto: ${response.status}`;
+      try {
+        const errorData = JSON.parse(text);
+        errorMessage = errorData.detail || errorData.message || errorMessage;
+      } catch {
+        if (text) errorMessage = text;
+      }
+      throw new Error(errorMessage);
+    }
+    return await response.json();
+  }
+
   async analyzeDocument(file: File): Promise<{ filename: string, value: number, error?: string }> {
     const headers = await this.getAuthHeaders(true); // true for file upload (no Content-Type: json)
     const formData = new FormData();

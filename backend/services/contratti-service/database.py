@@ -35,6 +35,13 @@ async def init_database():
     """Initialize database connection"""
     await database.connect()
     print("✅ Database connesso (Contratti Service)")
+    
+    # Aggiungi colonna cliente_id se non esiste
+    try:
+        await database.execute("ALTER TABLE contratti ADD COLUMN IF NOT EXISTS cliente_id TEXT")
+        print("✅ Colonna cliente_id aggiunta/verificata in contratti")
+    except Exception as e:
+        print(f"⚠️ Warning aggiunta colonna cliente_id: {e}")
 
 
 async def close_database():

@@ -3,6 +3,7 @@ Contratti Service - Microservizio per gestione contratti
 """
 
 from fastapi import FastAPI, HTTPException, status, Depends, Request
+from starlette.requests import Request
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Dict, Any, Optional
 import os
@@ -384,30 +385,47 @@ async def update_contratto(
         WHERE id = :id
         """
         
-        result = await database.execute(update_query, {
-            "id": contratto_id,
-            "numero": contratto.numero,
-            "dati_committente": dati_committente_json,
-            "tipologia_servizio": contratto.tipologiaServizio,
-            "servizi": servizi_json,
-            "durata": durata_json,
-            "compenso": compenso_json,
-            "note": contratto.note,
-            "status": contratto.status,
-            "updated_at": now,
-            "articoli": articoli_json,
-            "ragione_sociale": contratto.datiCommittente.ragioneSociale,
-            "email_contatto": contratto.datiCommittente.email,
-            "telefono_contatto": contratto.datiCommittente.telefono
-        })
+        print(f"DEBUG: Eseguo update contratto {contratto_id}")
+        # print(f"DEBUG: Params: {dati_committente_json}") # Evita log enormi
+
+        try:
+            result = await database.execute(update_query, {
+                "id": contratto_id,
+                "numero": contratto.numero,
+                "dati_committente": dati_committente_json,
+                "tipologia_servizio": contratto.tipologiaServizio,
+                "servizi": servizi_json,
+                "durata": durata_json,
+                "compenso": compenso_json,
+                "note": contratto.note,
+                "status": contratto.status,
+                "updated_at": now,
+                "articoli": articoli_json,
+                "ragione_sociale": contratto.datiCommittente.ragioneSociale,
+                "email_contatto": contratto.datiCommittente.email,
+                "telefono_contatto": contratto.datiCommittente.telefono
+            })
+            print(f"DEBUG: Update result: {result}")
+        except Exception as db_err:
+            print(f"DEBUG: Errore execute: {db_err}")
+            import traceback
+            traceback.print_exc()
+            raise db_err
         
         if result == 0:
             raise HTTPException(status_code=404, detail="Contratto non trovato")
         
+        print("DEBUG: Checking status change")
         # Se lo status è diventato "firmato", chiama il webhook del Pagamenti Service
-        old_status = existing.get('status', 'bozza')
+        # existing è un Record, convertiamo in dict per sicurezza
+        existing_dict = dict(existing)
+        old_status = existing_dict.get('status', 'bozza')
         new_status = contratto.status
+        
+        print(f"DEBUG: Status check: {old_status} -> {new_status}")
+        
         if old_status != 'firmato' and new_status == 'firmato':
+            print("DEBUG: Calling webhook")
             try:
                 PAGAMENTI_SERVICE_URL = os.environ.get("PAGAMENTI_SERVICE_URL")
                 if PAGAMENTI_SERVICE_URL:
@@ -425,7 +443,12 @@ async def update_contratto(
                 # Non bloccare l'aggiornamento del contratto se il webhook fallisce
         
         # Recupera il contratto aggiornato per la risposta
+        print("DEBUG: Fetching updated row")
         updated_row = await database.fetch_one("SELECT * FROM contratti WHERE id = :id", {"id": contratto_id})
+        if not updated_row:
+             print("DEBUG: updated_row is None!")
+        
+        print("DEBUG: Serializing")
         return serialize_contratto(dict(updated_row))
         
     except HTTPException:
@@ -503,6 +526,42 @@ async def update_contratto_status(
         print(f"❌ Errore nell'aggiornamento status contratto: {e}")
         raise HTTPException(status_code=500, detail=f"Errore nell'aggiornamento dello status: {str(e)}")
 
+
+@app.put("/api/contratti/{contratto_id}/link-cliente")
+async def link_contratto_to_cliente(
+    contratto_id: str,
+    request: Request,
+    current_user: Dict[str, Any] = Depends(check_contratti_write)
+):
+    """Collega un contratto a un cliente"""
+    try:
+        body = await request.json()
+        cliente_id = body.get("cliente_id")
+        
+        if not cliente_id:
+            raise HTTPException(status_code=400, detail="cliente_id richiesto")
+        
+        # Verifica che il contratto esista
+        contratto = await database.fetch_one("SELECT id FROM contratti WHERE id = :id", {"id": contratto_id})
+        if not contratto:
+            raise HTTPException(status_code=404, detail="Contratto non trovato")
+        
+        # Aggiorna il cliente_id
+        await database.execute(
+            "UPDATE contratti SET cliente_id = :cliente_id, updated_at = :updated_at WHERE id = :id",
+            {
+                "cliente_id": cliente_id,
+                "id": contratto_id,
+                "updated_at": datetime.now()
+            }
+        )
+        
+        return {"status": "linked", "contratto_id": contratto_id, "cliente_id": cliente_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Errore nel collegamento contratto: {e}")
+        raise HTTPException(status_code=500, detail=f"Errore nel collegamento del contratto: {str(e)}")
 
 @app.delete("/api/contratti/{contratto_id}", response_model=Dict[str, Any])
 async def delete_contratto(

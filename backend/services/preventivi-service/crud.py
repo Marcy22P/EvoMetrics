@@ -1,9 +1,13 @@
 from typing import List, Dict, Any
-from database import database
+from database import database, init_database
 from serializers import serialize_preventivo
 
 async def get_all_preventivi() -> List[Dict[str, Any]]:
     """Ottiene tutti i preventivi dal database"""
+    # Assicurati che il database sia connesso
+    if not database.is_connected:
+        await init_database()
+    
     query = "SELECT * FROM preventivi ORDER BY created_at DESC"
     rows = await database.fetch_all(query)
     

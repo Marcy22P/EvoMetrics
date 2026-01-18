@@ -66,7 +66,20 @@ except ImportError:
     # Fallback se path non funziona
     print("⚠️ Impossibile importare internal_calls, le funzioni di import potrebbero non funzionare")
     async def get_preventivi_internal(token=None): return []
-    async def get_contratti_internal(token=None): return []
+    async def get_contratti_internal(token=None): 
+        # Fallback HTTP se internal_calls non disponibile
+        import httpx
+        url = os.environ.get("CONTRATTI_SERVICE_URL", "http://localhost:10000")
+        headers = {"Authorization": f"Bearer {token}"} if token else {}
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.get(f"{url}/api/contratti", headers=headers)
+                if response.status_code == 200:
+                    data = response.json()
+                    return data.get("contratti", []) if isinstance(data, dict) else data
+        except Exception as e:
+            print(f"⚠️ Errore get_contratti fallback: {e}")
+        return []
 
 # JWT Configuration
 SECRET_KEY = os.environ.get("SECRET_KEY")
@@ -402,9 +415,27 @@ async def update_cliente(
             
         now = datetime.now()
         
+        # Logica per preservare drive_folder_id se non inviato dal frontend
+        existing_dict = serialize_cliente(dict(existing))
+        existing_dettagli = existing_dict.get("dettagli") or {}
+        existing_drive_id = existing_dettagli.get("drive_folder_id")
+        
         dettagli_json = None
         if cliente_data.dettagli:
+             # Se nel DB c'è un drive_folder_id ma nel dato in arrivo no, preservalo
+             if existing_drive_id and not cliente_data.dettagli.drive_folder_id:
+                 print(f"🛡️ Preserving drive_folder_id {existing_drive_id} for client {cliente_id} during update")
+                 cliente_data.dettagli.drive_folder_id = existing_drive_id
+                 
              dettagli_json = cliente_data.dettagli.model_dump_json()
+        elif existing_drive_id:
+             # Se cliente_data.dettagli è None ma abbiamo un drive_id, dobbiamo decidere.
+             # Se la richiesta è una PUT completa, dovremmo resettare.
+             # Ma per sicurezza in questo contesto ibrido, meglio non perdere il link drive.
+             # Tuttavia, se il frontend manda solo i campi da aggiornare (PATCH-like logic su PUT endpoint?), 
+             # questo endpoint sembra fare una replace dei campi specificati in values.
+             # Se dettagli_json rimane None, la colonna 'dettagli' NON viene aggiornata (vedi sotto).
+             pass
 
         values = {
             "nome_azienda": cliente_data.nome_azienda,
@@ -746,21 +777,35 @@ async def get_cliente_documents(
         contratti_match = []
         try:
             contratti = await get_contratti_internal(token)
+            print(f"🔍 Trovati {len(contratti)} contratti totali per matching con cliente {cliente_id}")
+            print(f"🔍 Nome azienda cliente: '{nome_azienda}', Email: '{email_contatto}'")
+            
             for c in contratti:
-                c_cliente = (c.get("nome_cliente") or "").lower()
-                c_dati = c.get("dati_committente") or {}
-                if isinstance(c_dati, str):
-                    try: c_dati = json.loads(c_dati)
-                    except: c_dati = {}
-                
-                c_nome = (c_dati.get("ragioneSociale") or c_dati.get("ragione_sociale") or "").lower()
-                c_email = (c_dati.get("email") or "").lower()
-                
-                match = False
-                if nome_azienda and (nome_azienda in c_cliente or nome_azienda in c_nome):
+                # Controlla se il contratto è già collegato a questo cliente
+                c_cliente_id = c.get("cliente_id")
+                if c_cliente_id == cliente_id:
+                    # Contratto già collegato, includilo sempre
                     match = True
-                if email_contatto and email_contatto == c_email:
-                    match = True
+                else:
+                    # Cerca match per nome o email
+                    c_cliente = (c.get("nome_cliente") or "").lower()
+                    c_dati = c.get("dati_committente") or {}
+                    if isinstance(c_dati, str):
+                        try: c_dati = json.loads(c_dati)
+                        except: c_dati = {}
+                    
+                    c_nome = (c_dati.get("ragioneSociale") or c_dati.get("ragione_sociale") or "").lower()
+                    c_email = (c_dati.get("email") or "").lower()
+                    
+                    match = False
+                    # Match più flessibile: cerca anche parziali
+                    if nome_azienda:
+                        nome_azienda_lower = nome_azienda.lower()
+                        if (nome_azienda_lower in c_cliente or c_cliente in nome_azienda_lower or
+                            nome_azienda_lower in c_nome or c_nome in nome_azienda_lower):
+                            match = True
+                    if email_contatto and email_contatto == c_email:
+                        match = True
                 
                 if match:
                     # Calcolo valore contratto se possibile
@@ -784,8 +829,13 @@ async def get_cliente_documents(
                         "totale": valore,
                         "type": "contratto"
                     })
+                    print(f"✅ Match contratto #{c.get('numero')} (ID: {c.get('id')})")
+            
+            print(f"📊 Totale contratti matchati: {len(contratti_match)}")
         except Exception as e:
-            print(f"Error fetching contratti for cliente {cliente_id}: {e}")
+            print(f"❌ Error fetching contratti for cliente {cliente_id}: {e}")
+            import traceback
+            traceback.print_exc()
 
         return {
             "preventivi": preventivi_match,
@@ -1011,22 +1061,17 @@ async def init_drive_folder(
                 # Aggiorna cliente
                 dettagli["drive_folder_id"] = folder_id
                 
-                # Serializza dettagli usando il modello per validazione, poi dump json
-                # Attenzione: qui stiamo usando il modello Pydantic per serializzare
-                # Assicuriamoci che i campi esistano nel modello
-                try:
-                    dettagli_obj = DettagliCliente(**dettagli)
-                    dettagli_json = dettagli_obj.model_dump_json()
-                except Exception as model_err:
-                    print(f"Errore validazione modello dettagli: {model_err}")
-                    # Fallback a json.dumps se il modello non matcha perfettamente
-                    dettagli_json = json.dumps(dettagli)
+                # Serializza dettagli come JSON standard per preservare tutti i campi
+                dettagli_json = json.dumps(dettagli)
+                
+                print(f"💾 Saving drive_folder_id for client {cliente_id}: {folder_id}")
                 
                 await database.execute(
                     clienti_table.update()
                     .where(clienti_table.c.id == cliente_id)
                     .values(dettagli=dettagli_json)
                 )
+                print("✅ DB Update completed")
             else:
                 raise HTTPException(status_code=500, detail="Impossibile creare cartella Drive")
         
@@ -1124,13 +1169,12 @@ async def upload_drive_file(
             if not target_folder_id:
                 raise HTTPException(status_code=400, detail="Cartella Drive non inizializzata")
 
-        # Per evitare di caricare tutto in memoria con await file.read(),
-        # passiamo lo spool file (temp file su disco) direttamente a drive_utils.
-        # FastAPI usa SpooledTemporaryFile per UploadFile.
+        # Per evitare problemi con SpooledTemporaryFile e google-api-client in contesto async,
+        # leggiamo il contenuto in memoria.
+        file_content = await file.read()
         
-        # Nota: file.file è un oggetto Python file-like standard
         uploaded_file = drive_service.upload_file(
-            file.file, 
+            file_content, 
             file.filename, 
             target_folder_id, 
             file.content_type
@@ -1140,7 +1184,11 @@ async def upload_drive_file(
              raise HTTPException(status_code=500, detail="Upload fallito")
              
         return uploaded_file
+    except HTTPException:
+        raise
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Errore upload Drive: {str(e)}")
 
 

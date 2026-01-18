@@ -7,6 +7,7 @@ import { toast } from 'react-hot-toast';
 interface ClienteDriveProps {
   clienteId: string;
   folderId?: string; // Se null, prova a usare quello salvato nel cliente
+  clienteName?: string;
 }
 
 interface BreadcrumbItem {
@@ -14,7 +15,7 @@ interface BreadcrumbItem {
   name: string;
 }
 
-const ClienteDrive: React.FC<ClienteDriveProps> = ({ clienteId, folderId: initialFolderId }) => {
+const ClienteDrive: React.FC<ClienteDriveProps> = ({ clienteId, folderId: initialFolderId, clienteName }) => {
   const [files, setFiles] = useState<DriveFile[]>([]);
   const [currentFolderId, setCurrentFolderId] = useState<string | undefined>(initialFolderId);
   const [rootFolderId, setRootFolderId] = useState<string | undefined>();
@@ -52,11 +53,13 @@ const ClienteDrive: React.FC<ClienteDriveProps> = ({ clienteId, folderId: initia
         } else {
             setFiles(res.files);
             
+            const rootName = clienteName || 'Home';
+            
             // Logica Breadcrumbs base
             // Se siamo alla root (o prima chiamata senza ID), salviamo l'ID come root
             if (!rootFolderId && res.current_folder_id) {
                 setRootFolderId(res.current_folder_id);
-                setBreadcrumbs([{ id: res.current_folder_id, name: 'Home' }]);
+                setBreadcrumbs([{ id: res.current_folder_id, name: rootName }]);
             } else if (fId && fId !== rootFolderId) {
                 // Se stiamo navigando in una sottocartella, aggiungiamo breadcrumb (semplificato)
                 // In una implementazione completa, il backend dovrebbe restituire tutto il path
@@ -67,7 +70,7 @@ const ClienteDrive: React.FC<ClienteDriveProps> = ({ clienteId, folderId: initia
                    setBreadcrumbs(prev => [...prev, { id: fId || '', name: '...' }]); 
                 }
             } else if (fId === rootFolderId) {
-                setBreadcrumbs([{ id: rootFolderId || '', name: 'Home' }]);
+                setBreadcrumbs([{ id: rootFolderId || '', name: rootName }]);
             }
 
             if (res.current_folder_id) setCurrentFolderId(res.current_folder_id);
@@ -309,4 +312,3 @@ const ClienteDrive: React.FC<ClienteDriveProps> = ({ clienteId, folderId: initia
 };
 
 export default ClienteDrive;
-

@@ -1,0 +1,36 @@
+/* Fix per garantire la leggibilità delle ChoiceList Polaris */
+
+/* Target specifico per le label delle opzioni (radio/checkbox) */
+.Polaris-Choice__Label {
+    color: #202223 !important; /* Nero Polaris */
+    opacity: 1 !important;
+}
+
+/* Target per le descrizioni sotto le label (se presenti) */
+.Polaris-Choice__Descriptions {
+    color: #6d7175 !important; /* Grigio scuro Polaris */
+}
+
+/* Target per il controllo stesso (il cerchio del radio o il quadrato della checkbox) */
+.Polaris-Choice__Control {
+    border-color: #8c9196 !important;
+}
+
+/* Assicura che anche quando hoverato/selezionato resti leggibile */
+.Polaris-Choice:hover .Polaris-Choice__Label {
+    color: #202223 !important;
+}
+
+/* Forza anche span generici dentro le label */
+.Polaris-Choice__Label span {
+    color: #202223 !important;
+}
+
+/* Reset per evitare che stili globali 'color: white' vincano */
+.Polaris-Bleed {
+    color: #202223 !important;
+}
+
+.Polaris-Box {
+    color: inherit; /* Lascia che erediti dal container se necessario, ma di base fixiamo sopra */
+}

@@ -34,10 +34,15 @@ export interface User {
   role: string;
   is_active: boolean;
   created_at: string;
+  nome?: string | null;
+  cognome?: string | null;
   google_id?: string | null;
   google_email?: string | null;
   pending_approval?: boolean;
   rejection_reason?: string | null;
+  job_title?: string | null;
+  is_google_calendar_connected?: boolean;
+  google_calendar_email?: string | null;
 }
 
 interface UserPermissions {
@@ -80,7 +85,14 @@ export const usersApi = {
       if (contentType && contentType.includes('application/json')) {
         const data = await response.json();
         console.log('✅ [usersApi] Utenti ricevuti:', data.length);
-        return data;
+        
+        // Filtra account di sistema (superadmin, backup) come richiesto
+        const filteredData = data.filter((u: User) => {
+            const lowerName = u.username.toLowerCase();
+            return !lowerName.includes('superadmin') && !lowerName.includes('backup');
+        });
+
+        return filteredData;
       } else {
         const text = await response.text();
         console.error('❌ [usersApi] Risposta non JSON:', text.substring(0, 200));
@@ -115,48 +127,25 @@ export const usersApi = {
     }
   },
 
-  // Aggiorna ruolo utente
-  async updateUserRole(userId: number, role: string): Promise<{ status: string; user_id: number; role: string }> {
+  // Aggiorna dettagli utente (inclusi ruolo specifico e stato)
+  async updateUser(userId: number, data: { role?: string; is_active?: boolean; job_title?: string }): Promise<User> {
     try {
       const response = await fetch(`${USER_SERVICE_URL}/api/users/${userId}`, {
         method: 'PATCH',
         headers: getAuthHeaders(),
-        body: JSON.stringify({ role }),
+        body: JSON.stringify(data),
       });
 
       handleAuthError(response);
 
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.detail || 'Errore nell\'aggiornamento ruolo');
+        throw new Error(errorData.detail || 'Errore nell\'aggiornamento utente');
       }
 
       return await response.json();
     } catch (error) {
-      console.error('Errore nell\'aggiornamento ruolo:', error);
-      throw error;
-    }
-  },
-
-  // Aggiorna stato utente (attivo/non attivo)
-  async updateUserStatus(userId: number, isActive: boolean): Promise<{ status: string; user_id: number; is_active: boolean }> {
-    try {
-      const response = await fetch(`${USER_SERVICE_URL}/api/users/${userId}`, {
-        method: 'PATCH',
-        headers: getAuthHeaders(),
-        body: JSON.stringify({ is_active: isActive }),
-      });
-
-      handleAuthError(response);
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || 'Errore nell\'aggiornamento stato');
-      }
-
-      return await response.json();
-    } catch (error) {
-      console.error('Errore nell\'aggiornamento stato:', error);
+      console.error('Errore nell\'aggiornamento utente:', error);
       throw error;
     }
   },
@@ -302,6 +291,49 @@ export const usersApi = {
       throw error;
     }
   },
+
+  // Google Calendar Auth
+  async getGoogleCalendarAuthUrl(redirectUri: string): Promise<string> {
+    const params = new URLSearchParams({ redirect_uri: redirectUri });
+    const response = await fetch(`${USER_SERVICE_URL}/api/auth/google/calendar/url?${params}`, {
+        headers: getAuthHeaders(),
+    });
+    if (!response.ok) throw new Error('Failed to get auth URL');
+    const data = await response.json();
+    return data.authorization_url;
+  },
+
+  async connectGoogleCalendar(code: string, redirectUri: string): Promise<{status: string, connected_email: string}> {
+      const response = await fetch(`${USER_SERVICE_URL}/api/auth/google/calendar/connect`, {
+          method: 'POST',
+          headers: getAuthHeaders(),
+          body: JSON.stringify({ code, redirect_uri: redirectUri })
+      });
+      if (!response.ok) throw new Error('Failed to connect Google Calendar');
+      return await response.json();
+  },
+
+  async disconnectGoogleCalendar(): Promise<void> {
+      const response = await fetch(`${USER_SERVICE_URL}/api/auth/google/calendar/disconnect`, {
+          method: 'POST',
+          headers: getAuthHeaders()
+      });
+      if (!response.ok) throw new Error('Failed to disconnect Google Calendar');
+  },
+
+  async getCalendarEvents(start: Date, end: Date, userId?: number): Promise<any[]> {
+    const params = new URLSearchParams({
+        start: start.toISOString(),
+        end: end.toISOString()
+    });
+    if (userId) params.append('user_id', userId.toString());
+    
+    const response = await fetch(`${USER_SERVICE_URL}/api/calendar/events?${params}`, {
+        headers: getAuthHeaders()
+    });
+    if (!response.ok) throw new Error('Failed to fetch events');
+    return await response.json();
+  }
 };
 
 export default usersApi;

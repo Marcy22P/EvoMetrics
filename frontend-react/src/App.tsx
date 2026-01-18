@@ -13,7 +13,8 @@ import Preventivatore from './pages/Preventivatore'
 import Contratti from './pages/Contratti'
 // import Pagamenti from './pages/Pagamenti'
 import Login from './pages/Login'
-import Gradimento from './pages/Gradimento' // Public Form
+import Gradimento from './pages/Gradimento' // Legacy
+import GradimentoForm from './pages/GradimentoForm' // Nuovo Form Polaris
 import GradimentoList from './pages/GradimentoList' // Private List (Punto 6)
 import { AuthProvider, useAuth } from './hooks/useAuth'
 import AccountsManager from './pages/AccountsManager'
@@ -24,8 +25,17 @@ import ClienteDetail from './pages/ClienteDetail'
 import ShopifyInstall from './pages/ShopifyInstall'
 import ShopifyThankYou from './pages/ShopifyThankYou'
 import TaskManager from './pages/TaskManager'
+import ProductivityDashboard from './pages/ProductivityDashboard'
+import WorkflowBuilder from './pages/WorkflowBuilder'
 import DrivePage from './pages/DrivePage'
+import Team from './pages/Team'
+import Calendar from './pages/Calendar'
+import CalendarCallback from './pages/CalendarCallback'
+import SettingsTasks from './pages/SettingsTasks'
+import SalesPipeline from './pages/SalesPipeline'
+// import TeamCollaborators from './pages/TeamCollaborators' // Used internally by Team.tsx
 import ShopifyLayout from './components/Layout/ShopifyLayout' // Nuovo Layout Polaris
+import { TasksConfigurationProvider } from './contexts/TasksConfigurationContext'
 
 // Componente per proteggere le route
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -190,6 +200,13 @@ const AppRoutes: React.FC = () => {
           </RequirePermission>
         } />
 
+        {/* SALES PIPELINE */}
+        <Route path="/sales" element={
+          <RequirePermission perm="clienti:read">
+            <SalesPipeline />
+          </RequirePermission>
+        } />
+
         {/* INTEGRAZIONI */}
         <Route path="/integrazioni/shopify" element={
             <RequirePermission perm="clienti:read">
@@ -205,13 +222,44 @@ const AppRoutes: React.FC = () => {
         } />
 
         {/* GESTIONE TEAM */}
+        <Route path="/team" element={
+            <RequirePermission perm="users:read">
+                <Team />
+            </RequirePermission>
+        } />
+        
+        {/* Sub-routes handled by Team.tsx tabs */}
         <Route path="/team/collaboratori" element={
-            <div>Anagrafica Collaboratori (Coming Soon)</div>
+            <RequirePermission perm="users:read">
+                <Team />
+            </RequirePermission>
+        } />
+
+        <Route path="/team/produttivita" element={
+            <RequirePermission perm="users:read">
+                <Team />
+            </RequirePermission>
         } />
 
         <Route path="/team/gradimento-risposte" element={
             <RequirePermission perm="gradimento:read">
                 <GradimentoList />
+            </RequirePermission>
+        } />
+
+        <Route path="/team/gradimento-nuovo" element={
+            <GradimentoForm />
+        } />
+        
+        {/* CALENDARIO */}
+        <Route path="/calendario" element={
+            <RequirePermission perm="users:read">
+                <Calendar />
+            </RequirePermission>
+        } />
+        <Route path="/calendario/callback" element={
+            <RequirePermission perm="users:read">
+                <CalendarCallback />
             </RequirePermission>
         } />
 
@@ -222,14 +270,21 @@ const AppRoutes: React.FC = () => {
           </RequirePermission>
         } />
         
+        <Route path="/impostazioni/tasks" element={
+          <RequirePermission perm="admin">
+            <SettingsTasks />
+          </RequirePermission>
+        } />
+        
         <Route path="/accounts_manager" element={<Navigate to="/impostazioni/accounts" replace />} />
         
         <Route path="/profile" element={<ProfileForm />} />
         
         {/* PLACEHOLDERS */}
         <Route path="/investimenti" element={<div className="page-container"><h1>Investimenti</h1><p>Sezione in sviluppo</p></div>} />
-        <Route path="/produttivita" element={<div className="page-container"><h1>Produttività Team</h1><p>Sezione in sviluppo</p></div>} />
+        <Route path="/produttivita" element={<ProductivityDashboard />} />
         <Route path="/task" element={<TaskManager />} />
+        <Route path="/workflow" element={<WorkflowBuilder />} />
         <Route path="/drive" element={<DrivePage />} />
         <Route path="/attenzione-clienti" element={<div className="page-container"><h1>Attenzione Clienti</h1><p>Sezione in sviluppo</p></div>} />
         <Route path="/team/indice-benessere" element={<div className="page-container"><h1>Indice di Benessere</h1><p>Sezione in sviluppo</p></div>} />
@@ -239,7 +294,6 @@ const AppRoutes: React.FC = () => {
         <Route path="/report-form" element={<div className="page-container"><h1>Form Richieste</h1><p>Sezione in sviluppo</p></div>} />
         <Route path="/dashboard-generale" element={<div className="page-container"><h1>Dashboard Generale</h1><p>Sezione in sviluppo</p></div>} />
         <Route path="/manuale" element={<div className="page-container"><h1>Manuale Utente</h1><p>Sezione in sviluppo</p></div>} />
-        <Route path="/workflow" element={<div className="page-container"><h1>Workflow</h1><p>Sezione in sviluppo</p></div>} />
         <Route path="/sistema" element={<div className="page-container"><h1>Stato Sistema</h1><p>Sezione in sviluppo</p></div>} />
 
       </Route>
@@ -253,7 +307,9 @@ const AppRoutes: React.FC = () => {
 function App() {
   return (
     <AuthProvider>
+      <TasksConfigurationProvider>
       <AppRoutes />
+      </TasksConfigurationProvider>
     </AuthProvider>
   )
 }

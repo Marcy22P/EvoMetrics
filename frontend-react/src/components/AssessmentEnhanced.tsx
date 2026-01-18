@@ -1,68 +1,94 @@
 import React from 'react';
 
-// Simple SectionHeader component
-export const SectionHeader: React.FC<{ 
-  title: string; 
-  icon: React.ReactNode; 
+interface SectionHeaderProps {
+  title: string;
   subtitle?: string;
-  isCompleted?: boolean;
-}> = ({ title, icon, subtitle, isCompleted = false }) => (
-  <div style={{ 
-    display: 'flex', 
-    alignItems: 'center', 
-    gap: '0.5rem',
-    padding: '1rem',
-    background: 'linear-gradient(145deg, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0.03) 100%)',
-    border: '1px solid rgba(255,255,255,0.1)',
-    borderRadius: '12px',
-    marginBottom: '1rem',
-    backdropFilter: 'blur(20px)',
-    boxShadow: '0 0 30px rgba(255,255,255,0.1)'
-  }}>
-    {icon}
-    <div>
-      <h3 style={{ margin: 0, color: '#ffffff', fontWeight: '600' }}>{title}</h3>
-      {subtitle && <p style={{ margin: 0, fontSize: '0.9rem', color: 'rgba(255,255,255,0.7)' }}>{subtitle}</p>}
+  icon?: React.ReactNode;
+}
+
+export const SectionHeader: React.FC<SectionHeaderProps> = ({ title, subtitle, icon }) => {
+  return (
+    <div className="section-header">
+      {icon && <div className="section-icon">{icon}</div>}
+      <div className="section-titles">
+        <h2>{title}</h2>
+        {subtitle && <p>{subtitle}</p>}
+      </div>
     </div>
-    {isCompleted && <span style={{ color: '#ffffff' }}>✓</span>}
-  </div>
-);
+  );
+};
 
-// Simple step icon function
-export const getStepIcon = (step: number, isCompleted: boolean = false) => (
-  <div style={{
-    width: '32px',
-    height: '32px',
-    borderRadius: '50%',
-    background: isCompleted 
-      ? 'linear-gradient(145deg, rgba(255,255,255,0.2), rgba(255,255,255,0.1))'
-      : 'linear-gradient(145deg, rgba(255,255,255,0.15), rgba(255,255,255,0.05))',
-    color: '#ffffff',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    fontSize: '14px',
-    fontWeight: 'bold',
-    border: '1px solid rgba(255,255,255,0.2)',
-    boxShadow: '0 2px 10px rgba(255,255,255,0.1)'
-  }}>
-    {isCompleted ? '✓' : step + 1}
-  </div>
-);
+export const getStepIcon = (step: number): string => {
+  const icons: Record<number, string> = {
+    1: '🏢',
+    2: '🌐',
+    3: '🎯',
+    4: '📣',
+    5: '📊',
+    6: '⚠️',
+    7: '📝'
+  };
+  return icons[step] || '📋';
+};
 
-// Section data array - returns array of sections
-export const getSectionData = () => [
-  { title: 'Anagrafica', subtitle: 'Informazioni di base', icon: '👤' },
-  { title: 'Presenza Online', subtitle: 'Situazione attuale digitale', icon: '🌐' },
-  { title: 'Obiettivi', subtitle: 'Cosa vuoi raggiungere', icon: '🎯' },
-  { title: 'Marketing', subtitle: 'Strategie di promozione', icon: '📢' },
-  { title: 'Dati e Strumenti', subtitle: 'Tracciamento e analytics', icon: '📊' },
-  { title: 'Budget', subtitle: 'Investimento disponibile', icon: '💰' },
-  { title: 'Priorità', subtitle: 'Cosa è più importante', icon: '⭐' }
-];
+interface SectionDataItem {
+  id: string;
+  title: string;
+  icon: string;
+  description: string;
+  subtitle: string;
+}
 
-export default {
-  SectionHeader,
-  getStepIcon,
-  getSectionData
+export const getSectionData = (): SectionDataItem[] => {
+  return [
+    {
+      id: 'anagrafica',
+      title: 'Anagrafica',
+      icon: '🏢',
+      description: 'Informazioni aziendali',
+      subtitle: 'Chi siete e come contattarvi'
+    },
+    {
+      id: 'presenza-online',
+      title: 'Presenza Online',
+      icon: '🌐',
+      description: 'Sito web e social',
+      subtitle: 'La vostra presenza digitale'
+    },
+    {
+      id: 'obiettivi',
+      title: 'Obiettivi',
+      icon: '🎯',
+      description: 'Traguardi e sfide',
+      subtitle: 'Cosa volete raggiungere'
+    },
+    {
+      id: 'marketing',
+      title: 'Marketing',
+      icon: '📣',
+      description: 'Strategie attuali',
+      subtitle: 'Come promuovete la vostra azienda'
+    },
+    {
+      id: 'dati',
+      title: 'Dati e Strumenti',
+      icon: '📊',
+      description: 'Analytics e CRM',
+      subtitle: 'Gli strumenti che utilizzate'
+    },
+    {
+      id: 'ostacoli',
+      title: 'Ostacoli',
+      icon: '⚠️',
+      description: 'Sfide e blocchi',
+      subtitle: 'Cosa vi sta frenando'
+    },
+    {
+      id: 'note',
+      title: 'Note Finali',
+      icon: '📝',
+      description: 'Considerazioni aggiuntive',
+      subtitle: 'Altre informazioni utili'
+    }
+  ];
 };

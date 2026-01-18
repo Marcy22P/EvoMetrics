@@ -1,0 +1,53 @@
+.fc-event-content-custom {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
+  padding: 1px 2px;
+}
+
+.fc-event-icon {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  width: 16px; 
+  height: 16px;
+}
+
+.fc-event-icon svg {
+  width: 100%;
+  height: 100%;
+  fill: currentColor;
+}
+
+.fc-event-text-container {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  line-height: 1.1;
+  flex-grow: 1;
+}
+
+.fc-event-time-custom {
+  font-size: 0.7em;
+  opacity: 0.85;
+}
+
+.fc-event-title-custom {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 0.85em;
+}
+
+/* Stili per eventi passati */
+.event-past {
+  opacity: 0.65;
+  filter: grayscale(0.4);
+}
+
+/* Nascondi default event content se usiamo custom */
+.fc-daygrid-event-dot {
+    display: none;
+}

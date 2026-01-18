@@ -162,6 +162,8 @@ class DriveService:
             return results.get('files', [])
         except Exception as e:
             print(f"❌ Drive list_files error: {e}")
+            import traceback
+            traceback.print_exc()
             return []
 
     def create_folder(self, name: str, parent_id: str = None) -> Optional[str]:
@@ -227,6 +229,8 @@ class DriveService:
             return response
         except Exception as e:
             print(f"❌ Drive upload_file error: {e}")
+            import traceback
+            traceback.print_exc()
             return None
 
     def search_folder(self, name: str, parent_id: str = None) -> Optional[str]:

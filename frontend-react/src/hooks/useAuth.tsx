@@ -176,8 +176,17 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   }, [loadPermissions]);
 
   const hasPermission = useCallback((key: string) => {
+    // Il Superadmin ha sempre accesso a tutto
     if (user?.role === 'superadmin') return true;
+    
+    // Se l'utente ha il permesso "wildcard" globale
     if (permissions['__all__']) return true;
+    
+    // Admin ha permessi impliciti su molte cose se non specificato diversamente, 
+    // ma per sicurezza controlliamo la mappa permessi. 
+    // Nel tuo caso specifico, sembra che l'Admin debba poter fare tutto nel Task Manager.
+    if (user?.role === 'admin') return true;
+
     return !!permissions[key];
   }, [user, permissions]);
 

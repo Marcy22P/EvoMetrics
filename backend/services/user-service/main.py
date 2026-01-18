@@ -23,6 +23,11 @@ from models import (
     CreateUserRequest,
 )
 import httpx
+from google_auth_oauthlib.flow import Flow
+import requests
+import google_utils as gcal
+import asyncio
+from pydantic import BaseModel
 
 # Carica variabili d'ambiente dalla root del progetto
 try:
@@ -165,7 +170,63 @@ app.add_middleware(
 async def startup_event():
     print("🚀 Avvio User Service...")
     await init_database()
+    await ensure_schema()
     print("✅ User Service avviato")
+
+
+async def ensure_schema():
+    """Ensures database schema is up to date"""
+    try:
+        # Check if job_title column exists
+        check_query = """
+            SELECT column_name 
+            FROM information_schema.columns 
+            WHERE table_name='users' AND column_name='job_title'
+        """
+        row = await database.fetch_one(check_query)
+        if not row:
+            print("🔄 Adding job_title column to users table...")
+            await database.execute("ALTER TABLE users ADD COLUMN job_title TEXT")
+            print("✅ job_title column added")
+
+        # Check if google_refresh_token column exists
+        check_query_token = """
+            SELECT column_name 
+            FROM information_schema.columns 
+            WHERE table_name='users' AND column_name='google_refresh_token'
+        """
+        row_token = await database.fetch_one(check_query_token)
+        if not row_token:
+            print("🔄 Adding google_refresh_token column to users table...")
+            await database.execute("ALTER TABLE users ADD COLUMN google_refresh_token TEXT")
+            print("✅ google_refresh_token column added")
+
+        # Check if is_google_calendar_connected column exists
+        check_query_conn = """
+            SELECT column_name 
+            FROM information_schema.columns 
+            WHERE table_name='users' AND column_name='is_google_calendar_connected'
+        """
+        row_conn = await database.fetch_one(check_query_conn)
+        if not row_conn:
+            print("🔄 Adding is_google_calendar_connected column to users table...")
+            await database.execute("ALTER TABLE users ADD COLUMN is_google_calendar_connected BOOLEAN DEFAULT FALSE")
+            print("✅ is_google_calendar_connected column added")
+
+        # Check if google_calendar_email column exists
+        check_query_email = """
+            SELECT column_name 
+            FROM information_schema.columns 
+            WHERE table_name='users' AND column_name='google_calendar_email'
+        """
+        row_email = await database.fetch_one(check_query_email)
+        if not row_email:
+            print("🔄 Adding google_calendar_email column to users table...")
+            await database.execute("ALTER TABLE users ADD COLUMN google_calendar_email TEXT")
+            print("✅ google_calendar_email column added")
+
+    except Exception as e:
+        print(f"⚠️ Schema check failed: {e}")
 
 
 @app.on_event("shutdown")
@@ -184,6 +245,7 @@ async def fetch_user_or_404(user_id: int) -> Dict[str, Any]:
     query = """
         SELECT id, username, role, is_active, pending_approval, rejection_reason,
                nome, cognome, email, google_email, google_id, profile_completed,
+               job_title, google_refresh_token, is_google_calendar_connected,
                created_at, updated_at
         FROM users
         WHERE id = :user_id
@@ -213,6 +275,9 @@ def serialize_user(row: Dict[str, Any]) -> UserResponse:
         google_email=row.get("google_email"),
         google_id=row.get("google_id"),
         profile_completed=_bool(row.get("profile_completed"), False),
+        job_title=row.get("job_title"),
+        google_refresh_token=row.get("google_refresh_token"),
+        is_google_calendar_connected=_bool(row.get("is_google_calendar_connected"), False),
         created_at=row["created_at"].isoformat() if row.get("created_at") else "",
         updated_at=row["updated_at"].isoformat() if row.get("updated_at") else "",
     )
@@ -349,6 +414,7 @@ async def list_users(
     query = f"""
         SELECT id, username, role, is_active, pending_approval, rejection_reason,
                nome, cognome, email, google_email, google_id, profile_completed,
+               job_title, google_refresh_token, is_google_calendar_connected,
                created_at, updated_at
         FROM users
         {where_clause}
@@ -611,6 +677,489 @@ async def update_user_password(
         "message": "Password aggiornata con successo. L'utente ora può accedere sia con username/password che con Google OAuth."
     }
 
+
+# Google OAuth Configuration
+GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID")
+GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET")
+
+@app.get("/api/auth/google/calendar/url")
+async def get_google_calendar_auth_url(redirect_uri: str):
+    """Genera l'URL per l'autorizzazione di Google Calendar"""
+    if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
+        raise HTTPException(status_code=500, detail="Google Credentials not configured")
+
+    flow = Flow.from_client_config(
+        {
+            "web": {
+                "client_id": GOOGLE_CLIENT_ID,
+                "client_secret": GOOGLE_CLIENT_SECRET,
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+            }
+        },
+        scopes=['https://www.googleapis.com/auth/calendar.events', 'https://www.googleapis.com/auth/calendar.readonly', 'https://www.googleapis.com/auth/userinfo.email'],
+        redirect_uri=redirect_uri
+    )
+    
+    authorization_url, state = flow.authorization_url(
+        access_type='offline',
+        include_granted_scopes='true',
+        prompt='consent' # Importante per ottenere refresh token ogni volta
+    )
+    
+    return {"authorization_url": authorization_url}
+
+@app.post("/api/auth/google/calendar/connect")
+async def connect_google_calendar(
+    payload: Dict[str, str],
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """Scambia l'auth code per token e salva nel profilo utente"""
+    code = payload.get("code")
+    redirect_uri = payload.get("redirect_uri")
+    
+    if not code or not redirect_uri:
+        raise HTTPException(status_code=400, detail="Missing code or redirect_uri")
+
+    try:
+        # Usa run_in_executor per operazioni sincrone bloccanti
+        import asyncio
+        loop = asyncio.get_event_loop()
+        
+        def exchange_token():
+            flow = Flow.from_client_config(
+                {
+                    "web": {
+                        "client_id": GOOGLE_CLIENT_ID,
+                        "client_secret": GOOGLE_CLIENT_SECRET,
+                        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                        "token_uri": "https://oauth2.googleapis.com/token",
+                    }
+                },
+                scopes=['https://www.googleapis.com/auth/calendar.events', 'https://www.googleapis.com/auth/calendar.readonly', 'https://www.googleapis.com/auth/userinfo.email'],
+                redirect_uri=redirect_uri
+            )
+            flow.fetch_token(code=code)
+            return flow.credentials
+
+        credentials = await loop.run_in_executor(None, exchange_token)
+        
+        # Ottieni email dell'account collegato per verifica
+        def get_user_info():
+            resp = requests.get(
+                'https://www.googleapis.com/oauth2/v2/userinfo',
+                headers={'Authorization': f'Bearer {credentials.token}'}
+            )
+            return resp.json()
+
+        google_user_info = await loop.run_in_executor(None, get_user_info)
+        connected_email = google_user_info.get('email')
+        refresh_token = credentials.refresh_token
+
+        # Aggiorna DB
+        update_query = """
+            UPDATE users 
+            SET google_refresh_token = :rt, 
+                google_calendar_email = :email,
+                is_google_calendar_connected = true,
+                updated_at = :now
+            WHERE id = :uid
+        """
+        
+        params = {
+            "email": connected_email,
+            "now": datetime.utcnow(),
+            "uid": current_user["id"]
+        }
+        
+        if refresh_token:
+            params["rt"] = refresh_token
+        else:
+            print("⚠️ Warning: No refresh token received from Google.")
+            params["rt"] = None 
+
+        if refresh_token:
+             await database.execute(update_query, params)
+        else:
+             # Update senza toccare il refresh token (solo email e flag)
+             update_query_no_rt = """
+                UPDATE users 
+                SET google_calendar_email = :email,
+                    is_google_calendar_connected = true,
+                    updated_at = :now
+                WHERE id = :uid
+            """
+             del params["rt"]
+             await database.execute(update_query_no_rt, params)
+        
+        return {"status": "success", "connected_email": connected_email}
+        
+    except Exception as e:
+        print(f"Auth Error: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Failed to connect Google Calendar: {str(e)}")
+
+@app.post("/api/auth/google/calendar/disconnect")
+async def disconnect_google_calendar(
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """Disconnette il calendario rimuovendo i token"""
+    query = """
+        UPDATE users 
+        SET google_refresh_token = NULL, 
+            google_calendar_email = NULL,
+            is_google_calendar_connected = false,
+            updated_at = :now
+        WHERE id = :uid
+    """
+    await database.execute(query, {
+        "now": datetime.utcnow(),
+        "uid": current_user["id"]
+    })
+    return {"status": "success"}
+
+
+# ========================
+# CALENDAR ENDPOINTS
+# ========================
+
+@app.get("/api/calendar/status")
+async def get_calendar_status(user_id: int = Query(...)):
+    """Verifica stato connessione calendario"""
+    user = await fetch_user_or_404(user_id)
+    return {
+        "connected": user.get("is_google_calendar_connected", False),
+        "calendar_email": user.get("google_calendar_email"),
+        "connected_at": user.get("updated_at") # Approssimato
+    }
+
+@app.get("/api/calendar/events")
+async def get_calendar_events(
+    start: str = Query(...), # ISO format
+    end: str = Query(...),   # ISO format
+    user_id: Optional[int] = Query(None), # Se specificato (e admin), vedi quel calendario
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    loop = asyncio.get_event_loop()
+    
+    # Determina target user(s)
+    target_users = []
+    
+    if user_id:
+        # Se specificato un utente target
+        # Utente può vedere se stesso, Admin può vedere chiunque
+        if current_user["role"] not in ("admin", "superadmin") and current_user["id"] != user_id:
+             raise HTTPException(status_code=403, detail="Permesso negato")
+        
+        try:
+            user = await fetch_user_or_404(user_id)
+            if user.get("is_google_calendar_connected"):
+                target_users.append(user)
+        except HTTPException:
+            pass # Ignore if not found
+            
+    elif current_user["role"] in ("admin", "superadmin"):
+        # Admin senza target specifico -> Vede TUTTI
+        query = "SELECT * FROM users WHERE is_google_calendar_connected = true"
+        rows = await database.fetch_all(query)
+        target_users = [dict(row) for row in rows]
+    else:
+        # User normale -> Solo se stesso
+        user = await fetch_user_or_404(current_user["id"])
+        if user.get("is_google_calendar_connected"):
+            target_users.append(user)
+            
+    all_events = []
+    
+    # Definisci funzione sincrona per fetch
+    def fetch_user_events(u):
+        try:
+            if not u.get("google_refresh_token"):
+                return []
+            
+            # Costruisci service
+            service = gcal.get_calendar_service(
+                access_token="", # Verrà refreshato
+                refresh_token=u.get("google_refresh_token")
+            )
+            
+            dt_start = datetime.fromisoformat(start.replace("Z", "+00:00"))
+            dt_end = datetime.fromisoformat(end.replace("Z", "+00:00"))
+            
+            # List events
+            events = gcal.list_events(
+                service, 
+                time_min=dt_start,
+                time_max=dt_end
+            )
+            
+            # Arricchisci eventi con info owner
+            for ev in events:
+                ev["owner_user_id"] = str(u["id"])
+                ev["owner_username"] = u.get("username")
+                ev["owner_calendar_email"] = u.get("google_calendar_email")
+                
+            return events
+        except Exception as e:
+            print(f"⚠️ Error fetching events for user {u.get('id')}: {e}")
+            return []
+
+    # Esegui in parallelo (o sequenziale nel thread pool)
+    for u in target_users:
+        events = await loop.run_in_executor(None, fetch_user_events, u)
+        all_events.extend(events)
+        
+    # Rispondi con formato compatibile con frontend
+    return {
+        "events": all_events,
+        "period": {"start": start, "end": end},
+        "users_count": len(target_users)
+    }
+
+@app.get("/api/calendar/admin/all-events")
+async def get_all_calendar_events_admin(
+    start: str = Query(...),
+    end: str = Query(...),
+    user_ids: Optional[str] = Query(None), # comma separated
+    current_user: Dict[str, Any] = Depends(get_admin_user)
+):
+    loop = asyncio.get_event_loop()
+    
+    query = "SELECT * FROM users WHERE is_google_calendar_connected = true"
+    rows = await database.fetch_all(query)
+    all_users = [dict(row) for row in rows]
+    
+    target_users = all_users
+    if user_ids:
+        ids = [int(x) for x in user_ids.split(",") if x.strip()]
+        target_users = [u for u in all_users if u["id"] in ids]
+        
+    all_events = []
+    
+    def fetch_user_events(u):
+        try:
+            if not u.get("google_refresh_token"): return []
+            service = gcal.get_calendar_service(access_token="", refresh_token=u.get("google_refresh_token"))
+            dt_start = datetime.fromisoformat(start.replace("Z", "+00:00"))
+            dt_end = datetime.fromisoformat(end.replace("Z", "+00:00"))
+            events = gcal.list_events(service, time_min=dt_start, time_max=dt_end)
+            for ev in events:
+                ev["owner_user_id"] = str(u["id"])
+                ev["owner_username"] = u.get("username")
+                ev["owner_calendar_email"] = u.get("google_calendar_email")
+            return events
+        except Exception as e:
+            print(f"⚠️ Error {u['id']}: {e}")
+            return []
+
+    for u in target_users:
+        events = await loop.run_in_executor(None, fetch_user_events, u)
+        all_events.extend(events)
+        
+    return {
+        "events": all_events,
+        "period": {"start": start, "end": end},
+        "users_count": len(target_users)
+    }
+
+@app.post("/api/calendar/events")
+async def create_calendar_event(
+    event: Dict[str, Any] = Body(...),
+    user_id: int = Query(...), # Owner del calendario su cui creare
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    # Verifica permessi: posso creare sul mio o sono admin
+    if current_user["role"] not in ("admin", "superadmin") and current_user["id"] != user_id:
+        raise HTTPException(status_code=403, detail="Permesso negato")
+        
+    target_user = await fetch_user_or_404(user_id)
+    if not target_user.get("is_google_calendar_connected"):
+        raise HTTPException(status_code=400, detail="Utente non ha calendario collegato")
+        
+    loop = asyncio.get_event_loop()
+    
+    def do_create():
+        service = gcal.get_calendar_service(
+            access_token="",
+            refresh_token=target_user.get("google_refresh_token")
+        )
+        return gcal.create_event(
+            service,
+            summary=event.get("summary"),
+            start=event.get("start"),
+            end=event.get("end"),
+            description=event.get("description"),
+            location=event.get("location"),
+            attendees=event.get("attendees")
+        )
+        
+    try:
+        new_event = await loop.run_in_executor(None, do_create)
+        new_event["owner_user_id"] = str(target_user["id"])
+        return new_event
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/calendar/events/{event_id}")
+async def delete_calendar_event(
+    event_id: str,
+    user_id: int = Query(...),
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    if current_user["role"] not in ("admin", "superadmin") and current_user["id"] != user_id:
+        raise HTTPException(status_code=403, detail="Permesso negato")
+        
+    target_user = await fetch_user_or_404(user_id)
+    
+    loop = asyncio.get_event_loop()
+    
+    def do_delete():
+        service = gcal.get_calendar_service(
+            access_token="",
+            refresh_token=target_user.get("google_refresh_token")
+        )
+        return gcal.delete_event(service, event_id)
+        
+    success = await loop.run_in_executor(None, do_delete)
+    if not success:
+        raise HTTPException(status_code=500, detail="Errore eliminazione")
+        
+    return {"status": "success"}
+
+@app.get("/api/calendar/admin/users")
+async def get_calendar_users(current_user: Dict[str, Any] = Depends(get_admin_user)):
+    """Lista utenti con stato calendario per filtri admin"""
+    query = """
+        SELECT id as user_id, username, nome, cognome, google_calendar_email as calendar_email, 
+               is_google_calendar_connected as is_connected, updated_at as connected_at
+        FROM users
+    """
+    rows = await database.fetch_all(query)
+    # Converti in dict e formatta date se necessario
+    results = []
+    for row in rows:
+        d = dict(row)
+        d["user_id"] = str(d["user_id"])
+        if d.get("connected_at"):
+            d["connected_at"] = d["connected_at"].isoformat()
+        results.append(d)
+    return results
+
+# VC_OS SYNC ENDPOINT
+class SyncTaskRequest(BaseModel):
+    user_id: int
+    task_id: str
+    title: str
+    description: Optional[str]
+    due_date: Optional[str] # ISO format
+    google_event_id: Optional[str] = None
+    action: str = "create" # create, update, delete
+
+@app.post("/api/internal/calendar/sync-task")
+async def internal_sync_task(req: SyncTaskRequest):
+    """
+    Endpoint interno per sincronizzare i task di produttività sul calendario dedicato.
+    """
+    # 1. Recupera utente
+    user_row = await database.fetch_one("SELECT * FROM users WHERE id = :id", {"id": req.user_id})
+    if not user_row:
+        return {"status": "skipped", "reason": "user_not_found"}
+    
+    user = dict(user_row)
+    if not user.get("is_google_calendar_connected") or not user.get("google_refresh_token"):
+        return {"status": "skipped", "reason": "user_not_connected"}
+
+    loop = asyncio.get_event_loop()
+
+    def do_sync():
+        service = gcal.get_calendar_service(
+            access_token="",
+            refresh_token=user.get("google_refresh_token")
+        )
+        
+        # 1. Ensure Calendar exists
+        calendar_id = gcal.ensure_app_calendar(service)
+        
+        if req.action == "delete":
+            if req.google_event_id:
+                gcal.delete_event(service, req.google_event_id, calendar_id)
+            return {"google_event_id": None}
+            
+        elif req.action in ("create", "update"):
+            if not req.due_date:
+                return {"google_event_id": None}
+                
+            # Create/Update logic
+            # Se abbiamo google_event_id, proviamo update, se fallisce (404) ricreiamo?
+            # Per semplicità usiamo create_event che fa insert
+            
+            # Formatta date: task ha due_date (fine giornata lavorativa o specifico?)
+            # Assumiamo due_date come inizio, e +1h come fine, o tutto il giorno?
+            # Useremo tutto il giorno per i task se non hanno orario specifico
+            
+            start_dt = req.due_date
+            # Se la stringa non ha T, è YYYY-MM-DD -> All Day
+            is_all_day = 'T' not in req.due_date
+            
+            event_body = {
+                'summary': req.title,
+                'description': req.description or "",
+                'extendedProperties': {
+                    'private': {
+                        'task_id': req.task_id,
+                        'app_source': 'VC_OS'
+                    }
+                }
+            }
+            
+            if is_all_day:
+                event_body['start'] = {'date': req.due_date}
+                event_body['end'] = {'date': req.due_date} # Google Calendar exclusive end? Check. solitamente end date è esclusiva (+1 day)
+                # Helper: parse date, add 1 day
+                try:
+                    d = datetime.strptime(req.due_date, "%Y-%m-%d")
+                    from datetime import timedelta
+                    d_end = d + timedelta(days=1)
+                    event_body['end'] = {'date': d_end.strftime("%Y-%m-%d")}
+                except:
+                    event_body['end'] = {'date': req.due_date}
+            else:
+                 event_body['start'] = {'dateTime': req.due_date, 'timeZone': 'Europe/Rome'}
+                 # Default 1h duration
+                 try:
+                     d = datetime.fromisoformat(req.due_date.replace("Z", "+00:00"))
+                     from datetime import timedelta
+                     d_end = d + timedelta(hours=1)
+                     event_body['end'] = {'dateTime': d_end.isoformat(), 'timeZone': 'Europe/Rome'}
+                 except:
+                     event_body['end'] = event_body['start']
+
+            if req.action == "update" and req.google_event_id:
+                try:
+                    updated = service.events().patch(
+                        calendarId=calendar_id,
+                        eventId=req.google_event_id,
+                        body=event_body
+                    ).execute()
+                    return {"google_event_id": updated['id']}
+                except Exception as e:
+                    print(f"Update fallito, provo create: {e}")
+                    # Fallback a create
+            
+            # Create
+            created = service.events().insert(
+                calendarId=calendar_id,
+                body=event_body
+            ).execute()
+            return {"google_event_id": created['id']}
+            
+        return {"google_event_id": None}
+
+    try:
+        result = await loop.run_in_executor(None, do_sync)
+        return {"status": "success", **result}
+    except Exception as e:
+        print(f"Sync Error: {e}")
+        return {"status": "error", "detail": str(e)}
 
 if __name__ == "__main__":
     import uvicorn

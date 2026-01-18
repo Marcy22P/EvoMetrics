@@ -68,15 +68,35 @@ def load_service_app(service_name):
     
     # Rimuovi eventuali moduli locali già caricati da altri servizi
     # (moduli comuni come 'models', 'database', 'auth', etc.)
-    common_module_names = ['models', 'database', 'auth', 'schemas', 'utils', 'config']
+    common_module_names = ['models', 'database', 'auth', 'schemas', 'utils', 'config', 'crud']
+    modules_to_remove = []
     for mod_name in common_module_names:
         if mod_name in sys.modules:
             mod = sys.modules[mod_name]
             # Rimuovi solo se è stato caricato da un altro servizio
             if mod and hasattr(mod, '__file__') and mod.__file__:
-                # Se il modulo non è da questo servizio, rimuovilo
-                if service_dir_str not in str(mod.__file__):
-                    del sys.modules[mod_name]
+                mod_file = str(mod.__file__)
+                # Se il modulo non è da questo servizio, segnalo per rimozione
+                if service_dir_str not in mod_file:
+                    modules_to_remove.append(mod_name)
+    
+    # Rimuovi anche moduli con nomi completi che potrebbero causare conflitti
+    # (es. 'services.preventivi-service.database', 'services.sales-service.database')
+    for mod_name in list(sys.modules.keys()):
+        if any(common_name in mod_name for common_name in common_module_names):
+            mod = sys.modules[mod_name]
+            if mod and hasattr(mod, '__file__') and mod.__file__:
+                mod_file = str(mod.__file__)
+                if service_dir_str not in mod_file:
+                    modules_to_remove.append(mod_name)
+    
+    # Rimuovi i moduli in un secondo momento per evitare problemi durante l'iterazione
+    for mod_name in set(modules_to_remove):  # set() per rimuovere duplicati
+        if mod_name in sys.modules:
+            try:
+                del sys.modules[mod_name]
+            except KeyError:
+                pass  # Già rimosso
     
     try:
         # Cambia temporaneamente la working directory alla directory del servizio
@@ -87,7 +107,8 @@ def load_service_app(service_name):
         other_service_dirs = [str(services_path / s) for s in ['auth-service', 'user-service', 'preventivi-service', 
                                                                'gradimento-service', 'contratti-service', 'pagamenti-service',
                                                                'assessments-service', 'clienti-service', 'shopify-service', 
-                                                               'email-service', 'mcp-service', 'sibill-service'] if s != service_name]
+                                                               'email-service', 'mcp-service', 'sibill-service', 'productivity-service',
+                                                               'calendar-service', 'sales-service'] if s != service_name]
         for other_dir in other_service_dirs:
             if other_dir in sys.path:
                 sys.path.remove(other_dir)
@@ -126,6 +147,8 @@ shopify_app = load_service_app("shopify-service")
 email_app = load_service_app("email-service")
 mcp_app = load_service_app("mcp-service")
 sibill_app = load_service_app("sibill-service")
+productivity_app = load_service_app("productivity-service")
+sales_app = load_service_app("sales-service")
 
 # Path frontend build
 FRONTEND_DIR = Path(__file__).parent.parent.parent / "frontend-react" / "dist"
@@ -141,7 +164,8 @@ async def unified_lifespan(app: FastAPI):
     service_apps = [
         auth_app, user_app, preventivi_app, gradimento_app, 
         contratti_app, pagamenti_app, assessments_app, 
-        clienti_app, shopify_app, email_app, mcp_app, sibill_app
+        clienti_app, shopify_app, email_app, mcp_app, sibill_app,
+        productivity_app, sales_app
     ]
     
     # 1. Esegui startup legacy (on_event("startup"))
@@ -208,6 +232,8 @@ app.include_router(shopify_app.router)
 app.include_router(email_app.router)
 app.include_router(mcp_app.router)
 app.include_router(sibill_app.router)
+app.include_router(productivity_app.router)
+app.include_router(sales_app.router)
 
 # Endpoint Ottimizzato Dashboard
 @app.get("/api/dashboard/summary")

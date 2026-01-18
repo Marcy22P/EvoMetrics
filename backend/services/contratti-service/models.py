@@ -13,6 +13,7 @@ class DatiCommittente(BaseModel):
     numero: str
     cap: str
     email: str
+    telefono: Optional[str] = None
     pec: Optional[str] = None
     cfPiva: str
     legaleRappresentante: str

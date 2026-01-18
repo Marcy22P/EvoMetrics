@@ -1,9 +1,8 @@
-import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Page,
-  LegacyCard,
-  IndexTable,
+  Layout,
+  Card,
   Text,
   Badge,
   Button,
@@ -11,367 +10,854 @@ import {
   BlockStack,
   Box,
   TextField,
-  Select,
-  EmptyState,
   Modal,
-  FormLayout
+  IndexTable,
+  useIndexResourceState,
+  Avatar,
+  Tooltip,
+  List,
+  Link,
+  Banner,
+  Spinner,
+  Select,
+  DatePicker,
+  Popover,
+  Icon,
+  // Tag, // Removed unused import
+  // ChoiceList // Removed unused import
 } from '@shopify/polaris';
-import { DeleteIcon, PlusIcon } from '@shopify/polaris-icons';
-import { clientiApi, type Cliente, type Task } from '../services/clientiApi';
-import { toast } from 'react-hot-toast';
+import { 
+    PlusIcon, 
+    CalendarIcon, 
+    DeleteIcon, 
+    LogoGoogleIcon, 
+    ExportIcon,
+    SettingsIcon,
+    AlertCircleIcon,
+    FilterIcon
+} from '@shopify/polaris-icons';
+import { productivityApi, type Task, type Attachment, type WorkflowTemplate, type TaskStatus } from '../services/productivityApi';
+import { clientiApi, type DriveFile, type Cliente } from '../services/clientiApi';
+import { usersApi, type User } from '../services/usersApi';
+import { useAuth } from '../hooks/useAuth';
+import { isPast, isToday, format } from 'date-fns';
+import { it } from 'date-fns/locale';
+import { inferTaskCategory, getTaskIcon, TASK_ICONS_OPTIONS } from '../utils/taskUtils';
+import { useTasksConfiguration } from '../contexts/TasksConfigurationContext';
 
 const TaskManager: React.FC = () => {
-  const navigate = useNavigate();
-  const [clienti, setClienti] = useState<Cliente[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [filterStatus, setFilterStatus] = useState<'all' | 'da_fare' | 'fatto'>('all');
-  const [searchQuery, setSearchQuery] = useState('');
+  const { categories } = useTasksConfiguration();
+  const { user, hasPermission } = useAuth();
   
-  // Modal creazione task
+  // Data State
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [users, setUsers] = useState<User[]>([]); 
+  const [clients, setClients] = useState<Cliente[]>([]);
+  const [statuses, setStatuses] = useState<TaskStatus[]>([]);
+  const [workflowTemplates, setWorkflowTemplates] = useState<WorkflowTemplate[]>([]);
+
+  // UI State
+  const [selectedTab, setSelectedTab] = useState(0); // 0: Miei Task, 1: Tutti, 2: Completati
+  const [queryValue, setQueryValue] = useState('');
+  const [showOverdueOnly, setShowOverdueOnly] = useState(false);
+  const [showHighPriorityOnly, setShowHighPriorityOnly] = useState(false);
+  
+  // Modal States
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
-  const [newTaskClienteId, setNewTaskClienteId] = useState('');
-  const [newTaskTitolo, setNewTaskTitolo] = useState('');
-  const [newTaskDescrizione, setNewTaskDescrizione] = useState('');
-  const [newTaskScadenza, setNewTaskScadenza] = useState('');
+  const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
+  const [isWorkflowModalOpen, setIsWorkflowModalOpen] = useState(false);
+  const [isStatusManagerOpen, setIsStatusManagerOpen] = useState(false);
+  const [isDrivePickerOpen, setIsDrivePickerOpen] = useState(false);
+  const [isBulkIconModalOpen, setIsBulkIconModalOpen] = useState(false);
+  const [bulkIcon, setBulkIcon] = useState('');
 
-  useEffect(() => {
-    loadClienti();
-  }, []);
+  // Form States (Create/Edit)
+  const [newTaskTitle, setNewTaskTitle] = useState('');
+  const [newTaskDesc, setNewTaskDesc] = useState('');
+  const [newTaskAssignee, setNewTaskAssignee] = useState('');
+  const [newTaskPriority, setNewTaskPriority] = useState('medium');
+  const [newTaskClient, setNewTaskClient] = useState('');
+  const [newTaskDueDate, setNewTaskDueDate] = useState<Date | undefined>(undefined);
+  const [newTaskCategoryId, setNewTaskCategoryId] = useState('');
+  const [newTaskIcon, setNewTaskIcon] = useState('');
+  
+  // Workflow Form
+  const [selectedTemplateId, setSelectedTemplateId] = useState('');
+  const [selectedClientId, setSelectedClientId] = useState('');
+  const [workflowStartDate, setWorkflowStartDate] = useState<Date>(new Date());
 
-  const loadClienti = async () => {
-    try {
+  // Date Picker Helpers
+  const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
+  const [isWorkflowDatePickerOpen, setIsWorkflowDatePickerOpen] = useState(false);
+  const [datePickerMonth, setDatePickerMonth] = useState({ month: new Date().getMonth(), year: new Date().getFullYear() });
+
+  // Status Manager Form
+  const [newStatusId, setNewStatusId] = useState('');
+  const [newStatusLabel, setNewStatusLabel] = useState('');
+  const [newStatusColor, setNewStatusColor] = useState('new');
+
+  // Selected Item
+  const [selectedTask, setSelectedTask] = useState<Task | null>(null);
+  const [driveFiles, setDriveFiles] = useState<DriveFile[]>([]);
+  const [loadingDriveFiles, setLoadingDriveFiles] = useState(false);
+  const [driveError, setDriveError] = useState<string | null>(null);
+
+  // Mappe per lookup veloce
+  const clientMap = useMemo(() => {
+      const map = new Map<string, string>();
+      clients.forEach(c => map.set(c.id, c.nome_azienda));
+      return map;
+  }, [clients]);
+
+  const userMap = useMemo(() => {
+      const map = new Map<string, User>();
+      users.forEach(u => map.set(String(u.id), u));
+      return map;
+  }, [users]);
+
+  const statusMap = useMemo(() => {
+      const map = new Map<string, TaskStatus>();
+      statuses.forEach(s => map.set(s.id, s));
+      return map;
+  }, [statuses]);
+
+  // Load Data
+  const loadData = useCallback(async () => {
       setLoading(true);
-      const data = await clientiApi.getClienti();
-      setClienti(data);
-    } catch (err: any) {
-      console.error('Errore caricamento clienti:', err);
+    try {
+        const [tasksData, usersData, clientsData, statusesData] = await Promise.all([
+            productivityApi.getTasks(), // Carica tutto per gestire filtri client-side
+            usersApi.getUsers(),
+            clientiApi.getClienti(),
+            productivityApi.getStatuses()
+        ]);
+        setTasks(tasksData);
+        setUsers(usersData);
+        setClients(clientsData);
+        setStatuses(statusesData);
+    } catch (e) {
+        console.error(e);
     } finally {
       setLoading(false);
     }
+  }, [selectedTab, user?.id]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  // Workflow Handlers
+  const handleOpenWorkflowModal = async () => {
+      try {
+          const templates = await productivityApi.getWorkflowTemplates();
+          setWorkflowTemplates(templates);
+          setIsWorkflowModalOpen(true);
+      } catch (e) {
+          alert('Errore caricamento template');
+      }
   };
 
-  // Estrai tutti i task da tutti i clienti
-  const allTasks: Array<Task & { clienteId: string; clienteNome: string }> = [];
-  clienti.forEach(cliente => {
-    if (cliente.dettagli?.tasks && cliente.dettagli.tasks.length > 0) {
-      cliente.dettagli.tasks.forEach(task => {
-        allTasks.push({
-          ...task,
-          clienteId: cliente.id,
-          clienteNome: cliente.nome_azienda
-        });
-      });
-    }
-  });
-
-  // Filtra i task
-  const filteredTasks = allTasks.filter(task => {
-    const matchesStatus = filterStatus === 'all' || task.status === filterStatus;
-    const matchesSearch = searchQuery === '' || 
-      task.titolo.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      task.clienteNome.toLowerCase().includes(searchQuery.toLowerCase());
-    return matchesStatus && matchesSearch;
-  });
-
-  const handleCreateTask = async () => {
-    if (!newTaskClienteId || !newTaskTitolo.trim()) {
-      toast.error('Seleziona un cliente e inserisci un titolo');
-      return;
-    }
-
-    try {
-      const cliente = clienti.find(c => c.id === newTaskClienteId);
-      if (!cliente) {
-        toast.error('Cliente non trovato');
-        return;
+  const handleInstantiateWorkflow = async () => {
+      if (!selectedTemplateId || !selectedClientId) return alert("Seleziona dati");
+      try {
+          await productivityApi.instantiateWorkflow(selectedTemplateId, selectedClientId, workflowStartDate.toISOString());
+          alert("Workflow avviato!");
+          setIsWorkflowModalOpen(false);
+          setTimeout(loadData, 2000);
+      } catch (e: any) {
+          alert(e.message);
       }
+  };
 
-      const newTask: Task = {
-        id: Date.now().toString(),
-        titolo: newTaskTitolo,
-        status: 'da_fare',
-        descrizione: newTaskDescrizione || undefined,
-        data_scadenza: newTaskScadenza || undefined
+  // Task Actions
+  const handleCreateTask = async () => {
+      try {
+          await productivityApi.createTask({
+              title: newTaskTitle,
+              description: newTaskDesc,
+              assignee_id: newTaskAssignee || undefined,
+              project_id: newTaskClient || undefined,
+              priority: newTaskPriority,
+              due_date: newTaskDueDate?.toISOString(),
+              category_id: newTaskCategoryId || undefined,
+              icon: newTaskIcon || undefined
+          });
+          setIsCreateModalOpen(false);
+          resetForm();
+          loadData();
+      } catch (e: any) {
+          alert(e.message);
+      }
+  };
+
+  const handleUpdateTask = async (taskId: string, update: any) => {
+      try {
+          const updated = await productivityApi.updateTask(taskId, update);
+          setTasks(prev => prev.map(t => t.id === taskId ? updated : t));
+          if (selectedTask?.id === taskId) setSelectedTask(updated);
+      } catch (e) {
+          alert("Errore aggiornamento");
+      }
       };
 
-      const currentTasks = cliente.dettagli?.tasks || [];
-      await clientiApi.updateCliente(cliente.id, {
-        ...cliente,
-        dettagli: {
-          ...cliente.dettagli,
-          tasks: [...currentTasks, newTask]
-        }
-      });
+  const handleDeleteTask = async (taskId: string) => {
+      if (!confirm("Eliminare?")) return;
+      try {
+          await productivityApi.deleteTask(taskId);
+          setTasks(prev => prev.filter(t => t.id !== taskId));
+          if (selectedTask?.id === taskId) setIsDetailModalOpen(false);
+      } catch (e) {
+          alert("Errore eliminazione");
+      }
+  };
 
-      toast.success('Task creata con successo');
-      
-      // Reset form
-      setNewTaskClienteId('');
-      setNewTaskTitolo('');
-      setNewTaskDescrizione('');
-      setNewTaskScadenza('');
-      setIsCreateModalOpen(false);
-      
-      await loadClienti(); // Ricarica per aggiornare UI
-    } catch (err: any) {
-      console.error('Errore creazione task:', err);
-      toast.error('Errore durante la creazione della task');
+  const resetForm = () => {
+      setNewTaskTitle('');
+      setNewTaskDesc('');
+      setNewTaskAssignee('');
+      setNewTaskPriority('medium');
+      setNewTaskClient('');
+      setNewTaskDueDate(undefined);
+      setNewTaskCategoryId('');
+      setNewTaskIcon('');
+  };
+
+  // Status Manager
+  const handleCreateStatus = async () => {
+      try {
+          await productivityApi.createStatus({ id: newStatusId, label: newStatusLabel, color: newStatusColor });
+          const newStatuses = await productivityApi.getStatuses();
+          setStatuses(newStatuses);
+          setNewStatusId(''); setNewStatusLabel('');
+      } catch (e: any) {
+          alert(e.message);
+      }
+  };
+
+  const handleDeleteStatus = async (id: string) => {
+      if (!confirm("Eliminare stato?")) return;
+      try {
+          await productivityApi.deleteStatus(id);
+          setStatuses(prev => prev.filter(s => s.id !== id));
+      } catch (e: any) {
+          alert(e.message);
     }
   };
 
-  const handleToggleStatus = async (task: Task & { clienteId: string }) => {
-    try {
-      const cliente = clienti.find(c => c.id === task.clienteId);
-      if (!cliente) return;
+    // Drive
+    const fileInputRef = React.useRef<HTMLInputElement>(null);
 
-      const newStatus = task.status === 'da_fare' ? 'fatto' : 'da_fare';
-      const updatedTasks = (cliente.dettagli?.tasks || []).map(t =>
-        t.id === task.id ? { ...t, status: newStatus as 'da_fare' | 'fatto' } : t
+    const openDrivePicker = async () => {
+        if (!selectedTask?.project_id) {
+            setDriveError("Associa il task a un cliente per usare Drive.");
+            setIsDrivePickerOpen(true); 
+            return;
+        }
+        setDriveError(null);
+        setIsDrivePickerOpen(true);
+        setLoadingDriveFiles(true);
+    try {
+            const res = await clientiApi.listDriveFiles(selectedTask.project_id);
+            setDriveFiles(res.files);
+        } catch (e: any) {
+            setDriveError(e.message);
+        } finally {
+            setLoadingDriveFiles(false);
+        }
+    };
+
+    const handleAttachFile = async (file: DriveFile) => {
+        if (!selectedTask) return;
+        try {
+            const attachment: Attachment = {
+                name: file.name,
+                url: file.webViewLink,
+                drive_file_id: file.id,
+                mime_type: file.mimeType
+            };
+            await productivityApi.addAttachment(selectedTask.id, attachment);
+            const updated = { ...selectedTask, attachments: [...(selectedTask.attachments || []), attachment] };
+            setSelectedTask(updated);
+            setTasks(prev => prev.map(t => t.id === updated.id ? updated : t));
+            setIsDrivePickerOpen(false);
+        } catch (e) {
+            alert('Errore allegato');
+        }
+    };
+
+    const handleUploadFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0];
+        if (!file || !selectedTask?.project_id) return;
+        
+        setLoadingDriveFiles(true);
+        try {
+            const uploadedFile = await clientiApi.uploadDriveFile(selectedTask.project_id, file);
+            await handleAttachFile(uploadedFile);
+        } catch (e: any) {
+            setDriveError("Errore upload: " + e.message);
+            setLoadingDriveFiles(false);
+    }
+  };
+
+  // Bulk Actions
+  const { selectedResources, allResourcesSelected, handleSelectionChange, clearSelection } = useIndexResourceState(tasks as unknown as {[key:string]: unknown}[]);
+  
+  const handleBulkDelete = async () => {
+      if (!confirm(`Eliminare ${selectedResources.length} task?`)) return;
+      await productivityApi.bulkDeleteTasks(selectedResources);
+      setTasks(prev => prev.filter(t => !selectedResources.includes(t.id)));
+      clearSelection();
+  };
+
+  const handleBulkStatus = async (statusId: string) => {
+      await productivityApi.bulkUpdateTasks(selectedResources, { status: statusId });
+      setTasks(prev => prev.map(t => selectedResources.includes(t.id) ? { ...t, status: statusId } : t));
+      clearSelection();
+  };
+
+  const handleBulkIconUpdate = async () => {
+      if (!bulkIcon) return;
+      await productivityApi.bulkUpdateTasks(selectedResources, { icon: bulkIcon });
+      setTasks(prev => prev.map(t => selectedResources.includes(t.id) ? { ...t, icon: bulkIcon } : t));
+      setIsBulkIconModalOpen(false);
+      clearSelection();
+  };
+
+  // Filtering & Sorting
+  const filteredTasks = useMemo(() => {
+      return tasks.filter(t => {
+          // Tab Logic
+          const isCompleted = t.status === 'done';
+          if (selectedTab === 2) {
+              if (!isCompleted) return false;
+          } else {
+              if (isCompleted) return false;
+              if (selectedTab === 0 && user?.id && String(t.assignee_id) !== String(user.id)) return false;
+          }
+
+          const matchesQuery = t.title.toLowerCase().includes(queryValue.toLowerCase()) || 
+                               (clientMap.get(t.project_id || '') || '').toLowerCase().includes(queryValue.toLowerCase());
+          if (!matchesQuery) return false;
+          
+          if (showOverdueOnly) {
+              if (!t.due_date || t.status === 'done') return false;
+              if (!isPast(new Date(t.due_date))) return false;
+          }
+
+          if (showHighPriorityOnly) {
+              if (t.priority !== 'high' && t.priority !== 'urgent') return false;
+          }
+
+          return true;
+      }).sort((a, b) => {
+          // Sort Logic: Overdue first, then Urgent/High, then Due Date
+          const aOver = a.due_date && isPast(new Date(a.due_date)) && a.status !== 'done';
+          const bOver = b.due_date && isPast(new Date(b.due_date)) && b.status !== 'done';
+          if (aOver && !bOver) return -1;
+          if (!aOver && bOver) return 1;
+
+          const pScore = { urgent: 3, high: 2, medium: 1, low: 0 };
+          if (pScore[a.priority] > pScore[b.priority]) return -1;
+          if (pScore[a.priority] < pScore[b.priority]) return 1;
+
+          if (!a.due_date) return 1;
+          if (!b.due_date) return -1;
+          return new Date(a.due_date).getTime() - new Date(b.due_date).getTime();
+      });
+  }, [tasks, queryValue, showOverdueOnly, showHighPriorityOnly, clientMap]);
+
+  // Render Helpers
+  const getStatusBadge = (statusId: string) => {
+      const s = statusMap.get(statusId);
+      if (!s) return <Badge>{statusId}</Badge>;
+      return <Badge tone={s.color as any}>{s.label}</Badge>;
+  };
+
+  const getDueDateElement = (dateStr?: string, status?: string) => {
+      if (!dateStr) return <Text as="span" tone="subdued">-</Text>;
+      const date = new Date(dateStr);
+      const isOverdue = isPast(date) && !isToday(date) && status !== 'done';
+    return (
+          <InlineStack gap="100">
+              <CalendarIcon width={16} className={isOverdue ? 'Polaris-Icon--toneCritical' : ''} />
+              <Text as="span" tone={isOverdue ? 'critical' : undefined}>
+                  {format(date, 'dd MMM', { locale: it })}
+              </Text>
+          </InlineStack>
       );
-
-      await clientiApi.updateCliente(cliente.id, {
-        ...cliente,
-        dettagli: {
-          ...cliente.dettagli,
-          tasks: updatedTasks
-        }
-      });
-
-      await loadClienti(); // Ricarica per aggiornare UI
-    } catch (err: any) {
-      console.error('Errore aggiornamento task:', err);
-    }
   };
 
-  const handleDeleteTask = async (task: Task & { clienteId: string }) => {
-    if (!window.confirm('Sei sicuro di voler eliminare questo task?')) return;
-
-    try {
-      const cliente = clienti.find(c => c.id === task.clienteId);
-      if (!cliente) return;
-
-      const updatedTasks = (cliente.dettagli?.tasks || []).filter(t => t.id !== task.id);
-
-      await clientiApi.updateCliente(cliente.id, {
-        ...cliente,
-        dettagli: {
-          ...cliente.dettagli,
-          tasks: updatedTasks
-        }
-      });
-
-      await loadClienti(); // Ricarica per aggiornare UI
-    } catch (err: any) {
-      console.error('Errore eliminazione task:', err);
-    }
-  };
-
-  const resourceName = {
-    singular: 'task',
-    plural: 'tasks',
+  const getUserName = (userId: string) => {
+      const u = userMap.get(userId);
+      if (!u) return userId;
+      if (u.nome && u.cognome) return `${u.nome} ${u.cognome}`;
+      return u.username;
   };
 
   const rowMarkup = filteredTasks.map((task, index) => {
-    const isDone = task.status === 'fatto';
+      let category = null;
+      if (task.category_id) {
+          const found = categories.find(c => c.id === task.category_id);
+          if (found) category = { label: found.label, tone: found.tone, type: found.id };
+      }
+      if (!category) {
+          category = inferTaskCategory(task, categories);
+      }
+      
+      const iconSource = getTaskIcon(task.icon); // Fallback icona legacy o custom se non category
+
     return (
-      <IndexTable.Row id={task.id} key={task.id} position={index}>
+      <IndexTable.Row
+          id={task.id}
+          key={task.id}
+          selected={selectedResources.includes(task.id)}
+          position={index}
+          onClick={() => { setSelectedTask(task); setIsDetailModalOpen(true); }}
+      >
         <IndexTable.Cell>
-          <div 
-            onClick={() => handleToggleStatus(task)}
-            style={{ cursor: 'pointer', display: 'flex', alignItems: 'center' }}
-          >
-            {isDone ? (
-              <Badge tone="success" size="small">✓ Fatto</Badge>
-            ) : (
-              <Badge tone="attention" size="small">Da fare</Badge>
-            )}
-          </div>
-        </IndexTable.Cell>
-        <IndexTable.Cell>
-          <Text as="span" variant="bodyMd" fontWeight="bold">
-            {task.titolo}
+              <BlockStack gap="100">
+                  <InlineStack gap="200" align="start" blockAlign="center" wrap={false}>
+                        <div style={{ minWidth: '20px' }}><Icon source={iconSource} tone="base" /></div>
+                        {category && <Badge tone={category.tone as any}>{category.label}</Badge>}
+                  </InlineStack>
+                  <Text as="span" fontWeight="bold" variant="bodyMd" textDecorationLine={task.status === 'done' ? 'line-through' : undefined}>
+                      {task.title}
           </Text>
-          {task.descrizione && (
-            <Text as="p" variant="bodySm" tone="subdued">{task.descrizione}</Text>
+                  <InlineStack gap="200">
+                      {clientMap.get(task.project_id || '') && (
+                          <Badge tone="info">{clientMap.get(task.project_id || '')}</Badge>
           )}
+                      {task.priority === 'urgent' && <Badge tone="critical">URGENTE</Badge>}
+                  </InlineStack>
+              </BlockStack>
         </IndexTable.Cell>
+          <IndexTable.Cell>{getStatusBadge(task.status)}</IndexTable.Cell>
         <IndexTable.Cell>
-          <Button
-            variant="plain"
-            onClick={() => navigate(`/clienti/${task.clienteId}`)}
-          >
-            {task.clienteNome}
-          </Button>
-        </IndexTable.Cell>
-        <IndexTable.Cell>
-          {task.data_scadenza ? (
-            <Text as="span" variant="bodySm">
-              {new Date(task.data_scadenza).toLocaleDateString('it-IT')}
-            </Text>
+              <InlineStack gap="200" align="start" blockAlign="center">
+                  {task.assignee_id ? (
+                      <InlineStack gap="200" blockAlign="center">
+                          <Tooltip content={`Assegnato a ${getUserName(task.assignee_id)}`}>
+                              <Avatar size="xs" name={getUserName(task.assignee_id)} />
+                          </Tooltip>
+                          <Text as="span" variant="bodySm">{getUserName(task.assignee_id)}</Text>
+                      </InlineStack>
           ) : (
-            <Text as="span" variant="bodySm" tone="subdued">-</Text>
+                      <Badge tone="info">{task.role_required || 'Unassigned'}</Badge>
           )}
+              </InlineStack>
         </IndexTable.Cell>
-        <IndexTable.Cell>
-          <Button
-            icon={DeleteIcon}
-            variant="plain"
-            tone="critical"
-            onClick={() => handleDeleteTask(task)}
-          />
-        </IndexTable.Cell>
+          <IndexTable.Cell>{getDueDateElement(task.due_date, task.status)}</IndexTable.Cell>
       </IndexTable.Row>
     );
   });
 
-  // Opzioni per il select cliente
-  const clienteOptions = clienti.map(c => ({
-    label: c.nome_azienda,
-    value: c.id
-  }));
+  const isAdmin = hasPermission('admin');
 
   return (
     <Page
       title="Task Manager"
-      primaryAction={{
-        content: 'Nuova Task',
-        icon: PlusIcon,
-        onAction: () => setIsCreateModalOpen(true)
-      }}
+        primaryAction={
+            <Button icon={PlusIcon} variant="primary" onClick={() => setIsCreateModalOpen(true)}>Nuovo Task</Button>
+        }
       secondaryActions={[
         {
-          content: 'Aggiorna',
-          onAction: loadClienti,
-          loading: loading
-        }
-      ]}
+                content: 'Avvia Workflow',
+                icon: ExportIcon,
+                onAction: handleOpenWorkflowModal
+            },
+            ...(isAdmin ? [{
+                content: 'Gestisci Stati',
+                icon: SettingsIcon,
+                onAction: () => setIsStatusManagerOpen(true)
+            }] : [])
+        ]}
+        fullWidth
     >
+        <Layout>
+            <Layout.Section>
+                <Card padding="0">
+                    <Box padding="400">
       <BlockStack gap="400">
-        <LegacyCard sectioned>
-          <InlineStack gap="400" blockAlign="center">
-            <div style={{ flex: 1 }}>
+                            <InlineStack gap="400" align="space-between">
+                                <InlineStack gap="200">
+                                    <Button pressed={selectedTab === 0} onClick={() => setSelectedTab(0)}>I Miei Task</Button>
+                                    <Button pressed={selectedTab === 1} onClick={() => setSelectedTab(1)}>Tutti i Task</Button>
+                                    <Button pressed={selectedTab === 2} onClick={() => setSelectedTab(2)}>Completati</Button>
+                                </InlineStack>
+                                <InlineStack gap="200">
+                                    <Button 
+                                        icon={AlertCircleIcon} 
+                                        pressed={showOverdueOnly} 
+                                        onClick={() => setShowOverdueOnly(!showOverdueOnly)}
+                                        tone={showOverdueOnly ? 'critical' : undefined}
+                                    >Scaduti</Button>
+                                    <Button 
+                                        icon={FilterIcon}
+                                        pressed={showHighPriorityOnly} 
+                                        onClick={() => setShowHighPriorityOnly(!showHighPriorityOnly)}
+                                    >Alta Priorità</Button>
               <TextField
                 label="Cerca"
                 labelHidden
-                value={searchQuery}
-                onChange={setSearchQuery}
-                placeholder="Cerca per task o cliente..."
+                                        value={queryValue} 
+                                        onChange={setQueryValue} 
+                                        placeholder="Cerca task o cliente..." 
                 autoComplete="off"
               />
-            </div>
-            <Select
-              label="Filtra per stato"
-              labelHidden
-              options={[
-                { label: 'Tutti', value: 'all' },
-                { label: 'Da fare', value: 'da_fare' },
-                { label: 'Fatti', value: 'fatto' }
-              ]}
-              value={filterStatus}
-              onChange={(val) => setFilterStatus(val as 'all' | 'da_fare' | 'fatto')}
-            />
+                                </InlineStack>
           </InlineStack>
-        </LegacyCard>
-
-        <LegacyCard>
-          {loading ? (
-            <Box padding="400">
-              <Text as="p" alignment="center" tone="subdued">Caricamento...</Text>
+                        </BlockStack>
             </Box>
-          ) : filteredTasks.length > 0 ? (
             <IndexTable
-              resourceName={resourceName}
+                        resourceName={{ singular: 'task', plural: 'tasks' }}
               itemCount={filteredTasks.length}
+                        selectedItemsCount={allResourcesSelected ? 'All' : selectedResources.length}
+                        onSelectionChange={handleSelectionChange}
               headings={[
+                            { title: 'Task' },
                 { title: 'Stato' },
-                { title: 'Task' },
-                { title: 'Cliente' },
+                            { title: 'Assegnato a' },
                 { title: 'Scadenza' },
-                { title: 'Azioni' }
-              ]}
-              selectable={false}
+                        ]}
+                        promotedBulkActions={[
+                            { content: 'Elimina', onAction: handleBulkDelete },
+                            { content: 'Cambia Icona', onAction: () => setIsBulkIconModalOpen(true) },
+                            ...(selectedTab === 2 
+                                ? [{ content: 'Ripristina', onAction: () => handleBulkStatus('todo') }] 
+                                : statuses.map(s => ({ content: `Segna come ${s.label}`, onAction: () => handleBulkStatus(s.id) }))
+                            )
+                        ]}
+                        loading={loading}
             >
               {rowMarkup}
             </IndexTable>
-          ) : (
-            <EmptyState
-              heading="Nessun task trovato"
-              image="https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png"
-            >
-              <p>
-                {allTasks.length === 0
-                  ? 'Non ci sono task registrati per nessun cliente.'
-                  : 'Nessun task corrisponde ai filtri selezionati.'}
-              </p>
-            </EmptyState>
-          )}
-        </LegacyCard>
-      </BlockStack>
+                </Card>
+            </Layout.Section>
+        </Layout>
 
-      {/* Modal Creazione Task */}
+        {/* --- MODALS --- */}
+
+        {/* CREATE TASK */}
       <Modal
         open={isCreateModalOpen}
-        onClose={() => {
-          setIsCreateModalOpen(false);
-          setNewTaskClienteId('');
-          setNewTaskTitolo('');
-          setNewTaskDescrizione('');
-          setNewTaskScadenza('');
-        }}
-        title="Crea Nuova Task"
-        primaryAction={{
-          content: 'Crea Task',
-          onAction: handleCreateTask
-        }}
-        secondaryActions={[
-          {
-            content: 'Annulla',
-            onAction: () => {
-              setIsCreateModalOpen(false);
-              setNewTaskClienteId('');
-              setNewTaskTitolo('');
-              setNewTaskDescrizione('');
-              setNewTaskScadenza('');
-            }
-          }
-        ]}
+            onClose={() => setIsCreateModalOpen(false)}
+            title="Crea Nuovo Task"
+            primaryAction={{ content: 'Crea', onAction: handleCreateTask }}
+        >
+            <Modal.Section>
+                <BlockStack gap="400">
+                    <TextField label="Titolo" value={newTaskTitle} onChange={setNewTaskTitle} autoComplete="off" />
+                    <TextField label="Descrizione" value={newTaskDesc} onChange={setNewTaskDesc} multiline={3} autoComplete="off" />
+                    <Select 
+                        label="Categoria"
+                        options={[{label: 'Automatica (da titolo)', value: ''}, ...categories.map(c => ({label: c.label, value: c.id}))]}
+                        value={newTaskCategoryId}
+                        onChange={setNewTaskCategoryId}
+                    />
+                    <Select
+                        label="Icona Personalizzata"
+                        options={[{label: 'Usa Categoria/Default', value: ''}, ...TASK_ICONS_OPTIONS]}
+                        value={newTaskIcon}
+                        onChange={setNewTaskIcon}
+                    />
+                    <Select 
+                        label="Cliente"
+                        options={[{label: 'Nessuno', value: ''}, ...clients.map(c => ({label: c.nome_azienda, value: c.id}))]}
+                        value={newTaskClient}
+                        onChange={setNewTaskClient}
+                    />
+                    <InlineStack gap="400" align="start">
+                        <div style={{flex:1}}>
+                            <Select 
+                                label="Assegna a"
+                                options={[{label: 'Nessuno', value: ''}, ...users.map(u => ({label: u.username, value: String(u.id)}))]}
+                                value={newTaskAssignee}
+                                onChange={setNewTaskAssignee}
+                            />
+                        </div>
+                        <div style={{flex:1}}>
+                            <Select 
+                                label="Priorità"
+                                options={['low', 'medium', 'high', 'urgent'].map(p => ({label: p.toUpperCase(), value: p}))}
+                                value={newTaskPriority}
+                                onChange={setNewTaskPriority}
+                            />
+                        </div>
+                    </InlineStack>
+                    <Popover
+                        active={isDatePickerOpen}
+                        activator={
+                            <TextField
+                                label="Scadenza"
+                                value={newTaskDueDate ? newTaskDueDate.toLocaleDateString() : ''}
+                                onFocus={() => setIsDatePickerOpen(true)}
+                                autoComplete="off"
+                                prefix={<CalendarIcon />}
+                            />
+                        }
+                        onClose={() => setIsDatePickerOpen(false)}
+                    >
+                        <Box padding="400">
+                            <DatePicker
+                                month={datePickerMonth.month}
+                                year={datePickerMonth.year}
+                                onChange={(r) => { setNewTaskDueDate(r.start); setIsDatePickerOpen(false); }}
+                                onMonthChange={(m, y) => setDatePickerMonth({ month: m, year: y })}
+                                selected={newTaskDueDate ? { start: newTaskDueDate, end: newTaskDueDate } : undefined}
+                            />
+                        </Box>
+                    </Popover>
+                </BlockStack>
+            </Modal.Section>
+        </Modal>
+
+        {/* WORKFLOW */}
+        <Modal
+            open={isWorkflowModalOpen}
+            onClose={() => setIsWorkflowModalOpen(false)}
+            title="Avvia Workflow"
+            primaryAction={{ content: 'Avvia', onAction: handleInstantiateWorkflow }}
       >
         <Modal.Section>
-          <FormLayout>
+                <BlockStack gap="400">
+                    <Select 
+                        label="Template"
+                        options={[{label: 'Seleziona...', value: ''}, ...workflowTemplates.map(t => ({label: t.name, value: t.id}))]}
+                        value={selectedTemplateId}
+                        onChange={setSelectedTemplateId}
+                    />
             <Select
               label="Cliente"
-              options={[
-                { label: 'Seleziona un cliente...', value: '' },
-                ...clienteOptions
-              ]}
-              value={newTaskClienteId}
-              onChange={setNewTaskClienteId}
-              requiredIndicator
-            />
+                        options={[{label: 'Seleziona...', value: ''}, ...clients.map(c => ({label: c.nome_azienda, value: c.id}))]}
+                        value={selectedClientId}
+                        onChange={setSelectedClientId}
+                    />
+                    <Popover
+                        active={isWorkflowDatePickerOpen}
+                        activator={
             <TextField
-              label="Titolo Task"
-              value={newTaskTitolo}
-              onChange={setNewTaskTitolo}
-              placeholder="Es: Revisione sito web"
-              requiredIndicator
+                                label="Data Inizio"
+                                value={workflowStartDate.toLocaleDateString()}
+                                onFocus={() => setIsWorkflowDatePickerOpen(true)}
+              autoComplete="off"
+                                prefix={<CalendarIcon />}
+                            />
+                        }
+                        onClose={() => setIsWorkflowDatePickerOpen(false)}
+                    >
+                        <Box padding="400">
+                            <DatePicker
+                                month={workflowStartDate.getMonth()}
+                                year={workflowStartDate.getFullYear()}
+                                onChange={(r) => { setWorkflowStartDate(r.start); setIsWorkflowDatePickerOpen(false); }}
+                                onMonthChange={(m, y) => setWorkflowStartDate(new Date(y, m, 1))}
+                                selected={{ start: workflowStartDate, end: workflowStartDate }}
+                            />
+                        </Box>
+                    </Popover>
+                </BlockStack>
+            </Modal.Section>
+        </Modal>
+
+        {/* BULK ICON UPDATE */}
+        <Modal
+            open={isBulkIconModalOpen}
+            onClose={() => setIsBulkIconModalOpen(false)}
+            title="Cambia Icona in massa"
+            primaryAction={{ content: 'Applica', onAction: handleBulkIconUpdate }}
+        >
+            <Modal.Section>
+                <Select
+                    label="Seleziona Icona"
+                    options={[{label: 'Nessuna', value: ''}, ...TASK_ICONS_OPTIONS]}
+                    value={bulkIcon}
+                    onChange={setBulkIcon}
+                />
+            </Modal.Section>
+        </Modal>
+
+        {/* STATUS MANAGER */}
+        <Modal
+            open={isStatusManagerOpen}
+            onClose={() => setIsStatusManagerOpen(false)}
+            title="Gestione Stati"
+        >
+            <Modal.Section>
+                <BlockStack gap="400">
+                    <Card>
+                        <BlockStack gap="200">
+                            <Text as="h3" variant="headingSm">Nuovo Stato</Text>
+                            <InlineStack gap="200">
+                                <TextField label="ID" labelHidden placeholder="ID (es. in_review)" value={newStatusId} onChange={setNewStatusId} autoComplete="off" />
+                                <TextField label="Label" labelHidden placeholder="Etichetta" value={newStatusLabel} onChange={setNewStatusLabel} autoComplete="off" />
+                                <Select 
+                                    label="Colore" labelHidden 
+                                    options={['new', 'attention', 'warning', 'success', 'critical'].map(c => ({label: c, value: c}))}
+                                    value={newStatusColor}
+                                    onChange={setNewStatusColor}
+                                />
+                                <Button onClick={handleCreateStatus} disabled={!newStatusId || !newStatusLabel}>Aggiungi</Button>
+                            </InlineStack>
+                        </BlockStack>
+                    </Card>
+                    <List>
+                        {statuses.map(s => (
+                            <List.Item key={s.id}>
+                                <InlineStack align="space-between">
+                                    <InlineStack gap="200">
+                                        <Badge tone={s.color as any}>{s.label}</Badge>
+                                        <Text as="span" tone="subdued">({s.id})</Text>
+                                    </InlineStack>
+                                    {!s.is_default && <Button icon={DeleteIcon} tone="critical" onClick={() => handleDeleteStatus(s.id)} variant="plain" />}
+                                </InlineStack>
+                            </List.Item>
+                        ))}
+                    </List>
+                </BlockStack>
+            </Modal.Section>
+        </Modal>
+
+        {/* DETAIL & EDIT */}
+        <Modal
+            open={isDetailModalOpen}
+            onClose={() => setIsDetailModalOpen(false)}
+            title={selectedTask?.title}
+            size="large"
+        >
+            <Modal.Section>
+                {selectedTask && (
+                    <BlockStack gap="400">
+                        {/* Header Controls */}
+                        <InlineStack align="space-between">
+                            <InlineStack gap="200">
+                                <Select
+                                    label="Categoria"
+                                    labelHidden
+                                    options={[{label: 'Automatica', value: ''}, ...categories.map(c => ({label: c.label, value: c.id}))]}
+                                    value={selectedTask.category_id || ''}
+                                    onChange={(v) => handleUpdateTask(selectedTask.id, { category_id: v })}
+                                />
+                                <Select
+                                    label="Icona"
+                                    labelHidden
+                                    options={[{label: 'Default', value: ''}, ...TASK_ICONS_OPTIONS]}
+                                    value={selectedTask.icon || ''}
+                                    onChange={(v) => handleUpdateTask(selectedTask.id, { icon: v })}
+                                />
+                                <Select
+                                    label="Stato"
+                                    labelHidden
+                                    options={statuses.map(s => ({label: s.label, value: s.id}))}
+                                    value={selectedTask.status}
+                                    onChange={(v) => handleUpdateTask(selectedTask.id, { status: v })}
+                                />
+                                <Select
+                                    label="Priorità"
+                                    labelHidden
+                                    options={['low', 'medium', 'high', 'urgent'].map(p => ({label: p.toUpperCase(), value: p}))}
+                                    value={selectedTask.priority}
+                                    onChange={(v) => handleUpdateTask(selectedTask.id, { priority: v })}
+                                />
+                            </InlineStack>
+                            <Button icon={DeleteIcon} tone="critical" onClick={() => handleDeleteTask(selectedTask.id)}>Elimina</Button>
+                        </InlineStack>
+
+            <TextField
+                            label="Descrizione"
+                            value={selectedTask.description || ''}
+                            onChange={(v) => handleUpdateTask(selectedTask.id, { description: v })}
+                            multiline={4}
               autoComplete="off"
             />
+
+                        <Card>
+                            <BlockStack gap="400">
+                                <Text as="h3" variant="headingSm">Dettagli Operativi</Text>
+                                <InlineStack gap="800">
+                                    <Box minWidth="200px">
+                                        <Select
+                                            label="Assegnatario"
+                                            options={[{label: 'Nessuno', value: ''}, ...users.map(u => ({label: u.username, value: String(u.id)}))]}
+                                            value={selectedTask.assignee_id || ''}
+                                            onChange={(v) => handleUpdateTask(selectedTask.id, { assignee_id: v })}
+                                            disabled={!isAdmin} // Solo admin cambia assegnatario
+                                            helpText={selectedTask.role_required ? `Ruolo richiesto: ${selectedTask.role_required}` : undefined}
+                                        />
+                                    </Box>
+                                    <Box minWidth="200px">
             <TextField
-              label="Descrizione (opzionale)"
-              value={newTaskDescrizione}
-              onChange={setNewTaskDescrizione}
-              placeholder="Dettagli aggiuntivi..."
-              multiline={3}
+                                            label="Scadenza"
+                                            value={selectedTask.due_date ? new Date(selectedTask.due_date).toLocaleDateString() : ''}
               autoComplete="off"
-            />
-            <TextField
-              label="Data Scadenza (opzionale)"
-              type="date"
-              value={newTaskScadenza}
-              onChange={setNewTaskScadenza}
-              autoComplete="off"
-            />
-          </FormLayout>
+                                            disabled={!isAdmin} // Solo admin cambia scadenza
+                                            readOnly
+                                        />
+                                        {/* TODO: Aggiungere date picker inline per edit scadenza se admin */}
+                                    </Box>
+                                </InlineStack>
+                            </BlockStack>
+                        </Card>
+
+                        {/* Attachments */}
+                        <Card>
+                            <BlockStack gap="200">
+                                <InlineStack align="space-between">
+                                    <Text as="h3" variant="headingSm">Allegati</Text>
+                                    <Button icon={LogoGoogleIcon} onClick={openDrivePicker}>Allega da Drive</Button>
+                                </InlineStack>
+                                {Array.isArray(selectedTask.attachments) && selectedTask.attachments.length > 0 ? (
+                                    <List>
+                                        {selectedTask.attachments.map((att, i) => (
+                                            <List.Item key={i}>
+                                                <Link url={att.url} target="_blank">{att.name}</Link>
+                                            </List.Item>
+                                        ))}
+                                    </List>
+                                ) : <Text as="p" tone="subdued">Nessun file.</Text>}
+                            </BlockStack>
+                        </Card>
+                    </BlockStack>
+                )}
+            </Modal.Section>
+        </Modal>
+
+        {/* DRIVE PICKER */}
+        <Modal
+            open={isDrivePickerOpen}
+            onClose={() => setIsDrivePickerOpen(false)}
+            title="Seleziona file"
+        >
+            <Modal.Section>
+                <BlockStack gap="400">
+                    <InlineStack align="end">
+                        <input 
+                            type="file" 
+                            ref={fileInputRef} 
+                            style={{display: 'none'}} 
+                            onChange={handleUploadFile} 
+                        />
+                        <Button icon={PlusIcon} onClick={() => fileInputRef.current?.click()} disabled={loadingDriveFiles || !!driveError}>
+                            Carica da PC
+                        </Button>
+                    </InlineStack>
+
+                    {driveError ? <Banner tone="warning">{driveError}</Banner> : 
+                     loadingDriveFiles ? <Spinner /> : (
+                        driveFiles.length > 0 ? (
+                            <List>
+                                {driveFiles.map(f => (
+                                    <List.Item key={f.id}>
+                                        <InlineStack align="space-between">
+                                            <Text as="span">{f.name}</Text>
+                                            <Button size="slim" onClick={() => handleAttachFile(f)}>Allega</Button>
+                                        </InlineStack>
+                                    </List.Item>
+                                ))}
+                            </List>
+                        ) : <Text as="p" tone="subdued">Nessun file trovato nel Drive del cliente. Caricane uno nuovo.</Text>
+                    )}
+                </BlockStack>
         </Modal.Section>
       </Modal>
     </Page>

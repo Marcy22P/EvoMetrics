@@ -136,6 +136,74 @@ export const ContrattoPreview: React.FC<ContrattoPreviewProps> = ({ data }) => {
               <div className="articolo-content">{data.articolo2Oggetto}</div>
             </div>
           )}
+
+          {data.articolo2SitoWeb && (
+            <div className="articolo">
+               <div className="articolo-subtitle">SITO WEB</div>
+               <div className="articolo-content">{data.articolo2SitoWeb}</div>
+            </div>
+          )}
+          {data.articolo2Marketing && (
+            <div className="articolo">
+               <div className="articolo-subtitle">MARKETING & ADV</div>
+               <div className="articolo-content">{data.articolo2Marketing}</div>
+            </div>
+          )}
+          {data.articolo2Linkbuilding && (
+            <div className="articolo">
+               <div className="articolo-subtitle">LINK BUILDING</div>
+               <div className="articolo-content">{data.articolo2Linkbuilding}</div>
+            </div>
+          )}
+
+          {data.articolo3Modalita && (
+            <div className="articolo">
+              <div className="articolo-title">ART. 3 - MODALITÀ DI SVOLGIMENTO</div>
+              <div className="articolo-content">{data.articolo3Modalita}</div>
+            </div>
+          )}
+
+          {data.articolo4Durata && (
+            <div className="articolo">
+              <div className="articolo-title">ART. 4 - DURATA</div>
+              <div className="articolo-content">{data.articolo4Durata}</div>
+            </div>
+          )}
+
+          {data.articolo5Compenso && (
+            <div className="articolo">
+              <div className="articolo-title">ART. 5 - COMPENSO</div>
+              <div className="articolo-content">{data.articolo5Compenso}</div>
+            </div>
+          )}
+
+          {data.articolo6Proprieta && (
+            <div className="articolo">
+              <div className="articolo-title">ART. 6 - PROPRIETÀ INTELLETTUALE</div>
+              <div className="articolo-content">{data.articolo6Proprieta}</div>
+            </div>
+          )}
+
+          {data.articolo7Responsabilita && (
+            <div className="articolo">
+              <div className="articolo-title">ART. 7 - RESPONSABILITÀ</div>
+              <div className="articolo-content">{data.articolo7Responsabilita}</div>
+            </div>
+          )}
+
+          {data.articolo8NormeRinvio && (
+            <div className="articolo">
+              <div className="articolo-title">ART. 8 - NORME DI RINVIO</div>
+              <div className="articolo-content">{data.articolo8NormeRinvio}</div>
+            </div>
+          )}
+
+          {data.articolo9ForoCompetente && (
+            <div className="articolo">
+              <div className="articolo-title">ART. 9 - FORO COMPETENTE</div>
+              <div className="articolo-content">{data.articolo9ForoCompetente}</div>
+            </div>
+          )}
           
           <div className="signature-section">
             <div className="signature-box">

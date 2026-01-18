@@ -518,7 +518,7 @@ const Assessment: React.FC = () => {
       <AssessmentSummary 
         isVisible={showSummary}
         onToggle={() => setShowSummary(!showSummary)}
-        onSectionClick={(sectionId) => console.log('Navigate to:', sectionId)}
+        onSectionClick={(sectionId: string) => console.log('Navigate to:', sectionId)}
       />
 
       {/* Header con Progress Bar Reale */}

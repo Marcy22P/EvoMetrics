@@ -50,23 +50,48 @@ def _get_preventivi_functions():
     if _preventivi_functions is None:
         try:
             import importlib.util
+            import sys
             from pathlib import Path
             
             services_path = Path(__file__).parent.parent / "services"
-            service_path = services_path / "preventivi-service" / "crud.py"
+            service_dir = services_path / "preventivi-service"
+            service_path = service_dir / "crud.py"
             
             if service_path.exists():
-                spec = importlib.util.spec_from_file_location("preventivi_crud", service_path)
-                module = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(module)
+                # Salva e rimuovi temporaneamente i moduli conflittuali da sys.modules
+                saved_modules = {}
+                modules_to_remove = ['database', 'serializers']
+                for mod_name in modules_to_remove:
+                    if mod_name in sys.modules:
+                        # Salva solo se proviene da un altro servizio
+                        mod = sys.modules[mod_name]
+                        mod_file = getattr(mod, '__file__', None)
+                        if mod_file and 'preventivi-service' not in mod_file:
+                            saved_modules[mod_name] = sys.modules.pop(mod_name)
                 
-                _preventivi_functions = {
-                    "get_all_preventivi": module.get_all_preventivi
-                }
+                try:
+                    # Aggiungi la directory del servizio al path per permettere import relativi
+                    service_dir_str = str(service_dir)
+                    if service_dir_str not in sys.path:
+                        sys.path.insert(0, service_dir_str)
+                    
+                    spec = importlib.util.spec_from_file_location("preventivi_crud", service_path)
+                    module = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(module)
+                    
+                    _preventivi_functions = {
+                        "get_all_preventivi": module.get_all_preventivi
+                    }
+                finally:
+                    # Ripristina i moduli salvati
+                    for mod_name, mod in saved_modules.items():
+                        sys.modules[mod_name] = mod
             else:
                 _preventivi_functions = {}
         except Exception as e:
             print(f"⚠️ Impossibile importare funzioni preventivi: {e}")
+            import traceback
+            traceback.print_exc()
             _preventivi_functions = {}
     return _preventivi_functions
 
@@ -76,23 +101,48 @@ def _get_contratti_functions():
     if _contratti_functions is None:
         try:
             import importlib.util
+            import sys
             from pathlib import Path
             
             services_path = Path(__file__).parent.parent / "services"
-            service_path = services_path / "contratti-service" / "crud.py"
+            service_dir = services_path / "contratti-service"
+            service_path = service_dir / "crud.py"
             
             if service_path.exists():
-                spec = importlib.util.spec_from_file_location("contratti_crud", service_path)
-                module = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(module)
+                # Salva e rimuovi temporaneamente i moduli conflittuali da sys.modules
+                saved_modules = {}
+                modules_to_remove = ['database']
+                for mod_name in modules_to_remove:
+                    if mod_name in sys.modules:
+                        # Salva solo se proviene da un altro servizio
+                        mod = sys.modules[mod_name]
+                        mod_file = getattr(mod, '__file__', None)
+                        if mod_file and 'contratti-service' not in mod_file:
+                            saved_modules[mod_name] = sys.modules.pop(mod_name)
                 
-                _contratti_functions = {
-                    "get_all_contratti": module.get_all_contratti
-                }
+                try:
+                    # Aggiungi la directory del servizio al path per permettere import relativi
+                    service_dir_str = str(service_dir)
+                    if service_dir_str not in sys.path:
+                        sys.path.insert(0, service_dir_str)
+                    
+                    spec = importlib.util.spec_from_file_location("contratti_crud", service_path)
+                    module = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(module)
+                    
+                    _contratti_functions = {
+                        "get_all_contratti": module.get_all_contratti
+                    }
+                finally:
+                    # Ripristina i moduli salvati
+                    for mod_name, mod in saved_modules.items():
+                        sys.modules[mod_name] = mod
             else:
                 _contratti_functions = {}
         except Exception as e:
             print(f"⚠️ Impossibile importare funzioni contratti: {e}")
+            import traceback
+            traceback.print_exc()
             _contratti_functions = {}
     return _contratti_functions
 

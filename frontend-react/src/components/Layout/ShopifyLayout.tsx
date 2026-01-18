@@ -7,12 +7,12 @@ import {
   ReceiptIcon,
   PersonIcon,
   ClipboardIcon,
-  SettingsIcon,
   ExitIcon,
   ChartVerticalIcon,
   CalendarIcon,
   TeamIcon,
-  ListBulletedIcon
+  ListBulletedIcon,
+  TargetIcon
 } from '@shopify/polaris-icons';
 import { useAuth } from '../../hooks/useAuth';
 import './ShopifyLayout.css';
@@ -132,7 +132,7 @@ const ShopifyLayout: React.FC = () => {
           {
             label: 'Clienti',
             icon: PersonIcon,
-            url: '/anagrafica-clienti', // Ripristinato URL (usa la prima sottovoce logica o overview)
+            url: '/anagrafica-clienti',
             onClick: () => navigate('/anagrafica-clienti'),
             selected: location.pathname.startsWith('/clienti') || location.pathname.startsWith('/preventivi') || location.pathname.startsWith('/contratti') || location.pathname.startsWith('/anagrafica-clienti'),
             subNavigationItems: [
@@ -152,6 +152,13 @@ const ShopifyLayout: React.FC = () => {
                 onClick: () => navigate('/contratti'),
               }
             ]
+          },
+          {
+            label: 'Sales Pipeline',
+            icon: TargetIcon,
+            url: '/sales',
+            onClick: () => navigate('/sales'),
+            selected: location.pathname.startsWith('/sales')
           }
         ]}
       />
@@ -163,10 +170,15 @@ const ShopifyLayout: React.FC = () => {
           {
             label: 'Team',
             icon: TeamIcon,
-            url: '/team/gradimento-risposte', // Ripristinato URL (prima sottovoce)
-            onClick: () => navigate('/team/gradimento-risposte'),
-            selected: location.pathname.startsWith('/team') || location.pathname.startsWith('/produttivita'),
+            url: '/team', 
+            onClick: () => navigate('/team'),
+            selected: location.pathname === '/team' || location.pathname === '/team/collaboratori' || location.pathname === '/team/produttivita' || location.pathname === '/produttivita', // Extended selection logic
             subNavigationItems: [
+              {
+                label: 'Collaboratori',
+                url: '/team/collaboratori',
+                onClick: () => navigate('/team/collaboratori'),
+              },
               {
                 label: 'Form Risposte',
                 url: '/team/gradimento-risposte',
@@ -193,6 +205,13 @@ const ShopifyLayout: React.FC = () => {
                 onClick: () => navigate('/team/procedure'),
               }
             ]
+          },
+          {
+            label: 'Calendario',
+            icon: CalendarIcon,
+            url: '/calendario',
+            onClick: () => navigate('/calendario'),
+            selected: location.pathname.startsWith('/calendario')
           }
         ]}
       />
@@ -206,7 +225,7 @@ const ShopifyLayout: React.FC = () => {
             icon: ListBulletedIcon,
             url: '/task',
             onClick: () => navigate('/task'),
-            selected: location.pathname.startsWith('/task') || location.pathname.startsWith('/drive'),
+            selected: location.pathname.startsWith('/task') || location.pathname.startsWith('/drive') || location.pathname.startsWith('/impostazioni/tasks'),
             subNavigationItems: [
               {
                   label: 'Task',
@@ -217,6 +236,11 @@ const ShopifyLayout: React.FC = () => {
                   label: 'Drive',
                   url: '/drive',
                   onClick: () => navigate('/drive'),
+              },
+              {
+                  label: 'Categorie Task',
+                  url: '/impostazioni/tasks',
+                  onClick: () => navigate('/impostazioni/tasks'),
               }
             ]
           },
@@ -250,30 +274,17 @@ const ShopifyLayout: React.FC = () => {
           }
         ]}
       />
-
-      {/* CALENDARIO */}
-      <Navigation.Section
-        title="Calendario"
-        items={[
-          {
-            label: 'Calendario',
-            icon: CalendarIcon,
-            url: '/calendario',
-            onClick: () => navigate('/calendario'),
-            selected: location.pathname === '/calendario'
-          }
-        ]}
-      />
       
       {/* IMPOSTAZIONI */}
       <Navigation.Section
+        title="Impostazioni"
         items={[
             {
-                url: '/impostazioni',
-                label: 'Impostazioni',
-                icon: SettingsIcon,
-                selected: location.pathname.startsWith('/impostazioni'),
-                onClick: () => navigate('/impostazioni')
+            label: 'Gestione Account',
+            icon: PersonIcon,
+            url: '/impostazioni/accounts',
+            onClick: () => navigate('/impostazioni/accounts'),
+            selected: location.pathname.startsWith('/impostazioni/accounts')
             }
         ]}
       />

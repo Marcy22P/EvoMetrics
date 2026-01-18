@@ -19,6 +19,9 @@ class UserResponse(BaseModel):
     google_email: Optional[str] = None
     google_id: Optional[str] = None
     profile_completed: bool = False
+    job_title: Optional[str] = None
+    google_refresh_token: Optional[str] = None
+    is_google_calendar_connected: bool = False
     created_at: str
     updated_at: str
 
@@ -41,6 +44,9 @@ class UpdateUserRequest(BaseModel):
     google_email: Optional[str] = None
     google_id: Optional[str] = None
     profile_completed: Optional[bool] = None
+    job_title: Optional[str] = None
+    google_refresh_token: Optional[str] = None
+    is_google_calendar_connected: Optional[bool] = None
 
 
 class UpdatePermissionsRequest(BaseModel):

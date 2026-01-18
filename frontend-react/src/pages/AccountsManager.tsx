@@ -88,7 +88,7 @@ const AccountsManager: React.FC = () => {
   const handleUpdateRole = async () => {
     if (!selectedUser) return;
     try {
-      await usersApi.updateUserRole(selectedUser.id, newRole);
+      await usersApi.updateUser(selectedUser.id, { role: newRole });
       showToast('Ruolo aggiornato con successo', 'success');
       setShowRoleModal(false);
       setSelectedUser(null);
@@ -122,7 +122,7 @@ const AccountsManager: React.FC = () => {
   // Aggiorna stato (attivo/non attivo)
   const handleToggleStatus = async (userId: number, currentStatus: boolean) => {
     try {
-      await usersApi.updateUserStatus(userId, !currentStatus);
+      await usersApi.updateUser(userId, { is_active: !currentStatus });
       showToast(`Utente ${!currentStatus ? 'attivato' : 'disattivato'}`, 'success');
       loadUsers();
     } catch (err: any) {

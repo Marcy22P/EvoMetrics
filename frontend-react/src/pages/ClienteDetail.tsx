@@ -283,12 +283,14 @@ const ClienteDetail: React.FC = () => {
                 <ClienteReferente 
                     referente={cliente.dettagli?.referente || emptyDettagli.referente!} 
                     documents={documents}
-                    onChange={handleReferenteChange} 
+                    onChange={handleReferenteChange}
+                    clienteId={cliente.id}
                 />
                 
                 <ClienteDrive 
                     clienteId={cliente.id}
                     folderId={cliente.dettagli?.drive_folder_id}
+                    clienteName={cliente.nome_azienda}
                 />
 
                 <ClienteCanali 

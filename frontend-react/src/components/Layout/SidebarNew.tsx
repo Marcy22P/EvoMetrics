@@ -129,8 +129,10 @@ const SidebarNew: React.FC<SidebarProps> = ({ collapsed, onToggle }) => {
       items: [
         // Punto 5: Anagrafica Collab (solo lista collaboratori)
         { path: '/team/collaboratori', label: 'Anagrafica Collab', icon: <UserIcon />, permission: 'users:read' },
-        // Punto 6: Form (Risposte gradimento)
-        { path: '/team/gradimento-risposte', label: 'Form Team', icon: <CheckmarkIcon />, permission: 'gradimento:read' },
+        // Compilazione Weekly
+        { path: '/team/gradimento-nuovo', label: 'Compila Weekly', icon: <CheckmarkIcon /> },
+        // Punto 6: Risposte gradimento (Admin)
+        { path: '/team/gradimento-risposte', label: 'Risposte Team', icon: <AssessmentListIcon />, permission: 'gradimento:read' },
         // Punto 7: Indice di Benessere (Score - Todo)
         { path: '/team/indice-benessere', label: 'Indice di Benessere', icon: <ChartIcon /> },
         { path: '/team/bonus', label: 'Bonus', icon: <MoneyBagIcon /> },
