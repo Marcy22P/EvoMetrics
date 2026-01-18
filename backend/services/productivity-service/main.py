@@ -140,33 +140,46 @@ class CreateStatusRequest(BaseModel):
 async def execute_drive_action(action_type: str, action_config: Dict[str, Any], entity_id: str, entity_type: str):
     """
     Esegue un'azione Google Drive come parte di un workflow.
+    Usa il token admin salvato in clienti-service/token.pickle.
     action_type: 'create_folder', 'upload_file', 'share_folder'
     action_config: configurazione specifica per l'azione
     entity_id: ID del cliente o lead
     entity_type: 'client' o 'lead'
     """
     try:
-        import requests
-        CLIENTI_SERVICE_URL = os.getenv("CLIENTI_SERVICE_URL") or os.getenv("BASE_URL") or os.getenv("GATEWAY_URL")
-        if not CLIENTI_SERVICE_URL:
-            raise ValueError("CLIENTI_SERVICE_URL, BASE_URL o GATEWAY_URL deve essere configurato")
-        token = os.getenv("INTERNAL_API_TOKEN", "")  # Token per chiamate interne
+        # Importa drive_service da clienti-service per usare il token admin salvato
+        import sys
+        from pathlib import Path
+        
+        # Aggiungi path per importare drive_utils da clienti-service
+        clienti_service_path = Path(__file__).parent.parent / "clienti-service"
+        if str(clienti_service_path) not in sys.path:
+            sys.path.insert(0, str(clienti_service_path))
+        
+        try:
+            from drive_utils import drive_service
+        except ImportError:
+            print("⚠️ Impossibile importare drive_service da clienti-service")
+            return None
+        
+        if not drive_service or not drive_service.is_ready():
+            print("⚠️ Drive service non disponibile o non autenticato")
+            return None
         
         if action_type == "create_folder":
             folder_name = action_config.get("folder_name", f"Cartella {entity_id}")
             parent_id = action_config.get("parent_folder_id")
             
-            response = requests.post(
-                f"{CLIENTI_SERVICE_URL}/api/drive/folder",
-                data={"name": folder_name, "parent_id": parent_id or ""},
-                headers={"Authorization": f"Bearer {token}"} if token else {}
-            )
-            if response.status_code == 200:
-                folder_data = response.json()
-                print(f"✅ Cartella Drive creata: {folder_data.get('id')}")
-                return folder_data.get("id")
-            else:
-                print(f"⚠️ Errore creazione cartella Drive: {response.status_code}")
+            try:
+                folder_id = drive_service.create_folder(folder_name, parent_id)
+                if folder_id:
+                    print(f"✅ Cartella Drive creata: {folder_id}")
+                    return folder_id
+                else:
+                    print(f"⚠️ Errore creazione cartella Drive: folder_id None")
+                    return None
+            except Exception as e:
+                print(f"⚠️ Errore creazione cartella Drive: {e}")
                 return None
                 
         elif action_type == "upload_file":
@@ -181,9 +194,14 @@ async def execute_drive_action(action_type: str, action_config: Dict[str, Any], 
             # Per ora solo log, richiede API Drive dirette
             print(f"ℹ️ Condivisione cartella Drive richiesta (non ancora implementato automaticamente)")
             return None
+        else:
+            print(f"⚠️ Tipo azione Drive non supportato: {action_type}")
+            return None
             
     except Exception as e:
         print(f"❌ Errore esecuzione azione Drive {action_type}: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 async def instantiate_workflow_logic(template_id: str, entity_id: str, start_date: datetime, entity_type: str = "client"):
@@ -427,7 +445,8 @@ async def instantiate_workflow(req: InstantiateWorkflowRequest, background_tasks
         
     # Determina entity_type dal template
     template = await database.fetch_one("SELECT entity_type FROM workflow_templates WHERE id = :id", {"id": req.template_id})
-    entity_type = template.get("entity_type", "client") if template else "client"
+    # database.fetch_one restituisce un Record, non un dict - accedi direttamente alla colonna
+    entity_type = template["entity_type"] if template and template.get("entity_type") else "client"
     
     background_tasks.add_task(instantiate_workflow_logic, req.template_id, req.project_id, start_date, entity_type)
     
