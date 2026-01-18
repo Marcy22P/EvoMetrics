@@ -446,7 +446,10 @@ async def instantiate_workflow(req: InstantiateWorkflowRequest, background_tasks
     # Determina entity_type dal template
     template = await database.fetch_one("SELECT entity_type FROM workflow_templates WHERE id = :id", {"id": req.template_id})
     # database.fetch_one restituisce un Record, non un dict - accedi direttamente alla colonna
-    entity_type = template["entity_type"] if template and template.get("entity_type") else "client"
+    if template and "entity_type" in template:
+        entity_type = template["entity_type"] or "client"
+    else:
+        entity_type = "client"
     
     background_tasks.add_task(instantiate_workflow_logic, req.template_id, req.project_id, start_date, entity_type)
     
