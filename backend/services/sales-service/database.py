@@ -7,21 +7,18 @@ import os
 # Database URL configurabile
 # In produzione reale (su Render.com), questa variabile dovrebbe essere esplicita
 # In sviluppo, usa default locale per comodità
-# Rileva produzione reale controllando se DATABASE_URL principale è remoto (non localhost)
-MAIN_DATABASE_URL = os.environ.get("DATABASE_URL", "")
-IS_REAL_PRODUCTION = (
-    os.environ.get("RENDER_EXTERNAL_HOSTNAME") is not None or  # Su Render.com
-    (MAIN_DATABASE_URL and "localhost" not in MAIN_DATABASE_URL and "127.0.0.1" not in MAIN_DATABASE_URL)  # Database remoto
-)
+# Rileva produzione reale SOLO se siamo effettivamente su Render.com
+# (RENDER_EXTERNAL_HOSTNAME è presente solo su Render.com, non nel .env locale)
+IS_REAL_PRODUCTION = os.environ.get("RENDER_EXTERNAL_HOSTNAME") is not None
 
 DATABASE_URL = os.environ.get("SALES_DATABASE_URL")
 
 if not DATABASE_URL:
     if IS_REAL_PRODUCTION:
-        # In produzione reale, richiedi esplicitamente la configurazione
+        # In produzione reale su Render.com, richiedi esplicitamente la configurazione
         raise ValueError("SALES_DATABASE_URL environment variable is required in production")
     else:
-        # In sviluppo, usa default locale
+        # In sviluppo (locale o con RENDER=true nel .env), usa default locale
         DATABASE_URL = "sqlite:///./sales.db"
         print("⚠️ SALES_DATABASE_URL non configurato, uso default locale (sviluppo)")
 
