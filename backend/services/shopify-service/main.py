@@ -256,11 +256,14 @@ async def shopify_oauth_authorize(
         "timestamp": datetime.now()
     }
     
-    # Determina redirect_uri (locale in sviluppo)
-    host = request.headers.get("host", "")
-    if "localhost" in host or "127.0.0.1" in host:
-        backend_url = SHOPIFY_SERVICE_URL
+    # Determina redirect_uri basandosi su BASE_URL o ambiente
+    IS_PRODUCTION = os.environ.get("RENDER", "false").lower() == "true" or os.environ.get("ENVIRONMENT", "").lower() == "production"
+    if IS_PRODUCTION:
+        backend_url = os.environ.get("BASE_URL")
+        if not backend_url:
+            raise ValueError("BASE_URL environment variable is required in production")
     else:
+        # In sviluppo, usa SHOPIFY_SERVICE_URL o BASE_URL se disponibile
         backend_url = os.environ.get("BASE_URL", SHOPIFY_SERVICE_URL)
     
     redirect_uri = f"{backend_url}/api/shopify/oauth/callback"

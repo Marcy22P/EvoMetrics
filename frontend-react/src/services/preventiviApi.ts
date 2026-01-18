@@ -4,6 +4,7 @@
 
 import type { PreventivoData as LocalPreventivoData } from '../types/preventivo';
 import { SERVIZI_DATA } from '../types/preventivo';
+import { getServiceUrl } from '../utils/apiConfig';
 
 // Funzione per ottenere il token di autenticazione
 function getAuthToken(): string | null {
@@ -380,11 +381,8 @@ function convertFromServerFormat(serverData: PreventivoSalvato): LocalPreventivo
 }
 
 export class PreventiviApiService {
-  // URL Preventivi Service - Usa API Gateway unificato (porta 10000 in sviluppo, window.location.origin in produzione)
-  private baseUrl = (import.meta.env.VITE_PREVENTIVI_SERVICE_URL ||
-    (window.location.hostname === 'localhost'
-      ? 'http://localhost:10000'
-      : window.location.origin)) + '/api/preventivi';
+  // URL Preventivi Service - Usa API Gateway unificato
+  private baseUrl = getServiceUrl('preventivi') + '/api/preventivi';
 
   async getAllPreventivi(): Promise<LocalPreventivoData[]> {
     try {

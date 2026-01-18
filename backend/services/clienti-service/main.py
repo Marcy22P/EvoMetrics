@@ -274,8 +274,12 @@ async def google_drive_login(request: Request):
             # Estrai host da BASE_URL se header non presente
             from urllib.parse import urlparse
             parsed = urlparse(BASE_URL)
-            host = parsed.netloc or parsed.path.split('/')[0] if parsed.path else "localhost:10000"
-        protocol = "https" if "evoluzioneimprese.com" in host or BASE_URL.startswith("https://") else "http"
+            # Estrai host da BASE_URL, senza fallback hardcoded
+            if not parsed.netloc:
+                raise ValueError("BASE_URL deve contenere un hostname valido (es. https://www.evoluzioneimprese.com)")
+            host = parsed.netloc
+        # Determina protocol basandosi solo su BASE_URL, non su dominio hardcoded
+        protocol = "https" if BASE_URL.startswith("https://") else "http"
         
         redirect_uri = f"{protocol}://{host}/api/drive/google/callback"
         
@@ -297,8 +301,12 @@ async def google_drive_callback(request: Request, code: str, state: Optional[str
             # Estrai host da BASE_URL se header non presente
             from urllib.parse import urlparse
             parsed = urlparse(BASE_URL)
-            host = parsed.netloc or parsed.path.split('/')[0] if parsed.path else "localhost:10000"
-        protocol = "https" if "evoluzioneimprese.com" in host or BASE_URL.startswith("https://") else "http"
+            # Estrai host da BASE_URL, senza fallback hardcoded
+            if not parsed.netloc:
+                raise ValueError("BASE_URL deve contenere un hostname valido (es. https://www.evoluzioneimprese.com)")
+            host = parsed.netloc
+        # Determina protocol basandosi solo su BASE_URL, non su dominio hardcoded
+        protocol = "https" if BASE_URL.startswith("https://") else "http"
         
         redirect_uri = f"{protocol}://{host}/api/drive/google/callback"
 

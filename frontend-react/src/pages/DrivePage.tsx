@@ -8,6 +8,7 @@ import {
     ImageIcon, ArrowLeftIcon, PlusIcon, UploadIcon, ImportIcon
 } from '@shopify/polaris-icons';
 import { useAuth } from '../hooks/useAuth';
+import { getServiceUrl } from '../utils/apiConfig';
 
 interface DriveFile {
     id: string;
@@ -376,8 +377,7 @@ const GlobalDriveBrowser: React.FC = () => {
 
 const DrivePage: React.FC = () => {
     // URL Backend Clienti Service
-    const CLIENTI_SERVICE_URL = import.meta.env.VITE_CLIENTI_SERVICE_URL || 
-        (window.location.hostname === 'localhost' ? 'http://localhost:10000' : window.location.origin);
+    const CLIENTI_SERVICE_URL = getServiceUrl('clienti');
     
     const { user } = useAuth();
     const [isConnected, setIsConnected] = useState<boolean | null>(null);

@@ -322,8 +322,7 @@ class ClientiApiService {
 
   async linkContrattoToCliente(contrattoId: string, clienteId: string): Promise<{ status: string }> {
     const headers = await this.getAuthHeaders();
-    const CONTRATTI_SERVICE_URL = import.meta.env.VITE_CONTRATTI_SERVICE_URL || 
-      (window.location.hostname === 'localhost' ? 'http://localhost:10000' : window.location.origin);
+    const CONTRATTI_SERVICE_URL = getServiceUrl('contratti');
     
     const response = await fetch(`${CONTRATTI_SERVICE_URL}/api/contratti/${contrattoId}/link-cliente`, {
       method: 'PUT',

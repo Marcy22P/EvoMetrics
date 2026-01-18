@@ -4,7 +4,9 @@ from sqlalchemy import create_engine, MetaData
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 
-DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://user:password@localhost/dbname")
+DATABASE_URL = os.environ.get("DATABASE_URL")
+if not DATABASE_URL:
+    raise ValueError("DATABASE_URL environment variable is required")
 
 # Fix per Render/Postgres
 if DATABASE_URL and DATABASE_URL.startswith("postgresql://"):

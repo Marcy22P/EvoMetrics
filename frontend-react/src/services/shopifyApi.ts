@@ -3,9 +3,10 @@
  * Comunica con il microservizio Shopify Service
  */
 
-// URL Shopify Service - Usa API Gateway unificato (porta 10000 in sviluppo, window.location.origin in produzione)
-const SHOPIFY_SERVICE_URL = import.meta.env.VITE_SHOPIFY_SERVICE_URL || 
-  (window.location.hostname === 'localhost' ? 'http://localhost:10000' : window.location.origin);
+// URL Shopify Service - Usa API Gateway unificato
+import { getServiceUrl } from '../utils/apiConfig';
+
+const SHOPIFY_SERVICE_URL = getServiceUrl('shopify');
 
 export interface ShopifyMetrics {
   total_orders: number;

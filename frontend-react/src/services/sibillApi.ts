@@ -1,8 +1,7 @@
 // URL Sibill Service - Usa API Gateway unificato
-const SIBILL_SERVICE_URL = import.meta.env.VITE_SIBILL_SERVICE_URL ||
-  (window.location.hostname === 'localhost'
-    ? 'http://localhost:10000'
-    : window.location.origin);
+import { getServiceUrl } from '../utils/apiConfig';
+
+const SIBILL_SERVICE_URL = getServiceUrl('sibill');
 
 // Helper per ottenere il token di autenticazione
 const getAuthToken = (): string | null => {

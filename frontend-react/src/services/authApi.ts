@@ -3,12 +3,10 @@
  * Client per comunicare con il microservizio Auth Service
  */
 
-// URL Auth Service - Usa API Gateway unificato (porta 10000 in sviluppo, window.location.origin in produzione)
-const AUTH_SERVICE_URL =
-  import.meta.env.VITE_AUTH_SERVICE_URL ||
-  (window.location.hostname === 'localhost'
-    ? 'http://localhost:10000'
-    : window.location.origin);
+// URL Auth Service - Usa API Gateway unificato
+import { getServiceUrl } from '../utils/apiConfig';
+
+const AUTH_SERVICE_URL = getServiceUrl('auth');
 
 export interface LoginRequest {
   username: string;
