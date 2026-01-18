@@ -1,9 +1,10 @@
 // Importa ShopifyTestResult da shopifyApi invece di duplicarlo
 import type { ShopifyTestResult } from './shopifyApi';
 
-// URL Clienti Service - Usa API Gateway unificato (porta 10000 in sviluppo, window.location.origin in produzione)
-const CLIENTI_SERVICE_URL = import.meta.env.VITE_CLIENTI_SERVICE_URL || 
-  (window.location.hostname === 'localhost' ? 'http://localhost:10000' : window.location.origin);
+// URL Clienti Service - Usa API Gateway unificato
+import { getServiceUrl } from '../utils/apiConfig';
+
+const CLIENTI_SERVICE_URL = getServiceUrl('clienti');
 
 // --- INTERFACCE DETTAGLI CLIENTI ---
 

@@ -19,6 +19,7 @@ import {
 import { DeleteIcon, ViewIcon, PersonIcon, WorkIcon, GlobeIcon, NoteIcon } from '@shopify/polaris-icons';
 import { useAuth } from '../hooks/useAuth';
 import { toast } from 'react-hot-toast';
+import { getServiceUrl } from '../utils/apiConfig';
 
 // Interfaccia dati Assessment
 interface AssessmentData {
@@ -68,8 +69,7 @@ const AssessmentList: React.FC = () => {
     setIsLoading(true);
     try {
       const token = localStorage.getItem('auth_token');
-      const API_GATEWAY_URL = window.location.hostname === 'localhost' ? 'http://localhost:10000' : window.location.origin;
-      const ASSESSMENTS_SERVICE_URL = import.meta.env.VITE_ASSESSMENTS_SERVICE_URL || API_GATEWAY_URL;
+      const ASSESSMENTS_SERVICE_URL = getServiceUrl('assessments');
       
       const response = await fetch(`${ASSESSMENTS_SERVICE_URL}/api/assessments`, {
         headers: {
@@ -103,8 +103,7 @@ const AssessmentList: React.FC = () => {
 
     try {
        const token = localStorage.getItem('auth_token');
-       const API_GATEWAY_URL = window.location.hostname === 'localhost' ? 'http://localhost:10000' : window.location.origin;
-       const ASSESSMENTS_SERVICE_URL = import.meta.env.VITE_ASSESSMENTS_SERVICE_URL || API_GATEWAY_URL;
+       const ASSESSMENTS_SERVICE_URL = getServiceUrl('assessments');
 
        const response = await fetch(`${ASSESSMENTS_SERVICE_URL}/api/assessments/${assessmentToDelete}`, {
           method: 'DELETE',

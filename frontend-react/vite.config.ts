@@ -15,13 +15,14 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     assetsDir: 'assets',
-    sourcemap: false,
+    // Sourcemap solo in sviluppo, non in produzione
+    sourcemap: process.env.NODE_ENV === 'development',
   },
   server: {
-    port: 5173,
+    port: parseInt(process.env.VITE_PORT || '5173', 10),
     proxy: {
       '/api': {
-        target: 'http://127.0.0.1:10000',
+        target: process.env.VITE_API_URL || 'http://127.0.0.1:10000',
         changeOrigin: true,
         secure: false,
       }

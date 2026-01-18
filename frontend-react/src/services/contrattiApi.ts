@@ -1,10 +1,9 @@
 import type { ContrattoData } from '../types/contratto';
 
-// URL Contratti Service - Usa API Gateway unificato (porta 10000 in sviluppo, window.location.origin in produzione)
-const CONTRATTI_SERVICE_URL = import.meta.env.VITE_CONTRATTI_SERVICE_URL ||
-  (window.location.hostname === 'localhost'
-    ? 'http://localhost:10000'
-    : window.location.origin);
+// URL Contratti Service - Usa API Gateway unificato
+import { getServiceUrl } from '../utils/apiConfig';
+
+const CONTRATTI_SERVICE_URL = getServiceUrl('contratti');
 
 // Funzione per ottenere il token di autenticazione
 const getAuthToken = (): string | null => {

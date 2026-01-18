@@ -1,5 +1,6 @@
-const API_GATEWAY_URL = window.location.hostname === 'localhost' ? 'http://localhost:10000' : window.location.origin;
-const SALES_SERVICE_URL = import.meta.env.VITE_SALES_SERVICE_URL || API_GATEWAY_URL;
+import { getServiceUrl } from '../utils/apiConfig';
+
+const SALES_SERVICE_URL = getServiceUrl('sales');
 
 const getAuthToken = (): string | null => {
   return localStorage.getItem('auth_token');

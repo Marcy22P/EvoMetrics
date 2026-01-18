@@ -1,9 +1,7 @@
-// URL User Service - Usa API Gateway unificato (porta 10000 in sviluppo, window.location.origin in produzione)
-const USER_SERVICE_URL =
-  import.meta.env.VITE_USER_SERVICE_URL ||
-  (window.location.hostname === 'localhost'
-    ? 'http://localhost:10000'
-    : window.location.origin);
+// URL User Service - Usa API Gateway unificato
+import { getServiceUrl } from '../utils/apiConfig';
+
+const USER_SERVICE_URL = getServiceUrl('user');
 
 // URL monolite per operazioni che richiedono password hashing (temporaneo, da spostare in Auth Service)
 // const API_BASE_URL = import.meta.env.VITE_API_URL || '/api'; // Non più utilizzato

@@ -1,7 +1,7 @@
 // Service Layer per Productivity Service
-// URL API Gateway unificato
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 
-  (window.location.hostname === 'localhost' ? 'http://localhost:10000' : window.location.origin);
+import { getServiceUrl } from '../utils/apiConfig';
+
+const API_BASE_URL = getServiceUrl('productivity');
 
 export interface Attachment {
     name: string;

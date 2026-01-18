@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import type { ReactNode } from 'react';
 import { authApi } from '../services/authApi';
+import { getServiceUrl } from '../utils/apiConfig';
 
 interface User {
   id: number;
@@ -47,12 +48,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
   const loadPermissions = useCallback(async (tok: string, userId: number) => {
     try {
-      // Usa User Service per i permessi - API Gateway unificato (porta 10000 in sviluppo, window.location.origin in produzione)
-      const USER_SERVICE_URL =
-        import.meta.env.VITE_USER_SERVICE_URL ||
-        (window.location.hostname === 'localhost'
-          ? 'http://localhost:10000'
-          : window.location.origin);
+      // Usa User Service per i permessi - API Gateway unificato
+      const USER_SERVICE_URL = getServiceUrl('user');
       
       const resp = await fetch(`${USER_SERVICE_URL}/api/users/${userId}/permissions`, {
         headers: { 

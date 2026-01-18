@@ -2,11 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import './ShopifyInstall.css';
 
-// API Gateway unificato (porta 10000 in sviluppo, window.location.origin in produzione)
-const CLIENTI_SERVICE_URL = import.meta.env.VITE_CLIENTI_SERVICE_URL || 
-  (window.location.hostname === 'localhost' ? 'http://localhost:10000' : window.location.origin);
-const SHOPIFY_SERVICE_URL = import.meta.env.VITE_SHOPIFY_SERVICE_URL || 
-  (window.location.hostname === 'localhost' ? 'http://localhost:10000' : window.location.origin);
+import { getServiceUrl } from '../utils/apiConfig';
+
+// API Gateway unificato
+const CLIENTI_SERVICE_URL = getServiceUrl('clienti');
+const SHOPIFY_SERVICE_URL = getServiceUrl('shopify');
 
 interface MagicLinkData {
   valid: boolean;

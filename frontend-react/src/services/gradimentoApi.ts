@@ -1,7 +1,7 @@
 // Service Layer per Gradimento
-// URL Gradimento Service - Usa API Gateway unificato (porta 10000 in sviluppo, window.location.origin in produzione)
-const GRADIMENTO_SERVICE_URL = import.meta.env.VITE_GRADIMENTO_SERVICE_URL || 
-  (window.location.hostname === 'localhost' ? 'http://localhost:10000' : window.location.origin);
+import { getServiceUrl } from '../utils/apiConfig';
+
+const GRADIMENTO_SERVICE_URL = getServiceUrl('gradimento');
 
 export interface GradimentoRisposte {
   // Anagrafica

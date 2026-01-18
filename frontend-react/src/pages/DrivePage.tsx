@@ -18,9 +18,10 @@ interface DriveFile {
     size?: string;
 }
 
+import { getServiceUrl } from '../utils/apiConfig';
+
 const GlobalDriveBrowser: React.FC = () => {
-    const CLIENTI_SERVICE_URL = import.meta.env.VITE_CLIENTI_SERVICE_URL || 
-        (window.location.hostname === 'localhost' ? 'http://localhost:10000' : window.location.origin);
+    const CLIENTI_SERVICE_URL = getServiceUrl('clienti');
 
     const [files, setFiles] = useState<DriveFile[]>([]);
     const [loading, setLoading] = useState(false);
