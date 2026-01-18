@@ -66,10 +66,16 @@ def exchange_code_for_tokens(code: str, redirect_uri: str) -> Dict[str, Any]:
         "token_expiry": creds.expiry.isoformat() if creds.expiry else None,
     }
 
-def build_credentials(access_token: str, refresh_token: str = None, token_expiry: str = None) -> Credentials:
-    """Costruisce oggetto Credentials da tokens salvati"""
+def build_credentials(access_token: str = "", refresh_token: str = None, token_expiry: str = None) -> Credentials:
+    """
+    Costruisce oggetto Credentials da tokens salvati.
+    Se access_token è vuoto, verrà generato dal refresh_token quando necessario.
+    """
     client_id = os.environ.get("GOOGLE_CLIENT_ID")
     client_secret = os.environ.get("GOOGLE_CLIENT_SECRET")
+    
+    if not client_id or not client_secret:
+        raise ValueError("GOOGLE_CLIENT_ID e GOOGLE_CLIENT_SECRET devono essere configurati")
     
     expiry = None
     if token_expiry:
@@ -78,8 +84,11 @@ def build_credentials(access_token: str, refresh_token: str = None, token_expiry
         except:
             pass
     
+    # Se access_token è vuoto, usa None (verrà generato dal refresh_token)
+    token = access_token if access_token else None
+    
     return Credentials(
-        token=access_token,
+        token=token,
         refresh_token=refresh_token,
         token_uri="https://oauth2.googleapis.com/token",
         client_id=client_id,
@@ -89,13 +98,21 @@ def build_credentials(access_token: str, refresh_token: str = None, token_expiry
 
 def refresh_credentials_if_needed(creds: Credentials) -> Tuple[Credentials, bool]:
     """Aggiorna le credenziali se scadute. Ritorna (creds, was_refreshed)"""
-    if creds.expired and creds.refresh_token:
-        try:
-            creds.refresh(Request())
-            return creds, True
-        except Exception as e:
-            print(f"❌ Errore refresh token: {e}")
-            raise Exception("Token scaduto e refresh fallito. Ricollegare il calendario.")
+    # Controlla se scaduto o sta per scadere (entro 5 minuti)
+    if creds.expired or (creds.expiry and (creds.expiry - datetime.utcnow()).total_seconds() < 300):
+        if creds.refresh_token:
+            try:
+                creds.refresh(Request())
+                print(f"✅ Token calendario refreshato con successo")
+                return creds, True
+            except Exception as e:
+                print(f"❌ Errore refresh token: {e}")
+                import traceback
+                traceback.print_exc()
+                raise Exception("Token scaduto e refresh fallito. Ricollegare il calendario.")
+        else:
+            print("⚠️ Token scaduto ma nessun refresh_token disponibile")
+            raise Exception("Token scaduto e nessun refresh_token disponibile. Ricollegare il calendario.")
     return creds, False
 
 def get_calendar_service(access_token: str, refresh_token: str = None, token_expiry: str = None):

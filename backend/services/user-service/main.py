@@ -773,41 +773,41 @@ async def connect_google_calendar(
         connected_email = google_user_info.get('email')
         refresh_token = credentials.refresh_token
 
-        # Aggiorna DB
-        update_query = """
-            UPDATE users 
-            SET google_refresh_token = :rt, 
-                google_calendar_email = :email,
-                is_google_calendar_connected = true,
-                updated_at = :now
-            WHERE id = :uid
-        """
-        
-        params = {
-            "email": connected_email,
-            "now": datetime.utcnow(),
-            "uid": current_user["id"]
-        }
-        
+        # Aggiorna DB - sempre salva refresh_token se disponibile
+        # Se non c'è refresh_token, potrebbe essere un re-consent (mantieni quello esistente)
         if refresh_token:
-            params["rt"] = refresh_token
+            update_query = """
+                UPDATE users 
+                SET google_refresh_token = :rt, 
+                    google_calendar_email = :email,
+                    is_google_calendar_connected = true,
+                    updated_at = :now
+                WHERE id = :uid
+            """
+            await database.execute(update_query, {
+                "rt": refresh_token,
+                "email": connected_email,
+                "now": datetime.utcnow(),
+                "uid": current_user["id"]
+            })
+            print(f"✅ Calendario collegato per utente {current_user['id']}: {connected_email}")
         else:
-            print("⚠️ Warning: No refresh token received from Google.")
-            params["rt"] = None 
-
-        if refresh_token:
-             await database.execute(update_query, params)
-        else:
-             # Update senza toccare il refresh token (solo email e flag)
-             update_query_no_rt = """
+            # Se non c'è refresh_token, potrebbe essere un re-consent
+            # Mantieni il refresh_token esistente se presente, aggiorna solo email e flag
+            print("⚠️ Warning: No refresh token received from Google. Potrebbe essere un re-consent.")
+            update_query_no_rt = """
                 UPDATE users 
                 SET google_calendar_email = :email,
                     is_google_calendar_connected = true,
                     updated_at = :now
                 WHERE id = :uid
             """
-             del params["rt"]
-             await database.execute(update_query_no_rt, params)
+            await database.execute(update_query_no_rt, {
+                "email": connected_email,
+                "now": datetime.utcnow(),
+                "uid": current_user["id"]
+            })
+            print(f"✅ Calendario collegato (senza nuovo refresh_token) per utente {current_user['id']}: {connected_email}")
         
         return {"status": "success", "connected_email": connected_email}
         
@@ -995,8 +995,9 @@ async def create_calendar_event(
     loop = asyncio.get_event_loop()
     
     def do_create():
+        # Costruisci service (refresh automatico se scaduto)
         service = gcal.get_calendar_service(
-            access_token="",
+            access_token="", # Verrà refreshato automaticamente se necessario
             refresh_token=target_user.get("google_refresh_token")
         )
         return gcal.create_event(
