@@ -19,8 +19,6 @@ interface DriveFile {
     size?: string;
 }
 
-import { getServiceUrl } from '../utils/apiConfig';
-
 const GlobalDriveBrowser: React.FC = () => {
     const CLIENTI_SERVICE_URL = getServiceUrl('clienti');
 
