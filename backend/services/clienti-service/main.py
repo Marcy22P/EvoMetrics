@@ -69,7 +69,10 @@ except ImportError:
     async def get_contratti_internal(token=None): 
         # Fallback HTTP se internal_calls non disponibile
         import httpx
-        url = os.environ.get("CONTRATTI_SERVICE_URL", "http://localhost:10000")
+        url = os.environ.get("CONTRATTI_SERVICE_URL") or os.environ.get("BASE_URL") or os.environ.get("GATEWAY_URL")
+        if not url:
+            print("⚠️ CONTRATTI_SERVICE_URL, BASE_URL o GATEWAY_URL non configurato, impossibile recuperare contratti")
+            return []
         headers = {"Authorization": f"Bearer {token}"} if token else {}
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
@@ -87,12 +90,13 @@ if not SECRET_KEY:
     raise ValueError("SECRET_KEY environment variable is required")
 ALGORITHM = "HS256"
 
-FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:5173")
+FRONTEND_URL = os.environ.get("FRONTEND_URL")
 if not FRONTEND_URL:
-    # Non bloccare se manca, usa default
-    pass
+    raise ValueError("FRONTEND_URL environment variable is required")
 
-BASE_URL = os.environ.get("BASE_URL", "http://localhost:10000")
+BASE_URL = os.environ.get("BASE_URL")
+if not BASE_URL:
+    raise ValueError("BASE_URL environment variable is required")
 
 # Default permissions per ruolo
 DEFAULT_PERMISSIONS_BY_ROLE: Dict[str, Any] = {
@@ -265,8 +269,13 @@ async def google_drive_login(request: Request):
     try:
         # Determina redirect_uri dinamicamente in base all'host della richiesta
         # Questo risolve il problema localhost vs produzione automaticamente
-        host = request.headers.get("host", "localhost:10000")
-        protocol = "https" if "evoluzioneimprese.com" in host else "http"
+        host = request.headers.get("host")
+        if not host:
+            # Estrai host da BASE_URL se header non presente
+            from urllib.parse import urlparse
+            parsed = urlparse(BASE_URL)
+            host = parsed.netloc or parsed.path.split('/')[0] if parsed.path else "localhost:10000"
+        protocol = "https" if "evoluzioneimprese.com" in host or BASE_URL.startswith("https://") else "http"
         
         redirect_uri = f"{protocol}://{host}/api/drive/google/callback"
         
@@ -283,8 +292,13 @@ async def google_drive_callback(request: Request, code: str, state: Optional[str
     """Callback specifica per OAuth Google Drive"""
     try:
         # Ricostruisce lo stesso redirect_uri usato nel login per la verifica
-        host = request.headers.get("host", "localhost:10000")
-        protocol = "https" if "evoluzioneimprese.com" in host else "http"
+        host = request.headers.get("host")
+        if not host:
+            # Estrai host da BASE_URL se header non presente
+            from urllib.parse import urlparse
+            parsed = urlparse(BASE_URL)
+            host = parsed.netloc or parsed.path.split('/')[0] if parsed.path else "localhost:10000"
+        protocol = "https" if "evoluzioneimprese.com" in host or BASE_URL.startswith("https://") else "http"
         
         redirect_uri = f"{protocol}://{host}/api/drive/google/callback"
 

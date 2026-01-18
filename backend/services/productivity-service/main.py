@@ -147,7 +147,9 @@ async def execute_drive_action(action_type: str, action_config: Dict[str, Any], 
     """
     try:
         import requests
-        CLIENTI_SERVICE_URL = os.getenv("CLIENTI_SERVICE_URL", "http://localhost:10000")
+        CLIENTI_SERVICE_URL = os.getenv("CLIENTI_SERVICE_URL") or os.getenv("BASE_URL") or os.getenv("GATEWAY_URL")
+        if not CLIENTI_SERVICE_URL:
+            raise ValueError("CLIENTI_SERVICE_URL, BASE_URL o GATEWAY_URL deve essere configurato")
         token = os.getenv("INTERNAL_API_TOKEN", "")  # Token per chiamate interne
         
         if action_type == "create_folder":

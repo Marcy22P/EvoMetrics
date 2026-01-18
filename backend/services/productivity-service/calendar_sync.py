@@ -3,7 +3,9 @@ import httpx
 from typing import Optional
 
 # In unified mode, use gateway URL
-GATEWAY_URL = os.environ.get("GATEWAY_URL", "http://localhost:10000")
+GATEWAY_URL = os.environ.get("GATEWAY_URL") or os.environ.get("BASE_URL")
+if not GATEWAY_URL:
+    raise ValueError("GATEWAY_URL o BASE_URL deve essere configurato")
 
 async def sync_task_to_calendar(user_id: str, task_data: dict, action: str = "create", google_event_id: Optional[str] = None):
     """

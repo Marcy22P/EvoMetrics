@@ -204,7 +204,9 @@ def create_lead(lead_in: LeadCreate, db: Session = Depends(get_db)):
 def trigger_workflow_for_stage_change(lead_id: str, new_stage: str, previous_stage: str):
     """Chiama il webhook del productivity-service per triggerare workflow quando un lead cambia stage"""
     try:
-        PRODUCTIVITY_SERVICE_URL = os.getenv("PRODUCTIVITY_SERVICE_URL", "http://localhost:10000")
+        PRODUCTIVITY_SERVICE_URL = os.getenv("PRODUCTIVITY_SERVICE_URL") or os.getenv("BASE_URL") or os.getenv("GATEWAY_URL")
+        if not PRODUCTIVITY_SERVICE_URL:
+            raise ValueError("PRODUCTIVITY_SERVICE_URL, BASE_URL o GATEWAY_URL deve essere configurato")
         response = requests.post(
             f"{PRODUCTIVITY_SERVICE_URL}/api/hooks/lead-stage-changed",
             json={

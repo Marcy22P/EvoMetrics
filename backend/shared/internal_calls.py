@@ -229,7 +229,10 @@ async def get_preventivi_internal(token: Optional[str] = None) -> List[Dict[str,
             return []
     
     # Fallback HTTP
-    url = os.environ.get("PREVENTIVI_SERVICE_URL", "http://localhost:10000")
+    # In unified mode questo non dovrebbe mai essere usato, ma manteniamo per compatibilità
+    url = os.environ.get("PREVENTIVI_SERVICE_URL") or os.environ.get("BASE_URL") or os.environ.get("GATEWAY_URL")
+    if not url:
+        raise ValueError("PREVENTIVI_SERVICE_URL, BASE_URL o GATEWAY_URL deve essere configurato per chiamate HTTP")
     headers = {"Authorization": f"Bearer {token}"} if token else {}
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
@@ -253,7 +256,10 @@ async def get_contratti_internal(token: Optional[str] = None) -> List[Dict[str, 
             return []
     
     # Fallback HTTP
-    url = os.environ.get("CONTRATTI_SERVICE_URL", "http://localhost:10000")
+    # In unified mode questo non dovrebbe mai essere usato, ma manteniamo per compatibilità
+    url = os.environ.get("CONTRATTI_SERVICE_URL") or os.environ.get("BASE_URL") or os.environ.get("GATEWAY_URL")
+    if not url:
+        raise ValueError("CONTRATTI_SERVICE_URL, BASE_URL o GATEWAY_URL deve essere configurato per chiamate HTTP")
     headers = {"Authorization": f"Bearer {token}"} if token else {}
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:

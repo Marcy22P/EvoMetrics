@@ -49,7 +49,9 @@ app.add_middleware(
 )
 
 # User Service URL per verifiche
-USER_SERVICE_URL = os.getenv("USER_SERVICE_URL", "http://localhost:8001")
+USER_SERVICE_URL = os.getenv("USER_SERVICE_URL") or os.getenv("BASE_URL") or os.getenv("GATEWAY_URL")
+if not USER_SERVICE_URL:
+    raise ValueError("USER_SERVICE_URL, BASE_URL o GATEWAY_URL deve essere configurato")
 
 @app.on_event("startup")
 async def startup():
