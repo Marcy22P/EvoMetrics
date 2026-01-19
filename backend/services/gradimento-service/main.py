@@ -13,7 +13,7 @@ from datetime import datetime
 from jose import JWTError, jwt
 from contextlib import asynccontextmanager
 
-from database import database, init_database, close_database
+from database import database, init_database, close_database, ensure_database_initialized
 from models import GradimentoRisposte, GradimentoSettimanale
 
 # Carica variabili d'ambiente dalla root del progetto
@@ -46,6 +46,7 @@ DEFAULT_PERMISSIONS_BY_ROLE: Dict[str, Any] = {
 
 async def get_current_user(request: Request) -> Dict[str, Any]:
     """Ottieni l'utente corrente dal token JWT"""
+    await ensure_database_initialized()
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -109,8 +110,10 @@ async def load_user_permissions(user: Dict[str, Any]) -> Dict[str, bool]:
 async def lifespan(app: FastAPI):
     """Lifespan event handler per startup e shutdown"""
     print("🚀 Avvio Gradimento Service...")
-    await init_database()
-    print("✅ Gradimento Service avviato")
+    # NON inizializzare il database durante lo startup - verrà fatto al primo accesso (lazy init)
+    # Questo evita di bloccare l'avvio dell'applicazione se il database non è disponibile
+    # e previene errori "TooManyConnectionsError" quando più servizi si avviano simultaneamente
+    print("✅ Gradimento Service avviato (database verrà inizializzato al primo accesso)")
     yield
     print("⏹️ Spegnimento Gradimento Service...")
     await close_database()
@@ -123,6 +126,18 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+
+# Middleware per garantire l'inizializzazione del database
+@app.middleware("http")
+async def ensure_db_middleware(request: Request, call_next):
+    # Inizializza il database solo per endpoint che non sono /health
+    if not request.url.path.startswith("/health"):
+        try:
+            await ensure_database_initialized()
+        except Exception as e:
+            print(f"⚠️ Errore inizializzazione database nel middleware: {e}")
+    response = await call_next(request)
+    return response
 
 app.add_middleware(
     CORSMiddleware,

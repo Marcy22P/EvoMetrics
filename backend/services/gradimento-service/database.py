@@ -42,15 +42,38 @@ DB_POOL_MAX_SIZE = int(os.environ.get("DB_POOL_MAX_SIZE", "10"))  # Default 10 (
 # Ottimizzazione pool: min 1, max 3 connessioni
 database = databases.Database(DATABASE_URL) if (DB_POOL_MIN_SIZE == 0 and DB_POOL_MAX_SIZE == 10) else databases.Database(DATABASE_URL, min_size=DB_POOL_MIN_SIZE, max_size=DB_POOL_MAX_SIZE)
 
+# Flag per tracciare se il database è stato inizializzato
+_db_initialized = False
+
+
+async def ensure_database_initialized():
+    """Lazy initialization: connetti al database solo se non già connesso"""
+    global _db_initialized
+    if not _db_initialized:
+        try:
+            if not database.is_connected:
+                await database.connect()
+            _db_initialized = True
+            print("✅ Database connesso (Gradimento Service - lazy init)")
+        except Exception as e:
+            print(f"⚠️ Errore connessione database (Gradimento Service): {e}")
+            # Non bloccare l'applicazione, riproverà al prossimo accesso
+            _db_initialized = False
+
 
 async def init_database():
-    """Initialize database connection"""
-    await database.connect()
-    print("✅ Database connesso (Gradimento Service)")
+    """Initialize database connection (deprecated, use ensure_database_initialized)"""
+    await ensure_database_initialized()
 
 
 async def close_database():
     """Close database connection"""
-    await database.disconnect()
-    print("✅ Database disconnesso (Gradimento Service)")
+    global _db_initialized
+    try:
+        if database.is_connected:
+            await database.disconnect()
+        _db_initialized = False
+        print("✅ Database disconnesso (Gradimento Service)")
+    except Exception as e:
+        print(f"⚠️ Errore disconnessione database (Gradimento Service): {e}")
 
