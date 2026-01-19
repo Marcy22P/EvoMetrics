@@ -271,7 +271,16 @@ def create_workflow_tasks_for_clickfunnel_lead(lead_id: str, stage: str):
             template_name = template.get("name", "Unknown")
             
             try:
-                tasks_def = json.loads(template.get("tasks_definition", "[]"))
+                # tasks_definition potrebbe essere già una lista (deserializzata da JSONB) o una stringa JSON
+                tasks_definition_raw = template.get("tasks_definition", "[]")
+                if isinstance(tasks_definition_raw, str):
+                    tasks_def = json.loads(tasks_definition_raw)
+                elif isinstance(tasks_definition_raw, list):
+                    tasks_def = tasks_definition_raw
+                else:
+                    print(f"⚠️ [WORKFLOW] tasks_definition ha tipo inaspettato: {type(tasks_definition_raw)}, uso lista vuota")
+                    tasks_def = []
+                
                 created_tasks_map = {}  # Mappa indice -> task_id reale per risolvere dipendenze
                 
                 print(f"🔄 [WORKFLOW] Avvio workflow '{template_name}' (ID: {template_id}) per lead {lead_id}")
@@ -653,10 +662,19 @@ def create_workflow_tasks_for_stage_change(lead_id: str, new_stage: str, previou
             template_name = template.get("name", "Unknown")
             
             try:
-                tasks_def = json.loads(template.get("tasks_definition", "[]"))
+                # tasks_definition potrebbe essere già una lista (deserializzata da JSONB) o una stringa JSON
+                tasks_definition_raw = template.get("tasks_definition", "[]")
+                if isinstance(tasks_definition_raw, str):
+                    tasks_def = json.loads(tasks_definition_raw)
+                elif isinstance(tasks_definition_raw, list):
+                    tasks_def = tasks_definition_raw
+                else:
+                    print(f"⚠️ [WORKFLOW] tasks_definition ha tipo inaspettato: {type(tasks_definition_raw)}, uso lista vuota")
+                    tasks_def = []
+                
                 created_tasks_map = {}  # Mappa indice -> task_id reale per risolvere dipendenze
                 
-                print(f"🔄 Avvio workflow '{template_name}' per lead {lead_id} (stage: {new_stage})")
+                print(f"🔄 [WORKFLOW] Avvio workflow '{template_name}' per lead {lead_id} (stage: {new_stage})")
                 
                 # Itera e crea Tasks
                 for i, t_def in enumerate(tasks_def):
