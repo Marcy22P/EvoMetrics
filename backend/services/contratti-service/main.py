@@ -72,6 +72,7 @@ async def get_current_user(request: Request) -> Dict[str, Any]:
     except JWTError:
         raise credentials_exception
     
+    await ensure_database_initialized()
     query = "SELECT id, username, role, is_active FROM users WHERE username = :username AND is_active = true"
     user = await database.fetch_one(query, {"username": username})
     if user is None:
@@ -93,6 +94,7 @@ async def load_user_permissions(user: Dict[str, Any]) -> Dict[str, bool]:
     if user["role"] == "superadmin":
         return {"__all__": True}
     
+    await ensure_database_initialized()
     row = await database.fetch_one(
         "SELECT permissions FROM user_permissions WHERE user_id = :uid",
         {"uid": user["id"]},
@@ -160,11 +162,22 @@ def serialize_contratto(row: Dict[str, Any]) -> ContrattoResponse:
 async def lifespan(app: FastAPI):
     """Lifespan event handler per startup e shutdown"""
     print("🚀 Avvio Contratti Service...")
-    await init_database()
+    # Lazy initialization: il database verrà connesso al primo accesso
+    # Non bloccare lo startup se il DB è temporaneamente non disponibile
+    try:
+        if database.is_connected:
+            print("✅ Database già connesso (Contratti Service)")
+        else:
+            print("ℹ️ Database verrà connesso al primo accesso (lazy init)")
+    except Exception as e:
+        print(f"⚠️ Warning startup database: {e}")
     print("✅ Contratti Service avviato")
     yield
     print("⏹️ Spegnimento Contratti Service...")
-    await close_database()
+    try:
+        await close_database()
+    except Exception as e:
+        print(f"⚠️ Warning shutdown database: {e}")
     print("✅ Contratti Service fermato")
 
 

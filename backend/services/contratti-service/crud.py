@@ -1,11 +1,10 @@
 from typing import List, Dict, Any
-from database import database, init_database
+from database import database, ensure_database_initialized
 
 async def get_all_contratti() -> List[Dict[str, Any]]:
     """Ottiene tutti i contratti dal database"""
-    # Assicurati che il database sia connesso
-    if not database.is_connected:
-        await init_database()
+    # Lazy initialization: connetti solo quando necessario
+    await ensure_database_initialized()
     
     query = "SELECT * FROM contratti ORDER BY created_at DESC"
     rows = await database.fetch_all(query)
