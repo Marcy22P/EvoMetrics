@@ -8,6 +8,9 @@ from typing import List
 import requests
 import os
 import datetime
+import hmac
+import hashlib
+import json
 
 app = FastAPI(
     title="Sales Service",
@@ -247,55 +250,84 @@ async def clickfunnels_webhook(request: Request, background_tasks: BackgroundTas
     print(f"📥 Webhook ClickFunnel ricevuto - Headers: {dict(request.headers)}")
     
     # Validazione Webhook Secret (se configurato)
+    # ClickFunnel usa HMAC signature, non un secret semplice
     webhook_secret = os.getenv("CLICKFUNNEL_WEBHOOK_SECRET")
-    received_secret = None
-    
-    if webhook_secret:
-        # Prova prima a leggere il secret dagli header HTTP (metodo più comune)
-        received_secret = (
-            request.headers.get("X-ClickFunnel-Secret") or
-            request.headers.get("X-Webhook-Secret") or
-            request.headers.get("X-CF-Secret") or
-            request.headers.get("ClickFunnel-Secret") or
-            request.headers.get("Webhook-Secret") or
-            request.headers.get("X-ClickFunnels-Secret")  # Variante con 's'
-        )
-        print(f"🔍 Secret cercato negli header: {received_secret[:20] + '...' if received_secret else 'Non trovato'}")
+    signature_header = request.headers.get("x-webhook-clickfunnels-signature")
+    timestamp_header = request.headers.get("x-webhook-clickfunnels-timestamp")
     
     try:
         content_type = request.headers.get('content-type', '')
         print(f"📋 Content-Type: {content_type}")
         
+        # Leggi il body come bytes per calcolare l'HMAC (prima di parsarlo)
+        body_bytes = await request.body()
+        
         data = {}
         if "application/json" in content_type:
-            data = await request.json()
+            data = json.loads(body_bytes)
         else:
             form_data = await request.form()
             data = dict(form_data)
         
         print(f"📦 Payload ricevuto (primi 500 caratteri): {str(data)[:500]}")
         
-        # Se il secret non era negli header, cerca nel body (JSON o form-data)
-        if webhook_secret and not received_secret:
-            received_secret = (
-                data.get("secret") or
-                data.get("webhook_secret") or
-                data.get("clickfunnel_secret") or
-                data.get("cf_secret")
-            )
-            print(f"🔍 Secret cercato nel body: {received_secret[:20] + '...' if received_secret else 'Non trovato'}")
-        
-        # Valida il secret se configurato
+        # Valida la signature HMAC se configurato
         if webhook_secret:
-            if not received_secret or received_secret != webhook_secret:
-                print(f"❌ Webhook Secret non valido o mancante.")
-                print(f"   Configurato: {webhook_secret[:10]}...")
-                print(f"   Ricevuto: {received_secret[:20] + '...' if received_secret else 'None'}")
+            if not signature_header or not timestamp_header:
+                print(f"❌ Webhook Signature mancante negli header.")
+                print(f"   Signature: {signature_header}")
+                print(f"   Timestamp: {timestamp_header}")
                 print(f"   Headers disponibili: {list(request.headers.keys())}")
-                raise HTTPException(status_code=403, detail="Invalid webhook secret")
-            print("✅ Webhook Secret validato correttamente")
+                raise HTTPException(status_code=403, detail="Missing webhook signature")
+            
+            # ClickFunnel calcola HMAC come: HMAC-SHA256(secret, message)
+            # Prova diversi formati comuni per webhook HMAC:
+            body_str = body_bytes.decode('utf-8')
+            
+            # Formato 1: timestamp + body (più comune per webhook)
+            message1 = f"{timestamp_header}{body_str}"
+            expected1 = hmac.new(
+                webhook_secret.encode('utf-8'),
+                message1.encode('utf-8'),
+                hashlib.sha256
+            ).hexdigest()
+            
+            # Formato 2: solo body (alternativa comune)
+            expected2 = hmac.new(
+                webhook_secret.encode('utf-8'),
+                body_bytes,
+                hashlib.sha256
+            ).hexdigest()
+            
+            # Formato 3: body + timestamp
+            message3 = f"{body_str}{timestamp_header}"
+            expected3 = hmac.new(
+                webhook_secret.encode('utf-8'),
+                message3.encode('utf-8'),
+                hashlib.sha256
+            ).hexdigest()
+            
+            # Confronta le signature in modo sicuro (constant-time comparison)
+            valid = (
+                hmac.compare_digest(expected1, signature_header) or
+                hmac.compare_digest(expected2, signature_header) or
+                hmac.compare_digest(expected3, signature_header)
+            )
+            
+            if not valid:
+                print(f"❌ Webhook Signature non valida.")
+                print(f"   Expected (timestamp+body): {expected1[:20]}...")
+                print(f"   Expected (body only): {expected2[:20]}...")
+                print(f"   Expected (body+timestamp): {expected3[:20]}...")
+                print(f"   Received: {signature_header[:20]}...")
+                print(f"   Timestamp: {timestamp_header}")
+                print(f"   Body length: {len(body_str)}")
+                print(f"   Secret length: {len(webhook_secret)}")
+                raise HTTPException(status_code=403, detail="Invalid webhook signature")
+            
+            print("✅ Webhook Signature validata correttamente (HMAC)")
         else:
-            print("ℹ️ Webhook Secret non configurato, skip validazione")
+            print("ℹ️ Webhook Secret non configurato, skip validazione signature")
             
         print(f"📥 Webhook ClickFunnels processato: {str(data)[:200]}...")
 
