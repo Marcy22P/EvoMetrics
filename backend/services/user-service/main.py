@@ -14,7 +14,7 @@ from jose import JWTError, jwt
 from passlib.context import CryptContext
 import bcrypt
 
-from database import database, init_database, close_database
+from database import database, init_database, close_database, ensure_database_initialized
 from models import (
     UserResponse,
     UpdateUserRequest,
@@ -157,6 +157,18 @@ app = FastAPI(
     version="1.0.0",
 )
 
+# Middleware per garantire l'inizializzazione del database
+@app.middleware("http")
+async def ensure_db_middleware(request: Request, call_next):
+    # Inizializza il database solo per endpoint che non sono /health
+    if not request.url.path.startswith("/health"):
+        try:
+            await ensure_database_initialized()
+        except Exception as e:
+            print(f"⚠️ Errore inizializzazione database nel middleware: {e}")
+    response = await call_next(request)
+    return response
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=os.getenv("CORS_ORIGINS", "*").split(","),
@@ -169,13 +181,15 @@ app.add_middleware(
 @app.on_event("startup")
 async def startup_event():
     print("🚀 Avvio User Service...")
-    await init_database()
-    await ensure_schema()
-    print("✅ User Service avviato")
+    # NON inizializzare il database durante lo startup - verrà fatto al primo accesso (lazy init)
+    # Questo evita di bloccare l'avvio dell'applicazione se il database non è disponibile
+    # e previene errori "TooManyConnectionsError" quando più servizi si avviano simultaneamente
+    print("✅ User Service avviato (database verrà inizializzato al primo accesso)")
 
 
 async def ensure_schema():
     """Ensures database schema is up to date"""
+    await ensure_database_initialized()
     try:
         # Check if job_title column exists
         check_query = """
@@ -236,12 +250,20 @@ async def shutdown_event():
     print("✅ User Service fermato")
 
 
+async def get_db():
+    """Dependency per garantire l'inizializzazione del database"""
+    await ensure_database_initialized()
+    await ensure_schema()
+    return database
+
+
 @app.get("/health")
 async def health_check():
     return {"status": "healthy", "service": "user-service"}
 
 
 async def fetch_user_or_404(user_id: int) -> Dict[str, Any]:
+    await ensure_database_initialized()
     query = """
         SELECT id, username, role, is_active, pending_approval, rejection_reason,
                nome, cognome, email, google_email, google_id, profile_completed,
