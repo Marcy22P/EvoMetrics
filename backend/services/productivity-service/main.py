@@ -278,10 +278,10 @@ async def instantiate_workflow_logic(template_id: str, entity_id: str, start_dat
         # Query Inserimento Task
         insert_query = """
         INSERT INTO tasks (
-            id, title, description, status, role_required, project_id, 
+            id, title, description, status, role_required, project_id, entity_type,
             estimated_minutes, due_date, icon, dependencies, metadata, created_at, updated_at
         ) VALUES (
-            :id, :title, :description, 'todo', :role_required, :project_id,
+            :id, :title, :description, 'todo', :role_required, :project_id, :entity_type,
             :estimated_minutes, :due_date, :icon, :dependencies, :metadata, :created_at, :created_at
         )
         """
@@ -297,6 +297,7 @@ async def instantiate_workflow_logic(template_id: str, entity_id: str, start_dat
             "description": f"Generato da workflow: {template['name']}",
             "role_required": t_def.get("role_required"),
             "project_id": entity_id,  # Può essere client_id o lead_id
+            "entity_type": entity_type,  # 'client' o 'lead'
             "estimated_minutes": t_def.get("estimated_minutes", 0),
             "due_date": due_date,
             "icon": t_def.get("icon"),
@@ -777,10 +778,10 @@ async def create_task(task: TaskCreate, background_tasks: BackgroundTasks):
     
     insert_query = """
     INSERT INTO tasks (
-        id, title, description, status, assignee_id, role_required, project_id, 
+        id, title, description, status, assignee_id, role_required, project_id, entity_type,
         priority, estimated_minutes, due_date, icon, category_id, dependencies, metadata, attachments, created_at, updated_at
     ) VALUES (
-        :id, :title, :description, :status, :assignee_id, :role_required, :project_id,
+        :id, :title, :description, :status, :assignee_id, :role_required, :project_id, :entity_type,
         :priority, :estimated_minutes, :due_date, :icon, :category_id, :dependencies, :metadata, :attachments, :created_at, :updated_at
     )
     """
@@ -789,6 +790,10 @@ async def create_task(task: TaskCreate, background_tasks: BackgroundTasks):
     values["id"] = task_id
     values["created_at"] = now
     values["updated_at"] = now
+    
+    # Default entity_type a 'client' se non specificato
+    if "entity_type" not in values or values["entity_type"] is None:
+        values["entity_type"] = "client"
     
     # Normalize due_date to naive UTC if present
     if values.get("due_date") is not None and values["due_date"].tzinfo is not None:

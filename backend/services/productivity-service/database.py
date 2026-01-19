@@ -97,6 +97,12 @@ async def init_database():
                     print("🔄 Adding category_id column to tasks table...")
                     await database.execute("ALTER TABLE tasks ADD COLUMN category_id TEXT")
 
+                # Check entity_type column (per distinguere tra clienti e lead)
+                check_entity_type = await database.fetch_one("SELECT column_name FROM information_schema.columns WHERE table_name='tasks' AND column_name='entity_type'")
+                if not check_entity_type:
+                    print("🔄 Adding entity_type column to tasks table...")
+                    await database.execute("ALTER TABLE tasks ADD COLUMN entity_type TEXT DEFAULT 'client'")
+
                 print("✅ Schema tasks aggiornato.")
             
         except Exception as e:
@@ -111,7 +117,8 @@ async def init_database():
             status TEXT DEFAULT 'todo', -- todo, in_progress, review, done (ora gestiti dinamicamente)
             assignee_id TEXT, -- User ID del collaboratore
             role_required TEXT, -- Ruolo richiesto se non assegnato
-            project_id TEXT, -- ID del Cliente/Contratto
+            project_id TEXT, -- ID del Cliente/Lead
+            entity_type TEXT DEFAULT 'client', -- 'client' o 'lead' per distinguere il tipo di entità
             priority TEXT DEFAULT 'medium',
             estimated_minutes INTEGER DEFAULT 0,
             due_date TIMESTAMP,

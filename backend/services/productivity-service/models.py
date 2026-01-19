@@ -17,6 +17,7 @@ class TaskBase(BaseModel):
     assignee_id: Optional[str] = None
     role_required: Optional[str] = None
     project_id: Optional[str] = None
+    entity_type: Optional[str] = "client"  # 'client' o 'lead' per distinguere il tipo di entità
     priority: Optional[str] = "medium"
     estimated_minutes: int = 0
     due_date: Optional[datetime] = None
@@ -36,6 +37,7 @@ class TaskUpdate(BaseModel):
     assignee_id: Optional[str] = None
     role_required: Optional[str] = None
     project_id: Optional[str] = None
+    entity_type: Optional[str] = None  # 'client' o 'lead'
     priority: Optional[str] = None
     estimated_minutes: Optional[int] = None
     due_date: Optional[datetime] = None

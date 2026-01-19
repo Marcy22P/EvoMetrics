@@ -310,10 +310,10 @@ def create_workflow_tasks_for_clickfunnel_lead(lead_id: str, stage: str):
                     # Query Inserimento Task
                     insert_query = text("""
                         INSERT INTO tasks (
-                            id, title, description, status, role_required, project_id, 
+                            id, title, description, status, role_required, project_id, entity_type,
                             estimated_minutes, due_date, icon, dependencies, metadata, created_at, updated_at
                         ) VALUES (
-                            :id, :title, :description, 'todo', :role_required, :project_id,
+                            :id, :title, :description, 'todo', :role_required, :project_id, :entity_type,
                             :estimated_minutes, :due_date, :icon, :dependencies, :metadata, :created_at, :created_at
                         )
                     """)
@@ -325,6 +325,7 @@ def create_workflow_tasks_for_clickfunnel_lead(lead_id: str, stage: str):
                             "description": f"Generato da workflow: {template_name}",
                             "role_required": t_def.get("role_required"),
                             "project_id": lead_id,  # lead_id come project_id
+                            "entity_type": "lead",  # Indica che questa task è collegata a un lead
                             "estimated_minutes": t_def.get("estimated_minutes", 0),
                             "due_date": due_date,
                             "icon": t_def.get("icon"),
@@ -697,10 +698,10 @@ def create_workflow_tasks_for_stage_change(lead_id: str, new_stage: str, previou
                     # Query Inserimento Task
                     insert_query = text("""
                         INSERT INTO tasks (
-                            id, title, description, status, role_required, project_id, 
+                            id, title, description, status, role_required, project_id, entity_type,
                             estimated_minutes, due_date, icon, dependencies, metadata, created_at, updated_at
                         ) VALUES (
-                            :id, :title, :description, 'todo', :role_required, :project_id,
+                            :id, :title, :description, 'todo', :role_required, :project_id, :entity_type,
                             :estimated_minutes, :due_date, :icon, :dependencies, :metadata, :created_at, :created_at
                         )
                     """)
@@ -711,6 +712,7 @@ def create_workflow_tasks_for_stage_change(lead_id: str, new_stage: str, previou
                         "description": f"Generato da workflow: {template_name}",
                         "role_required": t_def.get("role_required"),
                         "project_id": lead_id,  # lead_id come project_id
+                        "entity_type": "lead",  # Indica che questa task è collegata a un lead
                         "estimated_minutes": t_def.get("estimated_minutes", 0),
                         "due_date": due_date,
                         "icon": t_def.get("icon"),
