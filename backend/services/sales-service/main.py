@@ -222,33 +222,47 @@ def create_workflow_tasks_for_clickfunnel_lead(lead_id: str, stage: str):
     Cerca workflow templates con trigger_type = 'clickfunnel' o trigger_type = 'pipeline_stage' con stage matching.
     Crea una nuova sessione del database per essere thread-safe in background tasks.
     """
+    print(f"🔄 [WORKFLOW] Inizio creazione task per lead {lead_id} in stage {stage}")
     db = SessionLocal()
     try:
+        # Test connessione database
+        try:
+            db.execute(text("SELECT 1"))
+            print(f"✅ [WORKFLOW] Database connesso per workflow")
+        except Exception as e:
+            print(f"⚠️ [WORKFLOW] Errore connessione database: {e}")
+            import traceback
+            traceback.print_exc()
+            return
+        
         # Cerca workflow templates che hanno trigger_type = 'clickfunnel' oppure trigger_type = 'pipeline_stage' con stage matching
+        print(f"🔍 [WORKFLOW] Cerca template con trigger_type='clickfunnel' o trigger_type='pipeline_stage' (stage={stage})")
         templates_clickfunnel_query = text("""
             SELECT * FROM workflow_templates 
             WHERE trigger_type = 'clickfunnel' AND entity_type = 'lead'
         """)
         templates_clickfunnel = db.execute(templates_clickfunnel_query).fetchall()
+        print(f"📋 [WORKFLOW] Trovati {len(templates_clickfunnel)} template ClickFunnel")
         
         templates_stage_query = text("""
             SELECT * FROM workflow_templates 
             WHERE trigger_type = 'pipeline_stage' AND trigger_pipeline_stage = :stage AND entity_type = 'lead'
         """)
         templates_stage = db.execute(templates_stage_query, {"stage": stage}).fetchall()
+        print(f"📋 [WORKFLOW] Trovati {len(templates_stage)} template per stage {stage}")
         
         # Combina i template
         all_templates = list(templates_clickfunnel) + list(templates_stage)
         
         if not all_templates:
-            print(f"ℹ️ Nessun workflow trovato per ClickFunnel lead in stage {stage}")
+            print(f"ℹ️ [WORKFLOW] Nessun workflow trovato per ClickFunnel lead in stage {stage}")
             return
         
         start_date = datetime.datetime.now()
         if start_date.tzinfo is not None:
             start_date = start_date.replace(tzinfo=None)
         
-        print(f"🔄 Trovati {len(all_templates)} workflow template per lead {lead_id} in stage {stage}")
+        print(f"🔄 [WORKFLOW] Trovati {len(all_templates)} workflow template per lead {lead_id} in stage {stage}")
         
         # Per ogni template, crea le task
         for template_row in all_templates:
@@ -260,11 +274,14 @@ def create_workflow_tasks_for_clickfunnel_lead(lead_id: str, stage: str):
                 tasks_def = json.loads(template.get("tasks_definition", "[]"))
                 created_tasks_map = {}  # Mappa indice -> task_id reale per risolvere dipendenze
                 
-                print(f"🔄 Avvio workflow '{template_name}' per lead {lead_id}")
+                print(f"🔄 [WORKFLOW] Avvio workflow '{template_name}' (ID: {template_id}) per lead {lead_id}")
+                print(f"📋 [WORKFLOW] Numero di task da creare: {len(tasks_def)}")
                 
                 # Itera e crea Tasks
                 for i, t_def in enumerate(tasks_def):
                     task_id = str(uuid.uuid4())
+                    task_title = t_def.get("title", "Task")
+                    print(f"📝 [WORKFLOW] Creazione task {i+1}/{len(tasks_def)}: '{task_title}' (ID: {task_id})")
                     
                     # Calcola scadenza relativa
                     relative_days = t_def.get("relative_start_days", 0)
@@ -276,6 +293,7 @@ def create_workflow_tasks_for_clickfunnel_lead(lead_id: str, stage: str):
                         prev_task_index = i - 1
                         if prev_task_index in created_tasks_map:
                             dependencies.append(created_tasks_map[prev_task_index])
+                            print(f"🔗 [WORKFLOW] Task {i+1} dipende da task {prev_task_index+1}")
                     
                     # Metadata
                     metadata = t_def.get("metadata", {})
@@ -291,24 +309,30 @@ def create_workflow_tasks_for_clickfunnel_lead(lead_id: str, stage: str):
                         )
                     """)
                     
-                    db.execute(insert_query, {
-                        "id": task_id,
-                        "title": t_def.get("title", "Task"),
-                        "description": f"Generato da workflow: {template_name}",
-                        "role_required": t_def.get("role_required"),
-                        "project_id": lead_id,  # lead_id come project_id
-                        "estimated_minutes": t_def.get("estimated_minutes", 0),
-                        "due_date": due_date,
-                        "icon": t_def.get("icon"),
-                        "dependencies": json.dumps(dependencies),
-                        "metadata": json.dumps(metadata),
-                        "created_at": start_date
-                    })
-                    
-                    created_tasks_map[i] = task_id
+                    try:
+                        db.execute(insert_query, {
+                            "id": task_id,
+                            "title": task_title,
+                            "description": f"Generato da workflow: {template_name}",
+                            "role_required": t_def.get("role_required"),
+                            "project_id": lead_id,  # lead_id come project_id
+                            "estimated_minutes": t_def.get("estimated_minutes", 0),
+                            "due_date": due_date,
+                            "icon": t_def.get("icon"),
+                            "dependencies": json.dumps(dependencies),
+                            "metadata": json.dumps(metadata),
+                            "created_at": start_date
+                        })
+                        created_tasks_map[i] = task_id
+                        print(f"✅ [WORKFLOW] Task '{task_title}' creato con successo (ID: {task_id})")
+                    except Exception as task_error:
+                        print(f"❌ [WORKFLOW] Errore creazione task '{task_title}': {task_error}")
+                        import traceback
+                        traceback.print_exc()
+                        raise  # Rilancia per gestire il rollback
                 
                 db.commit()
-                print(f"✅ Creati {len(created_tasks_map)} task per workflow '{template_name}' (lead {lead_id})")
+                print(f"✅ [WORKFLOW] Creati {len(created_tasks_map)} task per workflow '{template_name}' (lead {lead_id})")
                 
             except Exception as e:
                 print(f"❌ Errore creazione task per template {template_id}: {e}")
@@ -317,15 +341,16 @@ def create_workflow_tasks_for_clickfunnel_lead(lead_id: str, stage: str):
                 db.rollback()
                 continue
         
-        print(f"✅ Workflow completati per lead {lead_id}")
+        print(f"✅ [WORKFLOW] Workflow completati per lead {lead_id}")
         
     except Exception as e:
-        print(f"❌ Errore creazione workflow per lead {lead_id}: {e}")
+        print(f"❌ [WORKFLOW] Errore creazione workflow per lead {lead_id}: {e}")
         import traceback
         traceback.print_exc()
         db.rollback()
     finally:
         db.close()
+        print(f"🔒 [WORKFLOW] Sessione database chiusa per lead {lead_id}")
 
 @app.post("/webhook/clickfunnels")
 async def clickfunnels_webhook(request: Request, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):

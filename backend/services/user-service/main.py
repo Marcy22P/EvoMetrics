@@ -111,6 +111,7 @@ def get_password_hash(password: str) -> str:
 
 async def get_current_user(request: Request) -> Dict[str, Any]:
     """Ottieni l'utente corrente dal token JWT"""
+    await ensure_database_initialized()
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
