@@ -243,6 +243,9 @@ async def clickfunnels_webhook(request: Request, background_tasks: BackgroundTas
     Stage iniziale configurabile via CLICKFUNNEL_INITIAL_STAGE (default: "optin")
     Webhook Secret configurabile via CLICKFUNNEL_WEBHOOK_SECRET (opzionale ma consigliato per sicurezza)
     """
+    # Logging dettagliato per debug
+    print(f"📥 Webhook ClickFunnel ricevuto - Headers: {dict(request.headers)}")
+    
     # Validazione Webhook Secret (se configurato)
     webhook_secret = os.getenv("CLICKFUNNEL_WEBHOOK_SECRET")
     received_secret = None
@@ -254,11 +257,14 @@ async def clickfunnels_webhook(request: Request, background_tasks: BackgroundTas
             request.headers.get("X-Webhook-Secret") or
             request.headers.get("X-CF-Secret") or
             request.headers.get("ClickFunnel-Secret") or
-            request.headers.get("Webhook-Secret")
+            request.headers.get("Webhook-Secret") or
+            request.headers.get("X-ClickFunnels-Secret")  # Variante con 's'
         )
+        print(f"🔍 Secret cercato negli header: {received_secret[:20] + '...' if received_secret else 'Non trovato'}")
     
     try:
         content_type = request.headers.get('content-type', '')
+        print(f"📋 Content-Type: {content_type}")
         
         data = {}
         if "application/json" in content_type:
@@ -266,6 +272,8 @@ async def clickfunnels_webhook(request: Request, background_tasks: BackgroundTas
         else:
             form_data = await request.form()
             data = dict(form_data)
+        
+        print(f"📦 Payload ricevuto (primi 500 caratteri): {str(data)[:500]}")
         
         # Se il secret non era negli header, cerca nel body (JSON o form-data)
         if webhook_secret and not received_secret:
@@ -275,33 +283,92 @@ async def clickfunnels_webhook(request: Request, background_tasks: BackgroundTas
                 data.get("clickfunnel_secret") or
                 data.get("cf_secret")
             )
+            print(f"🔍 Secret cercato nel body: {received_secret[:20] + '...' if received_secret else 'Non trovato'}")
         
         # Valida il secret se configurato
         if webhook_secret:
             if not received_secret or received_secret != webhook_secret:
-                print(f"⚠️ Webhook Secret non valido o mancante. Ricevuto: {received_secret[:10] + '...' if received_secret else 'None'}")
+                print(f"❌ Webhook Secret non valido o mancante.")
+                print(f"   Configurato: {webhook_secret[:10]}...")
+                print(f"   Ricevuto: {received_secret[:20] + '...' if received_secret else 'None'}")
+                print(f"   Headers disponibili: {list(request.headers.keys())}")
                 raise HTTPException(status_code=403, detail="Invalid webhook secret")
             print("✅ Webhook Secret validato correttamente")
+        else:
+            print("ℹ️ Webhook Secret non configurato, skip validazione")
             
-        print(f"📥 Webhook ClickFunnels ricevuto: {data}")
+        print(f"📥 Webhook ClickFunnels processato: {str(data)[:200]}...")
 
-        email = data.get("email") or data.get("contact[email]")
+        # ClickFunnel invia i dati in una struttura annidata: data.data.contact.email
+        # Estrai i dati dalla struttura reale di ClickFunnel
+        email = None
+        first_name = None
+        last_name = None
+        phone = None
+        azienda = None
         
+        clickfunnel_data = data.get("data", {})
+        if isinstance(clickfunnel_data, dict):
+            inner_data = clickfunnel_data.get("data", {})
+            if isinstance(inner_data, dict):
+                contact = inner_data.get("contact", {})
+                
+                # Estrai email
+                email = None
+                if isinstance(contact, dict):
+                    email = contact.get("email")
+                email = email or inner_data.get("email") or data.get("email") or data.get("contact[email]")
+                
+                # Estrai nome (ClickFunnel invia "name" completo, non first_name/last_name)
+                name = contact.get("name") if isinstance(contact, dict) else None
+                if name:
+                    # Prova a splittare il nome in first_name e last_name
+                    name_parts = name.split(" ", 1)
+                    first_name = name_parts[0] if len(name_parts) > 0 else None
+                    last_name = name_parts[1] if len(name_parts) > 1 else None
+                else:
+                    first_name = inner_data.get("first_name") or data.get("first_name")
+                    last_name = inner_data.get("last_name") or data.get("last_name")
+                
+                # Estrai telefono
+                phone = (
+                    inner_data.get("phone_number") or
+                    inner_data.get("phone") or
+                    data.get("phone") or
+                    data.get("phone_number")
+                )
+                
+                # Estrai azienda se presente
+                azienda = inner_data.get("azienda") or data.get("azienda")
+                
+                print(f"📋 Dati estratti - Email: {email}, Nome: {name}, Telefono: {phone}, Azienda: {azienda}")
+        
+        # Fallback: struttura semplice (se non trovato nella struttura annidata)
         if not email:
+            email = data.get("email") or data.get("contact[email]")
             contact = data.get("contact", {})
             if isinstance(contact, dict):
-                email = contact.get("email")
+                email = email or contact.get("email")
+            if not first_name:
+                first_name = data.get("first_name")
+            if not last_name:
+                last_name = data.get("last_name")
+            if not phone:
+                phone = data.get("phone") or data.get("phone_number")
+            if not azienda:
+                azienda = data.get("azienda")
 
         if not email:
             print("⚠️ Nessuna email trovata nel webhook, ignoro.")
+            print(f"   Struttura dati ricevuta: {str(data)[:500]}")
             return {"status": "ignored", "reason": "no_email"}
 
         existing = db.query(LeadModel).filter(LeadModel.email == email).first()
         if existing:
             print(f"🔄 Lead già esistente: {email}. Aggiorno dati.")
-            existing.first_name = data.get("first_name") or existing.first_name
-            existing.last_name = data.get("last_name") or existing.last_name
-            existing.phone = data.get("phone") or existing.phone
+            existing.first_name = first_name or existing.first_name
+            existing.last_name = last_name or existing.last_name
+            existing.phone = phone or existing.phone
             existing.clickfunnels_data = data
             db.commit()
             return {"status": "updated", "id": existing.id}
@@ -322,13 +389,13 @@ async def clickfunnels_webhook(request: Request, background_tasks: BackgroundTas
         new_lead = LeadModel(
             id=str(uuid.uuid4()),
             email=email,
-            first_name=data.get("first_name") or data.get("contact[first_name]"),
-            last_name=data.get("last_name") or data.get("contact[last_name]"),
-            phone=data.get("phone") or data.get("contact[phone]"),
+            first_name=first_name,
+            last_name=last_name,
+            phone=phone,
             stage=initial_stage,
             source="clickfunnels",
             clickfunnels_data=data,
-            notes="Importato da Webhook ClickFunnel"
+            notes=f"Importato da Webhook ClickFunnel{f' - Azienda: {azienda}' if azienda else ''}"
         )
         
         db.add(new_lead)
