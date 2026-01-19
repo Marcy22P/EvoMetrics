@@ -295,5 +295,34 @@ class DriveService:
             print(f"❌ Drive download error: {e}")
             raise e
 
+    def share_file(self, file_id: str, user_email: str, role: str = "reader") -> Optional[Dict[str, Any]]:
+        """
+        Condivide un file con un utente specifico.
+        role: 'reader', 'writer', 'commenter'
+        """
+        if not self.is_ready():
+            return None
+        
+        try:
+            permission = {
+                'type': 'user',
+                'role': role,
+                'emailAddress': user_email
+            }
+            
+            result = self.service.permissions().create(
+                fileId=file_id,
+                body=permission,
+                fields='id'
+            ).execute()
+            
+            print(f"✅ File {file_id} condiviso con {user_email} (ruolo: {role})")
+            return result
+        except Exception as e:
+            print(f"❌ Drive share_file error: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+
 # Singleton instance
 drive_service = DriveService()

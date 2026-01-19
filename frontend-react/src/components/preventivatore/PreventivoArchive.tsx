@@ -12,7 +12,10 @@ import {
   InlineStack
 } from '@shopify/polaris';
 import { DeleteIcon, EditIcon } from '@shopify/polaris-icons';
+import { ExternalIcon } from '@shopify/polaris-icons';
 import type { PreventivoData } from '../../types/preventivo';
+import { clientiApi } from '../../services/clientiApi';
+import { toast } from '../../utils/toast';
 
 // Tipo per preventivi salvati
 type PreventivoSalvato = PreventivoData & { 
@@ -38,6 +41,7 @@ export const PreventivoArchive: React.FC<PreventivoArchiveProps> = ({
   const [queryValue, setQueryValue] = useState('');
   const [preventivoToDelete, setPreventivoToDelete] = useState<PreventivoSalvato | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [exportingId, setExportingId] = useState<string | null>(null);
 
   const preventiviDaMostrare = preventivi || [];
 
@@ -92,6 +96,21 @@ export const PreventivoArchive: React.FC<PreventivoArchiveProps> = ({
     }
   };
 
+  const handleExportToDrive = async (preventivo: PreventivoSalvato) => {
+    setExportingId(preventivo.id);
+    try {
+      const result = await clientiApi.exportPreventivoToDrive(preventivo.id, preventivo);
+      toast.success(result.message || 'Preventivo esportato su Drive con successo');
+      if (result.file?.url) {
+        window.open(result.file.url, '_blank');
+      }
+    } catch (error: any) {
+      toast.error(error.message || 'Errore durante l\'esportazione su Drive');
+    } finally {
+      setExportingId(null);
+    }
+  };
+
   const rowMarkup = filteredPreventivi.map(
     (preventivo, index) => {
       const {id, numero, cliente, oggetto, validita, source} = preventivo;
@@ -125,6 +144,14 @@ export const PreventivoArchive: React.FC<PreventivoArchiveProps> = ({
              <InlineStack gap="200">
                 <div onClick={(e) => e.stopPropagation()}>
                   <Button icon={EditIcon} onClick={() => onSelectPreventivo(preventivo)} variant="plain" />
+                </div>
+                <div onClick={(e) => e.stopPropagation()}>
+                  <Button 
+                    icon={ExternalIcon} 
+                    onClick={() => handleExportToDrive(preventivo)} 
+                    variant="plain"
+                    loading={exportingId === id}
+                  />
                 </div>
                 <div onClick={(e) => e.stopPropagation()}>
                   <Button icon={DeleteIcon} onClick={() => setPreventivoToDelete(preventivo)} tone="critical" variant="plain" />

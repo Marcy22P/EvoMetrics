@@ -1,9 +1,10 @@
-import React, { useRef } from 'react';
+import React, { useRef, useState } from 'react';
 import { LegacyCard, Button, InlineStack, Box } from '@shopify/polaris';
-import { PrintIcon } from '@shopify/polaris-icons';
+import { PrintIcon, ExternalIcon } from '@shopify/polaris-icons';
 import { toast } from '../../utils/toast';
 import type { ContrattoData } from '../../types/contratto';
 import { formatDateItalian } from '../../utils/contrattoUtils';
+import { clientiApi } from '../../services/clientiApi';
 
 interface ContrattoPreviewProps {
   data: ContrattoData;
@@ -11,6 +12,22 @@ interface ContrattoPreviewProps {
 
 export const ContrattoPreview: React.FC<ContrattoPreviewProps> = ({ data }) => {
   const documentRef = useRef<HTMLDivElement>(null);
+  const [isExportingToDrive, setIsExportingToDrive] = useState(false);
+  
+  const handleExportToDrive = async () => {
+    setIsExportingToDrive(true);
+    try {
+      const result = await clientiApi.exportContrattoToDrive(data.id, data);
+      toast.success(result.message || 'Contratto esportato su Drive con successo');
+      if (result.file?.url) {
+        window.open(result.file.url, '_blank');
+      }
+    } catch (error: any) {
+      toast.error(error.message || 'Errore durante l\'esportazione su Drive');
+    } finally {
+      setIsExportingToDrive(false);
+    }
+  };
   
   const handlePrint = () => {
     if (!documentRef.current) return;
@@ -71,6 +88,14 @@ export const ContrattoPreview: React.FC<ContrattoPreviewProps> = ({ data }) => {
                 <Button icon={PrintIcon} onClick={handlePrint}>Stampa</Button>
                 {/* DownloadIcon rimosso perché non disponibile in questa versione di icons */}
                 <Button onClick={handleExportPDF}>Esporta PDF</Button>
+                <Button 
+                  icon={ExternalIcon} 
+                  onClick={handleExportToDrive}
+                  loading={isExportingToDrive}
+                  disabled={isExportingToDrive}
+                >
+                  {isExportingToDrive ? 'Esportazione...' : 'Esporta su Drive'}
+                </Button>
             </InlineStack>
         </Box>
 

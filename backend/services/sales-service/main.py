@@ -1,13 +1,14 @@
 from fastapi import FastAPI, Depends, HTTPException, Request, Body, BackgroundTasks
 from sqlalchemy.orm import Session
+from sqlalchemy import text
 from database import SessionLocal, init_db, Lead as LeadModel, PipelineStage as PipelineStageModel, DATABASE_URL, IS_REAL_PRODUCTION
 from models import Lead, LeadCreate, LeadUpdate, PipelineStage, PipelineStageCreate, PipelineStageUpdate
 import uuid
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List
-import requests
 import os
 import datetime
+from datetime import timedelta
 import json
 
 app = FastAPI(
@@ -215,26 +216,116 @@ def get_db():
 print("🚀 Sales Service: Database verrà inizializzato al primo accesso...")
 
 # --- WEBHOOK CLICKFUNNELS ---
-def trigger_workflow_for_clickfunnel_lead(lead_id: str, stage: str):
-    """Chiama il webhook del productivity-service per triggerare workflow quando un lead viene creato da ClickFunnel"""
+def create_workflow_tasks_for_clickfunnel_lead(lead_id: str, stage: str):
+    """
+    Crea direttamente le task nel database quando un lead viene creato da ClickFunnel.
+    Cerca workflow templates con trigger_type = 'clickfunnel' o trigger_type = 'pipeline_stage' con stage matching.
+    Crea una nuova sessione del database per essere thread-safe in background tasks.
+    """
+    db = SessionLocal()
     try:
-        PRODUCTIVITY_SERVICE_URL = os.getenv("PRODUCTIVITY_SERVICE_URL") or os.getenv("BASE_URL") or os.getenv("GATEWAY_URL")
-        if not PRODUCTIVITY_SERVICE_URL:
-            raise ValueError("PRODUCTIVITY_SERVICE_URL, BASE_URL o GATEWAY_URL deve essere configurato")
-        response = requests.post(
-            f"{PRODUCTIVITY_SERVICE_URL}/api/hooks/clickfunnel-lead-created",
-            json={
-                "lead_id": lead_id,
-                "stage": stage
-            },
-            timeout=5
-        )
-        if response.status_code == 200:
-            print(f"✅ Workflow ClickFunnel triggerato per lead {lead_id} in stage {stage}")
-        else:
-            print(f"⚠️ Errore trigger workflow ClickFunnel: {response.status_code}")
+        # Cerca workflow templates che hanno trigger_type = 'clickfunnel' oppure trigger_type = 'pipeline_stage' con stage matching
+        templates_clickfunnel_query = text("""
+            SELECT * FROM workflow_templates 
+            WHERE trigger_type = 'clickfunnel' AND entity_type = 'lead'
+        """)
+        templates_clickfunnel = db.execute(templates_clickfunnel_query).fetchall()
+        
+        templates_stage_query = text("""
+            SELECT * FROM workflow_templates 
+            WHERE trigger_type = 'pipeline_stage' AND trigger_pipeline_stage = :stage AND entity_type = 'lead'
+        """)
+        templates_stage = db.execute(templates_stage_query, {"stage": stage}).fetchall()
+        
+        # Combina i template
+        all_templates = list(templates_clickfunnel) + list(templates_stage)
+        
+        if not all_templates:
+            print(f"ℹ️ Nessun workflow trovato per ClickFunnel lead in stage {stage}")
+            return
+        
+        start_date = datetime.datetime.now()
+        if start_date.tzinfo is not None:
+            start_date = start_date.replace(tzinfo=None)
+        
+        print(f"🔄 Trovati {len(all_templates)} workflow template per lead {lead_id} in stage {stage}")
+        
+        # Per ogni template, crea le task
+        for template_row in all_templates:
+            template = dict(template_row._mapping) if hasattr(template_row, '_mapping') else dict(template_row)
+            template_id = template.get("id")
+            template_name = template.get("name", "Unknown")
+            
+            try:
+                tasks_def = json.loads(template.get("tasks_definition", "[]"))
+                created_tasks_map = {}  # Mappa indice -> task_id reale per risolvere dipendenze
+                
+                print(f"🔄 Avvio workflow '{template_name}' per lead {lead_id}")
+                
+                # Itera e crea Tasks
+                for i, t_def in enumerate(tasks_def):
+                    task_id = str(uuid.uuid4())
+                    
+                    # Calcola scadenza relativa
+                    relative_days = t_def.get("relative_start_days", 0)
+                    due_date = start_date + timedelta(days=relative_days)
+                    
+                    # Gestione Dipendenze (Semplificata: dipendenza dal precedente)
+                    dependencies = []
+                    if t_def.get("dependencies_on_prev") and i > 0:
+                        prev_task_index = i - 1
+                        if prev_task_index in created_tasks_map:
+                            dependencies.append(created_tasks_map[prev_task_index])
+                    
+                    # Metadata
+                    metadata = t_def.get("metadata", {})
+                    
+                    # Query Inserimento Task
+                    insert_query = text("""
+                        INSERT INTO tasks (
+                            id, title, description, status, role_required, project_id, 
+                            estimated_minutes, due_date, icon, dependencies, metadata, created_at, updated_at
+                        ) VALUES (
+                            :id, :title, :description, 'todo', :role_required, :project_id,
+                            :estimated_minutes, :due_date, :icon, :dependencies, :metadata, :created_at, :created_at
+                        )
+                    """)
+                    
+                    db.execute(insert_query, {
+                        "id": task_id,
+                        "title": t_def.get("title", "Task"),
+                        "description": f"Generato da workflow: {template_name}",
+                        "role_required": t_def.get("role_required"),
+                        "project_id": lead_id,  # lead_id come project_id
+                        "estimated_minutes": t_def.get("estimated_minutes", 0),
+                        "due_date": due_date,
+                        "icon": t_def.get("icon"),
+                        "dependencies": json.dumps(dependencies),
+                        "metadata": json.dumps(metadata),
+                        "created_at": start_date
+                    })
+                    
+                    created_tasks_map[i] = task_id
+                
+                db.commit()
+                print(f"✅ Creati {len(created_tasks_map)} task per workflow '{template_name}' (lead {lead_id})")
+                
+            except Exception as e:
+                print(f"❌ Errore creazione task per template {template_id}: {e}")
+                import traceback
+                traceback.print_exc()
+                db.rollback()
+                continue
+        
+        print(f"✅ Workflow completati per lead {lead_id}")
+        
     except Exception as e:
-        print(f"⚠️ Errore chiamata webhook workflow ClickFunnel: {e}")
+        print(f"❌ Errore creazione workflow per lead {lead_id}: {e}")
+        import traceback
+        traceback.print_exc()
+        db.rollback()
+    finally:
+        db.close()
 
 @app.post("/webhook/clickfunnels")
 async def clickfunnels_webhook(request: Request, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
@@ -371,11 +462,11 @@ async def clickfunnels_webhook(request: Request, background_tasks: BackgroundTas
         total_leads = db.query(LeadModel).count()
         print(f"✅ Nuovo Lead creato da ClickFunnel: {email} (ID: {new_lead.id}, Stage: {initial_stage}, Totale lead nel DB: {total_leads})")
         
-        # Triggera workflow per ClickFunnel (in background)
-        background_tasks.add_task(trigger_workflow_for_clickfunnel_lead, new_lead.id, initial_stage)
+        # Crea workflow direttamente nel database (in background)
+        background_tasks.add_task(create_workflow_tasks_for_clickfunnel_lead, new_lead.id, initial_stage)
         
-        # Triggera anche workflow per stage change (se ci sono workflow configurati per lo stage)
-        background_tasks.add_task(trigger_workflow_for_stage_change, new_lead.id, initial_stage, None)
+        # Crea workflow per stage change (se ci sono workflow configurati per lo stage)
+        background_tasks.add_task(create_workflow_tasks_for_stage_change, new_lead.id, initial_stage, None)
         
         return {"status": "created", "id": new_lead.id, "stage": initial_stage}
 
@@ -503,44 +594,109 @@ def create_lead(lead_in: LeadCreate, db: Session = Depends(get_db)):
     print(f"✅ Lead creato manualmente: {lead_in.email} (ID: {new_lead.id}, Stage: {stage}, Totale lead nel DB: {total_leads})")
     return new_lead
 
-def trigger_workflow_for_stage_change(lead_id: str, new_stage: str, previous_stage: str):
+def create_workflow_tasks_for_stage_change(lead_id: str, new_stage: str, previous_stage: str):
     """
-    Chiama il webhook del productivity-service per triggerare workflow quando un lead cambia stage.
-    Questo è un evento trigger che attiva automaticamente i workflow configurati per lo stage specifico.
+    Crea direttamente le task nel database quando un lead cambia stage.
+    Cerca workflow templates con trigger_type = 'pipeline_stage' e trigger_pipeline_stage = new_stage.
+    Crea una nuova sessione del database per essere thread-safe in background tasks.
     """
+    db = SessionLocal()
     try:
-        PRODUCTIVITY_SERVICE_URL = os.getenv("PRODUCTIVITY_SERVICE_URL") or os.getenv("BASE_URL") or os.getenv("GATEWAY_URL")
-        if not PRODUCTIVITY_SERVICE_URL:
-            print("⚠️ PRODUCTIVITY_SERVICE_URL non configurato, workflow non triggerati")
-            return
-        
         print(f"🔔 Evento trigger: Lead {lead_id} cambia stage '{previous_stage}' -> '{new_stage}'")
         
-        response = requests.post(
-            f"{PRODUCTIVITY_SERVICE_URL}/api/hooks/lead-stage-changed",
-            json={
-                "lead_id": lead_id,
-                "new_stage": new_stage,
-                "previous_stage": previous_stage
-            },
-            timeout=10  # Aumentato timeout per workflow complessi
-        )
+        # Cerca workflow templates che hanno trigger_pipeline_stage = new_stage
+        templates_query = text("""
+            SELECT * FROM workflow_templates 
+            WHERE trigger_type = 'pipeline_stage' AND trigger_pipeline_stage = :stage AND entity_type = 'lead'
+        """)
+        templates = db.execute(templates_query, {"stage": new_stage}).fetchall()
         
-        if response.status_code == 200:
-            result = response.json()
-            triggered_count = len(result.get("triggered_workflows", []))
-            if triggered_count > 0:
-                print(f"✅ {triggered_count} workflow triggerati per lead {lead_id} in stage '{new_stage}'")
-            else:
-                print(f"ℹ️ Nessun workflow configurato per stage '{new_stage}' (lead {lead_id})")
-        else:
-            print(f"⚠️ Errore trigger workflow: {response.status_code} - {response.text[:200]}")
-    except requests.exceptions.Timeout:
-        print(f"⚠️ Timeout chiamata webhook workflow per lead {lead_id}")
+        if not templates:
+            print(f"ℹ️ Nessun workflow trovato per stage {new_stage}")
+            return
+        
+        start_date = datetime.datetime.now()
+        if start_date.tzinfo is not None:
+            start_date = start_date.replace(tzinfo=None)
+        
+        print(f"🔄 Trovati {len(templates)} workflow template per stage {new_stage}")
+        
+        # Per ogni template, crea le task
+        for template_row in templates:
+            template = dict(template_row._mapping) if hasattr(template_row, '_mapping') else dict(template_row)
+            template_id = template.get("id")
+            template_name = template.get("name", "Unknown")
+            
+            try:
+                tasks_def = json.loads(template.get("tasks_definition", "[]"))
+                created_tasks_map = {}  # Mappa indice -> task_id reale per risolvere dipendenze
+                
+                print(f"🔄 Avvio workflow '{template_name}' per lead {lead_id} (stage: {new_stage})")
+                
+                # Itera e crea Tasks
+                for i, t_def in enumerate(tasks_def):
+                    task_id = str(uuid.uuid4())
+                    
+                    # Calcola scadenza relativa
+                    relative_days = t_def.get("relative_start_days", 0)
+                    due_date = start_date + timedelta(days=relative_days)
+                    
+                    # Gestione Dipendenze (Semplificata: dipendenza dal precedente)
+                    dependencies = []
+                    if t_def.get("dependencies_on_prev") and i > 0:
+                        prev_task_index = i - 1
+                        if prev_task_index in created_tasks_map:
+                            dependencies.append(created_tasks_map[prev_task_index])
+                    
+                    # Metadata
+                    metadata = t_def.get("metadata", {})
+                    
+                    # Query Inserimento Task
+                    insert_query = text("""
+                        INSERT INTO tasks (
+                            id, title, description, status, role_required, project_id, 
+                            estimated_minutes, due_date, icon, dependencies, metadata, created_at, updated_at
+                        ) VALUES (
+                            :id, :title, :description, 'todo', :role_required, :project_id,
+                            :estimated_minutes, :due_date, :icon, :dependencies, :metadata, :created_at, :created_at
+                        )
+                    """)
+                    
+                    db.execute(insert_query, {
+                        "id": task_id,
+                        "title": t_def.get("title", "Task"),
+                        "description": f"Generato da workflow: {template_name}",
+                        "role_required": t_def.get("role_required"),
+                        "project_id": lead_id,  # lead_id come project_id
+                        "estimated_minutes": t_def.get("estimated_minutes", 0),
+                        "due_date": due_date,
+                        "icon": t_def.get("icon"),
+                        "dependencies": json.dumps(dependencies),
+                        "metadata": json.dumps(metadata),
+                        "created_at": start_date
+                    })
+                    
+                    created_tasks_map[i] = task_id
+                
+                db.commit()
+                print(f"✅ Creati {len(created_tasks_map)} task per workflow '{template_name}' (lead {lead_id}, stage: {new_stage})")
+                
+            except Exception as e:
+                print(f"❌ Errore creazione task per template {template_id}: {e}")
+                import traceback
+                traceback.print_exc()
+                db.rollback()
+                continue
+        
+        print(f"✅ Workflow completati per cambio stage (lead {lead_id})")
+        
     except Exception as e:
-        print(f"⚠️ Errore chiamata webhook workflow: {e}")
+        print(f"❌ Errore creazione workflow per cambio stage (lead {lead_id}): {e}")
         import traceback
         traceback.print_exc()
+        db.rollback()
+    finally:
+        db.close()
 
 @app.put("/api/leads/{lead_id}", response_model=Lead)
 def update_lead(lead_id: str, lead_in: LeadUpdate, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
@@ -572,7 +728,7 @@ def update_lead(lead_id: str, lead_in: LeadUpdate, background_tasks: BackgroundT
     # Se lo stage è cambiato, triggera workflow in background
     if stage_changed and lead.stage:
         print(f"🚀 Trigger workflow per lead {lead_id}: stage '{previous_stage}' -> '{lead.stage}'")
-        background_tasks.add_task(trigger_workflow_for_stage_change, lead_id, lead.stage, previous_stage)
+        background_tasks.add_task(create_workflow_tasks_for_stage_change, lead_id, lead.stage, previous_stage)
     
     return lead
 

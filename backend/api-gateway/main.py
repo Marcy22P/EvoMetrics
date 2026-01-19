@@ -163,8 +163,10 @@ FRONTEND_INDEX = FRONTEND_DIR / "index.html"
 async def unified_lifespan(app: FastAPI):
     """
     Gestisce il ciclo di vita unificato per tutti i microservizi.
-    Esegue sia i vecchi handler 'on_event' che i nuovi context manager 'lifespan'.
+    Ottimizzato per velocità di avvio: parallelizza startup e rende DB lazy.
     """
+    import asyncio
+    
     # Lista delle app dei servizi
     service_apps = [
         auth_app, user_app, preventivi_app, gradimento_app, 
@@ -173,39 +175,58 @@ async def unified_lifespan(app: FastAPI):
         productivity_app, sales_app
     ]
     
-    # 1. Esegui startup legacy (on_event("startup"))
-    for service in service_apps:
-        # Accedi agli handler di startup privati del router
-        # Nota: in versioni recenti di FastAPI on_startup è deprecato ma ancora usato dai servizi legacy
-        if hasattr(service.router, 'on_startup'):
-            for handler in service.router.on_startup:
-                if callable(handler):
-                    await handler()
+    # 1. Esegui startup legacy (on_event("startup")) in PARALLELO per velocità
+    async def run_startup_handler(service):
+        """Esegue gli startup handlers di un servizio"""
+        try:
+            if hasattr(service.router, 'on_startup'):
+                for handler in service.router.on_startup:
+                    if callable(handler):
+                        await handler()
+        except Exception as e:
+            # Non bloccare l'avvio se un servizio fallisce
+            print(f"⚠️ Errore startup {service.__class__.__name__}: {e}")
+    
+    # Parallelizza startup handlers (non bloccante)
+    startup_tasks = [run_startup_handler(service) for service in service_apps]
+    await asyncio.gather(*startup_tasks, return_exceptions=True)
     
     # 2. Gestisci lifespan managers (nuovo stile)
     async with AsyncExitStack() as stack:
-        # Connetti al DB condiviso per il gateway
-        if database:
-            await database.connect()
+        # ⚡ DB condiviso: connessione LAZY (solo quando serve)
+        # Non connettere all'avvio per velocizzare startup
+        # if database:
+        #     await database.connect()
         
+        # Lifespan contexts in parallelo dove possibile
+        lifespan_tasks = []
         for service in service_apps:
-            # Verifica se l'app ha un lifespan definito
-            # Nota: router.lifespan_context è il modo interno di FastAPI per gestire il lifespan
             if hasattr(service.router, 'lifespan_context'):
-                await stack.enter_async_context(service.router.lifespan_context(service))
+                lifespan_tasks.append(stack.enter_async_context(service.router.lifespan_context(service)))
+        
+        # Esegui tutti i lifespan contexts
+        if lifespan_tasks:
+            await asyncio.gather(*lifespan_tasks, return_exceptions=True)
         
         yield
         
-        # Disconnetti DB gateway
-        if database:
+        # Disconnetti DB gateway (se connesso)
+        if database and database.is_connected:
             await database.disconnect()
         
-        # 3. Esegui shutdown legacy (on_event("shutdown"))
-        for service in service_apps:
-            if hasattr(service.router, 'on_shutdown'):
-                for handler in service.router.on_shutdown:
-                    if callable(handler):
-                        await handler()
+        # 3. Esegui shutdown legacy (on_event("shutdown")) in parallelo
+        async def run_shutdown_handler(service):
+            """Esegue gli shutdown handlers di un servizio"""
+            try:
+                if hasattr(service.router, 'on_shutdown'):
+                    for handler in service.router.on_shutdown:
+                        if callable(handler):
+                            await handler()
+            except Exception as e:
+                print(f"⚠️ Errore shutdown {service.__class__.__name__}: {e}")
+        
+        shutdown_tasks = [run_shutdown_handler(service) for service in service_apps]
+        await asyncio.gather(*shutdown_tasks, return_exceptions=True)
 
 # App principale con lifespan unificato
 app = FastAPI(

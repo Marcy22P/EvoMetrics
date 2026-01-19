@@ -26,9 +26,11 @@ except ImportError:
 
 try:
     from drive_utils import drive_service
+    from drive_structure import drive_structure
 except ImportError:
     print("⚠️ Modulo drive_utils non trovato")
     drive_service = None
+    drive_structure = None
 
 from database import database, init_database, close_database, clienti_table, magic_links_table
 from models import (
@@ -1053,10 +1055,13 @@ async def init_drive_folder(
     cliente_id: str,
     current_user: Dict[str, Any] = Depends(check_clienti_update)
 ):
-    """Inizializza la cartella Drive per il cliente"""
+    """Inizializza la cartella Drive per il cliente dentro WebApp/Clienti"""
     try:
         if not drive_service or not drive_service.is_ready():
             raise HTTPException(status_code=503, detail="Google Drive Service non configurato")
+        
+        if not drive_structure:
+            raise HTTPException(status_code=503, detail="Drive structure manager non disponibile")
 
         cliente = await database.fetch_one(
             clienti_table.select().where(clienti_table.c.id == cliente_id)
@@ -1066,18 +1071,14 @@ async def init_drive_folder(
         
         cliente_dict = serialize_cliente(dict(cliente))
         dettagli = cliente_dict.get("dettagli") or {}
+        nome_cartella = cliente_dict["nome_azienda"]
         
         # Se ha già un folder_id, verifica se esiste ancora (opzionale, per ora ci fidiamo)
         folder_id = dettagli.get("drive_folder_id")
         
         if not folder_id:
-            nome_cartella = cliente_dict["nome_azienda"]
-            # Cerca se esiste già
-            folder_id = drive_service.search_folder(nome_cartella)
-            
-            if not folder_id:
-                # Crea nuova
-                folder_id = drive_service.create_folder(nome_cartella)
+            # Usa la struttura WebApp/Clienti
+            folder_id = drive_structure.get_or_create_cliente_folder(nome_cartella, cliente_id)
             
             if folder_id:
                 # Aggiorna cliente
@@ -1369,6 +1370,328 @@ async def verify_magic_link(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Errore: {str(e)}")
+
+
+# --- Drive Structure Management ---
+
+@app.post("/api/drive/structure/init")
+async def init_drive_structure(
+    current_user: Dict[str, Any] = Depends(check_clienti_update)
+):
+    """Inizializza la struttura WebApp su Drive (WebApp/Clienti, WebApp/Procedure, WebApp/Preventivi, WebApp/Contratti)"""
+    try:
+        if not drive_service or not drive_service.is_ready():
+            raise HTTPException(status_code=503, detail="Google Drive Service non configurato")
+        
+        if not drive_structure:
+            raise HTTPException(status_code=503, detail="Drive structure manager non disponibile")
+        
+        structure = drive_structure.initialize_structure()
+        
+        return {
+            "status": "success",
+            "message": "Struttura WebApp inizializzata con successo",
+            "folders": {
+                "webapp": {
+                    "id": structure["webapp"],
+                    "url": f"https://drive.google.com/drive/folders/{structure['webapp']}" if structure["webapp"] else None
+                },
+                "clienti": {
+                    "id": structure["clienti"],
+                    "url": f"https://drive.google.com/drive/folders/{structure['clienti']}" if structure["clienti"] else None
+                },
+                "procedure": {
+                    "id": structure["procedure"],
+                    "url": f"https://drive.google.com/drive/folders/{structure['procedure']}" if structure["procedure"] else None
+                },
+                "preventivi": {
+                    "id": structure["preventivi"],
+                    "url": f"https://drive.google.com/drive/folders/{structure['preventivi']}" if structure["preventivi"] else None
+                },
+                "contratti": {
+                    "id": structure["contratti"],
+                    "url": f"https://drive.google.com/drive/folders/{structure['contratti']}" if structure["contratti"] else None
+                }
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Errore inizializzazione struttura: {str(e)}")
+
+
+@app.get("/api/drive/structure")
+async def get_drive_structure(
+    current_user: Dict[str, Any] = Depends(check_clienti_read)
+):
+    """Restituisce la struttura WebApp esistente"""
+    try:
+        if not drive_service or not drive_service.is_ready():
+            raise HTTPException(status_code=503, detail="Google Drive Service non configurato")
+        
+        if not drive_structure:
+            raise HTTPException(status_code=503, detail="Drive structure manager non disponibile")
+        
+        structure = drive_structure.initialize_structure()
+        
+        return {
+            "folders": {
+                "webapp": {
+                    "id": structure["webapp"],
+                    "url": f"https://drive.google.com/drive/folders/{structure['webapp']}" if structure["webapp"] else None
+                },
+                "clienti": {
+                    "id": structure["clienti"],
+                    "url": f"https://drive.google.com/drive/folders/{structure['clienti']}" if structure["clienti"] else None
+                },
+                "procedure": {
+                    "id": structure["procedure"],
+                    "url": f"https://drive.google.com/drive/folders/{structure['procedure']}" if structure["procedure"] else None
+                },
+                "preventivi": {
+                    "id": structure["preventivi"],
+                    "url": f"https://drive.google.com/drive/folders/{structure['preventivi']}" if structure["preventivi"] else None
+                },
+                "contratti": {
+                    "id": structure["contratti"],
+                    "url": f"https://drive.google.com/drive/folders/{structure['contratti']}" if structure["contratti"] else None
+                }
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Errore recupero struttura: {str(e)}")
+
+
+@app.post("/api/drive/export/preventivo")
+async def export_preventivo_to_drive(
+    preventivo_id: str = Form(...),
+    preventivo_data: str = Form(...),  # JSON string del preventivo
+    current_user: Dict[str, Any] = Depends(check_clienti_update)
+):
+    """Esporta un preventivo su Drive nella cartella WebApp/Preventivi"""
+    try:
+        if not drive_service or not drive_service.is_ready():
+            raise HTTPException(status_code=503, detail="Google Drive Service non configurato")
+        
+        if not drive_structure:
+            raise HTTPException(status_code=503, detail="Drive structure manager non disponibile")
+        
+        # Ottieni la cartella Preventivi
+        preventivi_folder_id = drive_structure.get_preventivi_folder_id()
+        if not preventivi_folder_id:
+            raise HTTPException(status_code=500, detail="Impossibile ottenere cartella Preventivi. Inizializza prima la struttura.")
+        
+        # Parse preventivo data
+        try:
+            preventivo = json.loads(preventivo_data)
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="Formato JSON preventivo non valido")
+        
+        # Genera nome file
+        numero_preventivo = preventivo.get("numero", preventivo_id)
+        cliente_nome = preventivo.get("cliente", "Cliente")
+        # Sanitizza nome file
+        safe_cliente = "".join(c for c in cliente_nome if c.isalnum() or c in (' ', '-', '_')).strip()
+        safe_cliente = safe_cliente.replace(' ', '_')
+        file_name = f"Preventivo_{numero_preventivo}_{safe_cliente}.json"
+        
+        # Converti preventivo in JSON string
+        file_content = json.dumps(preventivo, indent=2, ensure_ascii=False).encode('utf-8')
+        
+        # Carica su Drive
+        result = drive_service.upload_file(
+            file_content=file_content,
+            file_name=file_name,
+            folder_id=preventivi_folder_id,
+            mime_type="application/json"
+        )
+        
+        if not result:
+            raise HTTPException(status_code=500, detail="Impossibile caricare preventivo su Drive")
+        
+        return {
+            "status": "success",
+            "message": f"Preventivo {numero_preventivo} esportato su Drive",
+            "file": {
+                "id": result.get("id"),
+                "name": result.get("name"),
+                "url": result.get("webViewLink")
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Errore esportazione preventivo: {str(e)}")
+
+
+@app.post("/api/drive/export/contratto")
+async def export_contratto_to_drive(
+    contratto_id: str = Form(...),
+    contratto_data: str = Form(...),  # JSON string del contratto
+    current_user: Dict[str, Any] = Depends(check_clienti_update)
+):
+    """Esporta un contratto su Drive nella cartella WebApp/Contratti"""
+    try:
+        if not drive_service or not drive_service.is_ready():
+            raise HTTPException(status_code=503, detail="Google Drive Service non configurato")
+        
+        if not drive_structure:
+            raise HTTPException(status_code=503, detail="Drive structure manager non disponibile")
+        
+        # Ottieni la cartella Contratti
+        contratti_folder_id = drive_structure.get_contratti_folder_id()
+        if not contratti_folder_id:
+            raise HTTPException(status_code=500, detail="Impossibile ottenere cartella Contratti. Inizializza prima la struttura.")
+        
+        # Parse contratto data
+        try:
+            contratto = json.loads(contratto_data)
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="Formato JSON contratto non valido")
+        
+        # Genera nome file
+        numero_contratto = contratto.get("numero", contratto_id)
+        cliente_nome = contratto.get("datiCommittente", {}).get("ragioneSociale", "Cliente") if isinstance(contratto.get("datiCommittente"), dict) else "Cliente"
+        # Sanitizza nome file
+        safe_cliente = "".join(c for c in cliente_nome if c.isalnum() or c in (' ', '-', '_')).strip()
+        safe_cliente = safe_cliente.replace(' ', '_')
+        file_name = f"Contratto_{numero_contratto}_{safe_cliente}.json"
+        
+        # Converti contratto in JSON string
+        file_content = json.dumps(contratto, indent=2, ensure_ascii=False).encode('utf-8')
+        
+        # Carica su Drive
+        result = drive_service.upload_file(
+            file_content=file_content,
+            file_name=file_name,
+            folder_id=contratti_folder_id,
+            mime_type="application/json"
+        )
+        
+        if not result:
+            raise HTTPException(status_code=500, detail="Impossibile caricare contratto su Drive")
+        
+        return {
+            "status": "success",
+            "message": f"Contratto {numero_contratto} esportato su Drive",
+            "file": {
+                "id": result.get("id"),
+                "name": result.get("name"),
+                "url": result.get("webViewLink")
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Errore esportazione contratto: {str(e)}")
+
+
+# --- Procedure Management ---
+
+@app.get("/api/drive/procedure")
+async def list_procedure(
+    current_user: Dict[str, Any] = Depends(check_clienti_read)
+):
+    """Lista tutte le procedure nella cartella WebApp/Procedure"""
+    try:
+        if not drive_service or not drive_service.is_ready():
+            raise HTTPException(status_code=503, detail="Google Drive Service non configurato")
+        
+        if not drive_structure:
+            raise HTTPException(status_code=503, detail="Drive structure manager non disponibile")
+        
+        procedure_folder_id = drive_structure.get_procedure_folder_id()
+        if not procedure_folder_id:
+            raise HTTPException(status_code=500, detail="Cartella Procedure non inizializzata. Inizializza prima la struttura.")
+        
+        files = drive_service.list_files(folder_id=procedure_folder_id)
+        return {"files": files, "folder_id": procedure_folder_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Errore listing procedure: {str(e)}")
+
+
+@app.post("/api/drive/procedure/upload")
+async def upload_procedure(
+    file: UploadFile = File(...),
+    current_user: Dict[str, Any] = Depends(check_clienti_update)
+):
+    """Carica una procedura nella cartella WebApp/Procedure"""
+    try:
+        if not drive_service or not drive_service.is_ready():
+            raise HTTPException(status_code=503, detail="Google Drive Service non configurato")
+        
+        if not drive_structure:
+            raise HTTPException(status_code=503, detail="Drive structure manager non disponibile")
+        
+        procedure_folder_id = drive_structure.get_procedure_folder_id()
+        if not procedure_folder_id:
+            raise HTTPException(status_code=500, detail="Cartella Procedure non inizializzata. Inizializza prima la struttura.")
+        
+        # Leggi file content
+        file_content = await file.read()
+        
+        # Carica su Drive
+        result = drive_service.upload_file(
+            file_content=file_content,
+            file_name=file.filename,
+            folder_id=procedure_folder_id,
+            mime_type=file.content_type
+        )
+        
+        if not result:
+            raise HTTPException(status_code=500, detail="Impossibile caricare procedura su Drive")
+        
+        return {
+            "status": "success",
+            "message": f"Procedura {file.filename} caricata con successo",
+            "file": {
+                "id": result.get("id"),
+                "name": result.get("name"),
+                "url": result.get("webViewLink")
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Errore upload procedura: {str(e)}")
+
+
+@app.post("/api/drive/procedure/share")
+async def share_procedure(
+    file_id: str = Form(...),
+    user_email: str = Form(...),
+    role: str = Form("reader"),  # reader, writer, commenter
+    current_user: Dict[str, Any] = Depends(check_clienti_update)
+):
+    """Condivide una procedura con un utente specifico"""
+    try:
+        if not drive_service or not drive_service.is_ready():
+            raise HTTPException(status_code=503, detail="Google Drive Service non configurato")
+        
+        # Verifica che il file esista e sia nella cartella Procedure
+        file_meta = drive_service.get_file_metadata(file_id)
+        if not file_meta:
+            raise HTTPException(status_code=404, detail="File non trovato")
+        
+        # Condividi il file usando il metodo helper
+        result = drive_service.share_file(file_id, user_email, role)
+        
+        if not result:
+            raise HTTPException(status_code=500, detail="Impossibile condividere procedura")
+        
+        return {
+            "status": "success",
+            "message": f"Procedura condivisa con {user_email}",
+            "permission_id": result.get("id")
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Errore condivisione procedura: {str(e)}")
 
 
 if __name__ == "__main__":

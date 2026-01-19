@@ -513,6 +513,148 @@ class ClientiApiService {
       throw new Error(`Errore nella revoca del magic link: ${response.status}`);
     }
   }
+
+  // --- Drive Structure Management ---
+
+  async initDriveStructure(): Promise<{
+    status: string;
+    message: string;
+    folders: {
+      webapp: { id: string; url: string | null };
+      clienti: { id: string; url: string | null };
+      procedure: { id: string; url: string | null };
+      preventivi: { id: string; url: string | null };
+      contratti: { id: string; url: string | null };
+    };
+  }> {
+    const headers = await this.getAuthHeaders();
+    const response = await fetch(`${CLIENTI_SERVICE_URL}/api/drive/structure/init`, {
+      method: 'POST',
+      headers,
+    });
+    if (!response.ok) {
+      throw new Error(`Errore inizializzazione struttura Drive: ${response.status}`);
+    }
+    return await response.json();
+  }
+
+  async getDriveStructure(): Promise<{
+    folders: {
+      webapp: { id: string; url: string | null };
+      clienti: { id: string; url: string | null };
+      procedure: { id: string; url: string | null };
+      preventivi: { id: string; url: string | null };
+      contratti: { id: string; url: string | null };
+    };
+  }> {
+    const headers = await this.getAuthHeaders();
+    const response = await fetch(`${CLIENTI_SERVICE_URL}/api/drive/structure`, {
+      method: 'GET',
+      headers,
+    });
+    if (!response.ok) {
+      throw new Error(`Errore recupero struttura Drive: ${response.status}`);
+    }
+    return await response.json();
+  }
+
+  async exportPreventivoToDrive(preventivoId: string, preventivoData: any): Promise<{
+    status: string;
+    message: string;
+    file: { id: string; name: string; url: string };
+  }> {
+    const headers = await this.getAuthHeaders(true);
+    const formData = new FormData();
+    formData.append('preventivo_id', preventivoId);
+    formData.append('preventivo_data', JSON.stringify(preventivoData));
+
+    const response = await fetch(`${CLIENTI_SERVICE_URL}/api/drive/export/preventivo`, {
+      method: 'POST',
+      headers,
+      body: formData,
+    });
+    if (!response.ok) {
+      throw new Error(`Errore esportazione preventivo: ${response.status}`);
+    }
+    return await response.json();
+  }
+
+  async exportContrattoToDrive(contrattoId: string, contrattoData: any): Promise<{
+    status: string;
+    message: string;
+    file: { id: string; name: string; url: string };
+  }> {
+    const headers = await this.getAuthHeaders(true);
+    const formData = new FormData();
+    formData.append('contratto_id', contrattoId);
+    formData.append('contratto_data', JSON.stringify(contrattoData));
+
+    const response = await fetch(`${CLIENTI_SERVICE_URL}/api/drive/export/contratto`, {
+      method: 'POST',
+      headers,
+      body: formData,
+    });
+    if (!response.ok) {
+      throw new Error(`Errore esportazione contratto: ${response.status}`);
+    }
+    return await response.json();
+  }
+
+  // --- Procedure Management ---
+
+  async listProcedure(): Promise<{ files: any[]; folder_id: string }> {
+    const headers = await this.getAuthHeaders();
+    const response = await fetch(`${CLIENTI_SERVICE_URL}/api/drive/procedure`, {
+      method: 'GET',
+      headers,
+    });
+    if (!response.ok) {
+      throw new Error(`Errore listing procedure: ${response.status}`);
+    }
+    return await response.json();
+  }
+
+  async uploadProcedure(file: File): Promise<{
+    status: string;
+    message: string;
+    file: { id: string; name: string; url: string };
+  }> {
+    const headers = await this.getAuthHeaders(true);
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const response = await fetch(`${CLIENTI_SERVICE_URL}/api/drive/procedure/upload`, {
+      method: 'POST',
+      headers,
+      body: formData,
+    });
+    if (!response.ok) {
+      throw new Error(`Errore upload procedura: ${response.status}`);
+    }
+    return await response.json();
+  }
+
+  async shareProcedure(fileId: string, userEmail: string, role: 'reader' | 'writer' | 'commenter' = 'reader'): Promise<{
+    status: string;
+    message: string;
+    permission_id: string;
+  }> {
+    const headers = await this.getAuthHeaders(true);
+    const formData = new FormData();
+    formData.append('file_id', fileId);
+    formData.append('user_email', userEmail);
+    formData.append('role', role);
+
+    const response = await fetch(`${CLIENTI_SERVICE_URL}/api/drive/procedure/share`, {
+      method: 'POST',
+      headers,
+      body: formData,
+    });
+    if (!response.ok) {
+      throw new Error(`Errore condivisione procedura: ${response.status}`);
+    }
+    return await response.json();
+  }
 }
 
 export const clientiApi = new ClientiApiService();

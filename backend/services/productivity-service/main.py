@@ -141,25 +141,27 @@ async def execute_drive_action(action_type: str, action_config: Dict[str, Any], 
     """
     Esegue un'azione Google Drive come parte di un workflow.
     Usa il token admin salvato in clienti-service/token.pickle.
+    Integrato con la struttura WebApp centralizzata.
     action_type: 'create_folder', 'upload_file', 'share_folder'
     action_config: configurazione specifica per l'azione
     entity_id: ID del cliente o lead
     entity_type: 'client' o 'lead'
     """
     try:
-        # Importa drive_service da clienti-service per usare il token admin salvato
+        # Importa drive_service e drive_structure da clienti-service per usare il token admin salvato
         import sys
         from pathlib import Path
         
-        # Aggiungi path per importare drive_utils da clienti-service
+        # Aggiungi path per importare drive_utils e drive_structure da clienti-service
         clienti_service_path = Path(__file__).parent.parent / "clienti-service"
         if str(clienti_service_path) not in sys.path:
             sys.path.insert(0, str(clienti_service_path))
         
         try:
             from drive_utils import drive_service
+            from drive_structure import drive_structure
         except ImportError:
-            print("⚠️ Impossibile importare drive_service da clienti-service")
+            print("⚠️ Impossibile importare drive_service o drive_structure da clienti-service")
             return None
         
         if not drive_service or not drive_service.is_ready():
@@ -169,6 +171,32 @@ async def execute_drive_action(action_type: str, action_config: Dict[str, Any], 
         if action_type == "create_folder":
             folder_name = action_config.get("folder_name", f"Cartella {entity_id}")
             parent_id = action_config.get("parent_folder_id")
+            
+            # Se entity_type è "client" e non è specificato parent_id, usa la struttura WebApp/Clienti
+            if entity_type == "client" and not parent_id:
+                if drive_structure:
+                    # Prova a ottenere la cartella del cliente esistente
+                    # Se non esiste, verrà creata dentro WebApp/Clienti
+                    try:
+                        # Recupera nome cliente dal database se possibile
+                        cliente_query = "SELECT nome_azienda FROM clienti WHERE id = :id"
+                        cliente_row = await database.fetch_one(cliente_query, {"id": entity_id})
+                        cliente_name = cliente_row["nome_azienda"] if cliente_row and "nome_azienda" in cliente_row else folder_name
+                        
+                        # Ottieni o crea cartella cliente dentro WebApp/Clienti
+                        cliente_folder_id = drive_structure.get_or_create_cliente_folder(cliente_name, entity_id)
+                        if cliente_folder_id:
+                            # Crea la sottocartella dentro la cartella del cliente
+                            parent_id = cliente_folder_id
+                            print(f"📂 Usando struttura WebApp/Clienti per cliente {entity_id}")
+                    except Exception as e:
+                        print(f"⚠️ Errore recupero cartella cliente da struttura: {e}")
+                        # Fallback: usa WebApp/Clienti come parent se disponibile
+                        if drive_structure:
+                            clienti_folder_id = drive_structure.get_clienti_folder_id()
+                            if clienti_folder_id:
+                                parent_id = clienti_folder_id
+                                print(f"📂 Usando WebApp/Clienti come parent per cartella workflow")
             
             try:
                 folder_id = drive_service.create_folder(folder_name, parent_id)
@@ -316,6 +344,50 @@ async def lead_stage_changed_hook(payload: Dict[str, Any], background_tasks: Bac
         "status": "processing",
         "triggered_workflows": triggered_templates,
         "message": f"Avviati {len(triggered_templates)} workflow per lead {lead_id} in stage {new_stage}"
+    }
+
+@app.post("/api/hooks/clickfunnel-lead-created")
+async def clickfunnel_lead_created_hook(payload: Dict[str, Any], background_tasks: BackgroundTasks):
+    """
+    Webhook chiamato dal Sales Service quando un nuovo lead viene creato da ClickFunnel.
+    Payload atteso: { "lead_id": "...", "stage": "optin" }
+    """
+    lead_id = payload.get("lead_id")
+    stage = payload.get("stage", "optin")
+    
+    if not lead_id:
+        raise HTTPException(status_code=400, detail="lead_id richiesto")
+
+    # Trova workflow templates che hanno trigger_type = 'clickfunnel' oppure trigger_type = 'pipeline_stage' con stage matching
+    templates_clickfunnel = await database.fetch_all(
+        "SELECT * FROM workflow_templates WHERE trigger_type = 'clickfunnel' AND entity_type = 'lead'"
+    )
+    
+    templates_stage = await database.fetch_all(
+        "SELECT * FROM workflow_templates WHERE trigger_type = 'pipeline_stage' AND trigger_pipeline_stage = :stage AND entity_type = 'lead'",
+        {"stage": stage}
+    )
+    
+    # Combina i template
+    all_templates = templates_clickfunnel + templates_stage
+    
+    if not all_templates:
+        return {"status": "no_workflows_triggered", "message": f"Nessun workflow trovato per ClickFunnel lead in stage {stage}"}
+
+    start_date = datetime.now()
+    if start_date.tzinfo is not None:
+        start_date = start_date.astimezone(timezone.utc).replace(tzinfo=None)
+
+    triggered_templates = []
+    for template in all_templates:
+        template_id = template["id"]
+        background_tasks.add_task(instantiate_workflow_logic, template_id, lead_id, start_date, "lead")
+        triggered_templates.append(template_id)
+
+    return {
+        "status": "processing",
+        "triggered_workflows": triggered_templates,
+        "message": f"Avviati {len(triggered_templates)} workflow per lead ClickFunnel {lead_id} in stage {stage}"
     }
 
 @app.post("/api/hooks/contract-signed")

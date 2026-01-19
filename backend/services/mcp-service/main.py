@@ -32,12 +32,63 @@ except ImportError:
     def get_category_info(key: str):
         return {"label": "Altro", "deductibility": "Da verificare", "type": "Deducibilità", "description": ""}
 
-# Inizializzazione tabelle DB
-Base.metadata.create_all(bind=engine)
+# Inizializzazione tabelle DB - Lazy con retry per gestire database in sleep mode
+def init_database_with_retry(max_retries=5, delay=3):
+    """Inizializza il database con retry per gestire connessioni fallite"""
+    import time
+    from sqlalchemy.exc import OperationalError, TimeoutError
+    
+    for attempt in range(max_retries):
+        try:
+            # Prova a connettere e creare le tabelle
+            Base.metadata.create_all(bind=engine)
+            print(f"✅ Database MCP inizializzato con successo (tentativo {attempt + 1})")
+            return True
+        except (OperationalError, TimeoutError) as e:
+            error_msg = str(e)
+            if attempt < max_retries - 1:
+                wait_time = delay * (attempt + 1)  # Backoff esponenziale: 3s, 6s, 9s, 12s, 15s
+                print(f"⚠️ Errore connessione database (tentativo {attempt + 1}/{max_retries})")
+                print(f"   Errore: {error_msg[:200]}...")  # Limita lunghezza messaggio
+                print(f"🔄 Retry tra {wait_time} secondi...")
+                time.sleep(wait_time)
+            else:
+                print(f"❌ Impossibile connettersi al database dopo {max_retries} tentativi")
+                print(f"   Ultimo errore: {error_msg[:200]}...")
+                print(f"⚠️ Le tabelle verranno create al primo accesso.")
+                return False
+        except Exception as e:
+            error_msg = str(e)
+            print(f"❌ Errore inizializzazione database: {error_msg[:200]}...")
+            if attempt < max_retries - 1:
+                wait_time = delay * (attempt + 1)
+                print(f"🔄 Retry tra {wait_time} secondi...")
+                time.sleep(wait_time)
+            else:
+                print(f"⚠️ Le tabelle verranno create al primo accesso.")
+                return False
+    
+    return False
+
+# NON inizializzare il database durante l'import - verrà fatto al primo accesso
+# Questo evita di bloccare l'avvio dell'applicazione se il database non è disponibile
+
+# Flag per tracciare se il database è stato inizializzato
+_db_initialized = False
 
 def get_db():
+    global _db_initialized
     db = SessionLocal()
     try:
+        # Se non inizializzato, prova a creare le tabelle al primo accesso
+        if not _db_initialized:
+            try:
+                Base.metadata.create_all(bind=engine)
+                _db_initialized = True
+                print("✅ Database MCP inizializzato al primo accesso")
+            except Exception as e:
+                print(f"⚠️ Errore inizializzazione database al primo accesso: {e}")
+                # Continua comunque, potrebbe essere un problema temporaneo
         yield db
     finally:
         db.close()

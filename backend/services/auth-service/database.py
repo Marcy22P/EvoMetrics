@@ -28,9 +28,16 @@ if DATABASE_URL.startswith("postgresql://") and "+asyncpg" not in DATABASE_URL:
     DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
     print(f"✅ DATABASE_URL aggiornato con +asyncpg: {DATABASE_URL[:50]}...")
 
-# Connection pool size configurabile - ridotto per evitare saturazione in produzione
-DB_POOL_MIN_SIZE = int(os.environ.get("DB_POOL_MIN_SIZE", "0"))  # 0 = nessuna connessione iniziale
-DB_POOL_MAX_SIZE = int(os.environ.get("DB_POOL_MAX_SIZE", "1"))  # 1 = massimo 1 connessione per servizio
+# Aggiungi parametri SSL per Render.com se non presenti
+# Render.com richiede SSL, ma asyncpg ha bisogno di sslmode=prefer nell'URL
+if DATABASE_URL.startswith("postgresql+asyncpg://") and "sslmode" not in DATABASE_URL:
+    separator = "&" if "?" in DATABASE_URL else "?"
+    DATABASE_URL = f"{DATABASE_URL}{separator}sslmode=prefer"
+    print(f"🔒 SSL mode aggiunto all'URL per Render.com")
+
+# Connection pool size configurabile - default come prima (min 1, max 3)
+DB_POOL_MIN_SIZE = int(os.environ.get("DB_POOL_MIN_SIZE", "1"))  # Default 1 come prima
+DB_POOL_MAX_SIZE = int(os.environ.get("DB_POOL_MAX_SIZE", "3"))  # Default 3 come prima
 
 # Database setup
 # Ottimizzazione pool: min 1, max 3 connessioni per evitare saturazione in unified mode

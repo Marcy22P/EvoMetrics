@@ -1,6 +1,8 @@
-import React, { useRef } from 'react';
+import React, { useRef, useState } from 'react';
 import { PrintIcon, DownloadIcon } from '../Icons/AssessmentIcons';
+import { ExternalIcon } from '@shopify/polaris-icons';
 import { toast } from '../../utils/toast';
+import { clientiApi } from '../../services/clientiApi';
 import { convertServiziToArray, groupServiziByTable, calculateTableTotals, formatCurrency, formatDateItalian, generateEcommerceDescription, generateVideoPostDescription, generateMetaAdsDescription, generateGoogleAdsDescription, generateSeoDescription, generateEmailMarketingDescription, generateDefaultTerminiCondizioni } from '../../utils/preventivoUtils';
 
 interface PreventivoPreviewProps {
@@ -10,6 +12,7 @@ interface PreventivoPreviewProps {
 
 export const PreventivoPreview: React.FC<PreventivoPreviewProps> = ({ data, totali }) => {
   const documentRef = useRef<HTMLDivElement>(null);
+  const [isExportingToDrive, setIsExportingToDrive] = useState(false);
   
   // Debug: log dei dati ricevuti
   console.log('🔍 PreventivoPreview - Data received:', data);
@@ -872,6 +875,27 @@ export const PreventivoPreview: React.FC<PreventivoPreviewProps> = ({ data, tota
     }
   };
 
+  const handleExportToDrive = async () => {
+    setIsExportingToDrive(true);
+    try {
+      // Crea un oggetto preventivo completo con id se non presente
+      const preventivoData = {
+        ...data,
+        id: data.id || `preventivo-${Date.now()}`,
+      };
+      
+      const result = await clientiApi.exportPreventivoToDrive(preventivoData.id, preventivoData);
+      toast.success(result.message || 'Preventivo esportato su Drive con successo');
+      if (result.file?.url) {
+        window.open(result.file.url, '_blank');
+      }
+    } catch (error: any) {
+      toast.error(error.message || 'Errore durante l\'esportazione su Drive');
+    } finally {
+      setIsExportingToDrive(false);
+    }
+  };
+
 
 
   return (
@@ -885,6 +909,15 @@ export const PreventivoPreview: React.FC<PreventivoPreviewProps> = ({ data, tota
         <button onClick={handleExportPDF} className="toolbar-button">
           <DownloadIcon />
           Esporta PDF
+        </button>
+        <button 
+          onClick={handleExportToDrive} 
+          className="toolbar-button"
+          disabled={isExportingToDrive}
+          style={{ opacity: isExportingToDrive ? 0.6 : 1 }}
+        >
+          <ExternalIcon />
+          {isExportingToDrive ? 'Esportazione...' : 'Esporta su Drive'}
         </button>
       </div>
 

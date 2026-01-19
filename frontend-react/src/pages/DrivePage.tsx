@@ -9,6 +9,8 @@ import {
 } from '@shopify/polaris-icons';
 import { useAuth } from '../hooks/useAuth';
 import { getServiceUrl } from '../utils/apiConfig';
+import { clientiApi } from '../services/clientiApi';
+import { toast } from '../utils/toast';
 
 interface DriveFile {
     id: string;
@@ -379,6 +381,10 @@ const DrivePage: React.FC = () => {
     
     const { user } = useAuth();
     const [isConnected, setIsConnected] = useState<boolean | null>(null);
+    
+    // Drive Structure
+    const [driveStructure, setDriveStructure] = useState<any>(null);
+    const [isInitializingStructure, setIsInitializingStructure] = useState(false);
 
     const checkStatus = async () => {
         try {
@@ -404,8 +410,37 @@ const DrivePage: React.FC = () => {
         }
     };
 
+    const loadDriveStructure = async () => {
+        try {
+            const token = localStorage.getItem('auth_token');
+            const response = await fetch(`${CLIENTI_SERVICE_URL}/api/drive/structure`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            if (response.ok) {
+                const data = await response.json();
+                setDriveStructure(data);
+            }
+        } catch (error) {
+            console.error('Errore caricamento struttura Drive:', error);
+        }
+    };
+
+    const handleInitStructure = async () => {
+        setIsInitializingStructure(true);
+        try {
+            const result = await clientiApi.initDriveStructure();
+            setDriveStructure(result);
+            toast.success('Struttura WebApp inizializzata con successo!');
+        } catch (error: any) {
+            toast.error(error.message || 'Errore durante l\'inizializzazione della struttura');
+        } finally {
+            setIsInitializingStructure(false);
+        }
+    };
+
     useEffect(() => {
         checkStatus();
+        loadDriveStructure();
     }, []);
 
     const handleConnectDrive = async () => {
@@ -435,7 +470,59 @@ const DrivePage: React.FC = () => {
             <Page title="Google Drive Aziendale" fullWidth>
                 <Layout>
                     <Layout.Section>
-                        <GlobalDriveBrowser />
+                        {(user?.role === 'admin' || user?.role === 'superadmin') && (
+                            <Card>
+                                <Box padding="400">
+                                    <BlockStack gap="300">
+                                        {!driveStructure?.folders?.webapp?.id ? (
+                                            <Banner tone="info">
+                                                <p>
+                                                    <strong>Struttura WebApp non inizializzata.</strong> Inizializza la struttura per organizzare automaticamente i file in cartelle dedicate (Clienti, Preventivi, Contratti, Procedure).
+                                                </p>
+                                                <Box paddingBlockStart="300">
+                                                    <Button 
+                                                        onClick={handleInitStructure}
+                                                        loading={isInitializingStructure}
+                                                        variant="primary"
+                                                    >
+                                                        Inizializza Struttura WebApp
+                                                    </Button>
+                                                </Box>
+                                            </Banner>
+                                        ) : (
+                                            <Banner tone="success">
+                                                <p>
+                                                    <strong>Struttura WebApp attiva.</strong> Le cartelle sono organizzate in: 
+                                                    {driveStructure?.folders?.clienti?.url && (
+                                                        <a href={driveStructure.folders.clienti.url} target="_blank" rel="noopener noreferrer" style={{ marginLeft: '8px' }}>
+                                                            Clienti
+                                                        </a>
+                                                    )}
+                                                    {driveStructure?.folders?.preventivi?.url && (
+                                                        <a href={driveStructure.folders.preventivi.url} target="_blank" rel="noopener noreferrer" style={{ marginLeft: '8px' }}>
+                                                            Preventivi
+                                                        </a>
+                                                    )}
+                                                    {driveStructure?.folders?.contratti?.url && (
+                                                        <a href={driveStructure.folders.contratti.url} target="_blank" rel="noopener noreferrer" style={{ marginLeft: '8px' }}>
+                                                            Contratti
+                                                        </a>
+                                                    )}
+                                                    {driveStructure?.folders?.procedure?.url && (
+                                                        <a href={driveStructure.folders.procedure.url} target="_blank" rel="noopener noreferrer" style={{ marginLeft: '8px' }}>
+                                                            Procedure
+                                                        </a>
+                                                    )}
+                                                </p>
+                                            </Banner>
+                                        )}
+                                    </BlockStack>
+                                </Box>
+                            </Card>
+                        )}
+                        <Box paddingBlockStart="400">
+                            <GlobalDriveBrowser />
+                        </Box>
                     </Layout.Section>
                 </Layout>
             </Page>

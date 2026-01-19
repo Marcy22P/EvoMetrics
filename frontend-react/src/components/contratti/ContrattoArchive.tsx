@@ -12,8 +12,10 @@ import {
   InlineStack,
   Select
 } from '@shopify/polaris';
-import { DeleteIcon, EditIcon } from '@shopify/polaris-icons';
+import { DeleteIcon, EditIcon, ExternalIcon } from '@shopify/polaris-icons';
 import type { ContrattoData } from '../../types/contratto';
+import { clientiApi } from '../../services/clientiApi';
+import { toast } from '../../utils/toast';
 
 interface ContrattoArchiveProps {
   contratti: ContrattoData[];
@@ -36,6 +38,7 @@ export const ContrattoArchive: React.FC<ContrattoArchiveProps> = ({
   const [queryValue, setQueryValue] = useState('');
   const [contrattoToDelete, setContrattoToDelete] = useState<ContrattoData | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [exportingId, setExportingId] = useState<string | null>(null);
 
   const contrattiDaMostrare = contratti || [];
 
@@ -74,6 +77,21 @@ export const ContrattoArchive: React.FC<ContrattoArchiveProps> = ({
       console.error('Errore eliminazione', error);
     } finally {
       setIsDeleting(false);
+    }
+  };
+
+  const handleExportToDrive = async (contratto: ContrattoData) => {
+    setExportingId(contratto.id);
+    try {
+      const result = await clientiApi.exportContrattoToDrive(contratto.id, contratto);
+      toast.success(result.message || 'Contratto esportato su Drive con successo');
+      if (result.file?.url) {
+        window.open(result.file.url, '_blank');
+      }
+    } catch (error: any) {
+      toast.error(error.message || 'Errore durante l\'esportazione su Drive');
+    } finally {
+      setExportingId(null);
     }
   };
 
@@ -142,6 +160,14 @@ export const ContrattoArchive: React.FC<ContrattoArchiveProps> = ({
              <InlineStack gap="200">
                 <div onClick={(e) => e.stopPropagation()}>
                   <Button icon={EditIcon} onClick={() => onSelectContratto(contratto)} variant="plain" />
+                </div>
+                <div onClick={(e) => e.stopPropagation()}>
+                  <Button 
+                    icon={ExternalIcon} 
+                    onClick={() => handleExportToDrive(contratto)} 
+                    variant="plain"
+                    loading={exportingId === id}
+                  />
                 </div>
                 <div onClick={(e) => e.stopPropagation()}>
                   <Button icon={DeleteIcon} onClick={() => setContrattoToDelete(contratto)} tone="critical" variant="plain" />
