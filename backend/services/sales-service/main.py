@@ -8,8 +8,6 @@ from typing import List
 import requests
 import os
 import datetime
-import hmac
-import hashlib
 import json
 
 app = FastAPI(
@@ -244,92 +242,23 @@ async def clickfunnels_webhook(request: Request, background_tasks: BackgroundTas
     Endpoint pubblico per ricevere dati da ClickFunnels.
     URL configurabile via CLICKFUNNEL_WEBHOOK_URL (es. https://www.evoluzioneimprese.com/webhook/clickfunnels)
     Stage iniziale configurabile via CLICKFUNNEL_INITIAL_STAGE (default: "optin")
-    Webhook Secret configurabile via CLICKFUNNEL_WEBHOOK_SECRET (opzionale ma consigliato per sicurezza)
     """
-    # Logging dettagliato per debug
-    print(f"📥 Webhook ClickFunnel ricevuto - Headers: {dict(request.headers)}")
-    
-    # Validazione Webhook Secret (se configurato)
-    # ClickFunnel usa HMAC signature, non un secret semplice
-    webhook_secret = os.getenv("CLICKFUNNEL_WEBHOOK_SECRET")
-    signature_header = request.headers.get("x-webhook-clickfunnels-signature")
-    timestamp_header = request.headers.get("x-webhook-clickfunnels-timestamp")
-    
     try:
+        # Logging per debug
+        print(f"📥 Webhook ClickFunnel ricevuto")
+        
+        # Leggi il payload JSON
         content_type = request.headers.get('content-type', '')
         print(f"📋 Content-Type: {content_type}")
         
-        # Leggi il body come bytes per calcolare l'HMAC (prima di parsarlo)
-        body_bytes = await request.body()
-        
         data = {}
         if "application/json" in content_type:
-            data = json.loads(body_bytes)
+            data = await request.json()
         else:
             form_data = await request.form()
             data = dict(form_data)
         
-        print(f"📦 Payload ricevuto (primi 500 caratteri): {str(data)[:500]}")
-        
-        # Valida la signature HMAC se configurato
-        if webhook_secret:
-            if not signature_header or not timestamp_header:
-                print(f"❌ Webhook Signature mancante negli header.")
-                print(f"   Signature: {signature_header}")
-                print(f"   Timestamp: {timestamp_header}")
-                print(f"   Headers disponibili: {list(request.headers.keys())}")
-                raise HTTPException(status_code=403, detail="Missing webhook signature")
-            
-            # ClickFunnel calcola HMAC come: HMAC-SHA256(secret, message)
-            # Prova diversi formati comuni per webhook HMAC:
-            body_str = body_bytes.decode('utf-8')
-            
-            # Formato 1: timestamp + body (più comune per webhook)
-            message1 = f"{timestamp_header}{body_str}"
-            expected1 = hmac.new(
-                webhook_secret.encode('utf-8'),
-                message1.encode('utf-8'),
-                hashlib.sha256
-            ).hexdigest()
-            
-            # Formato 2: solo body (alternativa comune)
-            expected2 = hmac.new(
-                webhook_secret.encode('utf-8'),
-                body_bytes,
-                hashlib.sha256
-            ).hexdigest()
-            
-            # Formato 3: body + timestamp
-            message3 = f"{body_str}{timestamp_header}"
-            expected3 = hmac.new(
-                webhook_secret.encode('utf-8'),
-                message3.encode('utf-8'),
-                hashlib.sha256
-            ).hexdigest()
-            
-            # Confronta le signature in modo sicuro (constant-time comparison)
-            valid = (
-                hmac.compare_digest(expected1, signature_header) or
-                hmac.compare_digest(expected2, signature_header) or
-                hmac.compare_digest(expected3, signature_header)
-            )
-            
-            if not valid:
-                print(f"❌ Webhook Signature non valida.")
-                print(f"   Expected (timestamp+body): {expected1[:20]}...")
-                print(f"   Expected (body only): {expected2[:20]}...")
-                print(f"   Expected (body+timestamp): {expected3[:20]}...")
-                print(f"   Received: {signature_header[:20]}...")
-                print(f"   Timestamp: {timestamp_header}")
-                print(f"   Body length: {len(body_str)}")
-                print(f"   Secret length: {len(webhook_secret)}")
-                raise HTTPException(status_code=403, detail="Invalid webhook signature")
-            
-            print("✅ Webhook Signature validata correttamente (HMAC)")
-        else:
-            print("ℹ️ Webhook Secret non configurato, skip validazione signature")
-            
-        print(f"📥 Webhook ClickFunnels processato: {str(data)[:200]}...")
+        print(f"📦 Payload ricevuto: {str(data)[:500]}...")
 
         # ClickFunnel invia i dati in una struttura annidata: data.data.contact.email
         # Estrai i dati dalla struttura reale di ClickFunnel
@@ -339,17 +268,20 @@ async def clickfunnels_webhook(request: Request, background_tasks: BackgroundTas
         phone = None
         azienda = None
         
+        # Prova prima la struttura annidata di ClickFunnel: data.data.contact
         clickfunnel_data = data.get("data", {})
         if isinstance(clickfunnel_data, dict):
             inner_data = clickfunnel_data.get("data", {})
             if isinstance(inner_data, dict):
                 contact = inner_data.get("contact", {})
                 
-                # Estrai email
-                email = None
+                # Estrai email dalla struttura annidata
                 if isinstance(contact, dict):
                     email = contact.get("email")
-                email = email or inner_data.get("email") or data.get("email") or data.get("contact[email]")
+                
+                # Fallback per email
+                if not email:
+                    email = inner_data.get("email")
                 
                 # Estrai nome (ClickFunnel invia "name" completo, non first_name/last_name)
                 name = contact.get("name") if isinstance(contact, dict) else None
@@ -359,21 +291,16 @@ async def clickfunnels_webhook(request: Request, background_tasks: BackgroundTas
                     first_name = name_parts[0] if len(name_parts) > 0 else None
                     last_name = name_parts[1] if len(name_parts) > 1 else None
                 else:
-                    first_name = inner_data.get("first_name") or data.get("first_name")
-                    last_name = inner_data.get("last_name") or data.get("last_name")
+                    first_name = inner_data.get("first_name")
+                    last_name = inner_data.get("last_name")
                 
                 # Estrai telefono
-                phone = (
-                    inner_data.get("phone_number") or
-                    inner_data.get("phone") or
-                    data.get("phone") or
-                    data.get("phone_number")
-                )
+                phone = inner_data.get("phone_number") or inner_data.get("phone")
                 
                 # Estrai azienda se presente
-                azienda = inner_data.get("azienda") or data.get("azienda")
+                azienda = inner_data.get("azienda")
                 
-                print(f"📋 Dati estratti - Email: {email}, Nome: {name}, Telefono: {phone}, Azienda: {azienda}")
+                print(f"📋 Dati estratti (struttura annidata) - Email: {email}, Nome: {name or f'{first_name} {last_name}'.strip()}, Telefono: {phone}, Azienda: {azienda}")
         
         # Fallback: struttura semplice (se non trovato nella struttura annidata)
         if not email:
@@ -381,14 +308,15 @@ async def clickfunnels_webhook(request: Request, background_tasks: BackgroundTas
             contact = data.get("contact", {})
             if isinstance(contact, dict):
                 email = email or contact.get("email")
-            if not first_name:
-                first_name = data.get("first_name")
-            if not last_name:
-                last_name = data.get("last_name")
-            if not phone:
-                phone = data.get("phone") or data.get("phone_number")
-            if not azienda:
-                azienda = data.get("azienda")
+        
+        if not first_name:
+            first_name = data.get("first_name")
+        if not last_name:
+            last_name = data.get("last_name")
+        if not phone:
+            phone = data.get("phone") or data.get("phone_number")
+        if not azienda:
+            azienda = data.get("azienda")
 
         if not email:
             print("⚠️ Nessuna email trovata nel webhook, ignoro.")
