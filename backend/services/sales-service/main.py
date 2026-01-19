@@ -241,7 +241,22 @@ async def clickfunnels_webhook(request: Request, background_tasks: BackgroundTas
     Endpoint pubblico per ricevere dati da ClickFunnels.
     URL configurabile via CLICKFUNNEL_WEBHOOK_URL (es. https://www.evoluzioneimprese.com/webhook/clickfunnels)
     Stage iniziale configurabile via CLICKFUNNEL_INITIAL_STAGE (default: "optin")
+    Webhook Secret configurabile via CLICKFUNNEL_WEBHOOK_SECRET (opzionale ma consigliato per sicurezza)
     """
+    # Validazione Webhook Secret (se configurato)
+    webhook_secret = os.getenv("CLICKFUNNEL_WEBHOOK_SECRET")
+    received_secret = None
+    
+    if webhook_secret:
+        # Prova prima a leggere il secret dagli header HTTP (metodo più comune)
+        received_secret = (
+            request.headers.get("X-ClickFunnel-Secret") or
+            request.headers.get("X-Webhook-Secret") or
+            request.headers.get("X-CF-Secret") or
+            request.headers.get("ClickFunnel-Secret") or
+            request.headers.get("Webhook-Secret")
+        )
+    
     try:
         content_type = request.headers.get('content-type', '')
         
@@ -251,6 +266,22 @@ async def clickfunnels_webhook(request: Request, background_tasks: BackgroundTas
         else:
             form_data = await request.form()
             data = dict(form_data)
+        
+        # Se il secret non era negli header, cerca nel body (JSON o form-data)
+        if webhook_secret and not received_secret:
+            received_secret = (
+                data.get("secret") or
+                data.get("webhook_secret") or
+                data.get("clickfunnel_secret") or
+                data.get("cf_secret")
+            )
+        
+        # Valida il secret se configurato
+        if webhook_secret:
+            if not received_secret or received_secret != webhook_secret:
+                print(f"⚠️ Webhook Secret non valido o mancante. Ricevuto: {received_secret[:10] + '...' if received_secret else 'None'}")
+                raise HTTPException(status_code=403, detail="Invalid webhook secret")
+            print("✅ Webhook Secret validato correttamente")
             
         print(f"📥 Webhook ClickFunnels ricevuto: {data}")
 
