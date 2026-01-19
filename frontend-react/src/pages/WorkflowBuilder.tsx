@@ -53,7 +53,8 @@ const AVAILABLE_ROLES = [
   'Shopify Expert',
   'Fotografo',
   'Copywriter',
-  'Developer'
+  'Developer',
+  'Sales Development Representatives'
 ];
 
 const TASK_ICONS = [
@@ -269,7 +270,7 @@ const WorkflowBuilder: React.FC = () => {
   const [editorDescription, setEditorDescription] = useState('');
   const [editorTriggers, setEditorTriggers] = useState('');
   const [editorEntityType, setEditorEntityType] = useState<'client' | 'lead'>('client');
-  const [editorTriggerType, setEditorTriggerType] = useState<'manual' | 'event' | 'pipeline_stage'>('manual');
+  const [editorTriggerType, setEditorTriggerType] = useState<'manual' | 'event' | 'pipeline_stage' | 'clickfunnel'>('manual');
   const [editorTriggerPipelineStage, setEditorTriggerPipelineStage] = useState('');
   const [editorTasks, setEditorTasks] = useState<TaskDefinition[]>([]);
   
@@ -338,7 +339,7 @@ const WorkflowBuilder: React.FC = () => {
     setEditorName(template.name);
     setEditorDescription(template.description || '');
     setEditorEntityType((template.entity_type as 'client' | 'lead') || 'client');
-    setEditorTriggerType((template.trigger_type as 'manual' | 'event' | 'pipeline_stage') || 'manual');
+    setEditorTriggerType((template.trigger_type as 'manual' | 'event' | 'pipeline_stage' | 'clickfunnel') || 'manual');
     setEditorTriggerPipelineStage(template.trigger_pipeline_stage || '');
     const triggers = Array.isArray(template.trigger_services) ? template.trigger_services : [];
     setEditorTriggers(triggers.join(', '));
@@ -604,11 +605,14 @@ const WorkflowBuilder: React.FC = () => {
               options={[
                 { label: 'Manuale', value: 'manual' },
                 { label: 'Evento', value: 'event' },
-                ...(editorEntityType === 'lead' ? [{ label: 'Stage Pipeline', value: 'pipeline_stage' }] : [])
+                ...(editorEntityType === 'lead' ? [
+                  { label: 'Stage Pipeline', value: 'pipeline_stage' },
+                  { label: 'ClickFunnel', value: 'clickfunnel' }
+                ] : [])
               ]}
               value={editorTriggerType}
               onChange={(value) => {
-                setEditorTriggerType(value as 'manual' | 'event' | 'pipeline_stage');
+                setEditorTriggerType(value as 'manual' | 'event' | 'pipeline_stage' | 'clickfunnel');
                 if (value !== 'pipeline_stage') {
                   setEditorTriggerPipelineStage('');
                 }
@@ -626,6 +630,14 @@ const WorkflowBuilder: React.FC = () => {
                 onChange={setEditorTriggerPipelineStage}
                 helpText="Lo stage della pipeline che attiva questo workflow"
               />
+            )}
+            {editorTriggerType === 'clickfunnel' && editorEntityType === 'lead' && (
+              <Banner tone="info">
+                <p>
+                  Questo workflow verrà attivato automaticamente quando un nuovo lead viene creato da ClickFunnel.
+                  Il workflow partirà nello stage iniziale configurato (default: "optin").
+                </p>
+              </Banner>
             )}
             {editorEntityType === 'client' && (
               <TextField

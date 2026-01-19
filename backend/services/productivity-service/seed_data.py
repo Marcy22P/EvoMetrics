@@ -128,26 +128,52 @@ WORKFLOW_TEMPLATES = [
 ]
 
 async def seed_templates(database):
-    """Popola la tabella workflow_templates con reset forzato per aggiornamenti"""
+    """
+    Popola la tabella workflow_templates solo con i template di default mancanti.
+    NON cancella mai i workflow creati dall'utente.
+    """
     import json
     
-    print("🌱 Seeding workflow templates (Overwriting)...")
+    # Conta workflow esistenti
+    count = await database.fetch_val("SELECT COUNT(*) FROM workflow_templates")
     
-    # Rimuovi vecchi per aggiornare le definizioni
-    await database.execute("DELETE FROM workflow_templates")
+    if count == 0:
+        print("🌱 Seeding workflow templates (tabella vuota)...")
+    else:
+        print(f"🌱 Verificando workflow templates di default ({count} workflow esistenti)...")
     
+    # Query per inserire solo se non esiste
     query = """
-    INSERT INTO workflow_templates (id, name, description, tasks_definition, trigger_services)
-    VALUES (:id, :name, :description, :tasks_definition, :trigger_services)
+    INSERT INTO workflow_templates (id, name, description, tasks_definition, trigger_services, trigger_type, entity_type)
+    VALUES (:id, :name, :description, :tasks_definition, :trigger_services, :trigger_type, :entity_type)
     """
     
+    inserted_count = 0
     for tmpl in WORKFLOW_TEMPLATES:
-        await database.execute(query, {
-            "id": tmpl["id"],
-            "name": tmpl["name"],
-            "description": tmpl["description"],
-            "tasks_definition": json.dumps(tmpl["tasks_definition"]),
-            "trigger_services": json.dumps(tmpl.get("trigger_services", []))
-        })
+        # Verifica se esiste già (controllo esplicito per evitare duplicati)
+        existing = await database.fetch_one(
+            "SELECT id FROM workflow_templates WHERE id = :id",
+            {"id": tmpl["id"]}
+        )
+        
+        if not existing:
+            try:
+                await database.execute(query, {
+                    "id": tmpl["id"],
+                    "name": tmpl["name"],
+                    "description": tmpl["description"],
+                    "tasks_definition": json.dumps(tmpl["tasks_definition"]),
+                    "trigger_services": json.dumps(tmpl.get("trigger_services", [])),
+                    "trigger_type": "manual",  # Default per workflow legacy
+                    "entity_type": "client"  # Default per workflow legacy
+                })
+                inserted_count += 1
+            except Exception as e:
+                # Se fallisce per constraint violation, ignora (già esiste)
+                if "unique" not in str(e).lower() and "duplicate" not in str(e).lower():
+                    print(f"⚠️ Errore inserimento workflow {tmpl['id']}: {e}")
     
-    print("✅ Workflow templates aggiornati.")
+    if inserted_count > 0:
+        print(f"✅ Aggiunti {inserted_count} workflow template di default.")
+    else:
+        print("✅ Tutti i workflow template di default sono già presenti.")

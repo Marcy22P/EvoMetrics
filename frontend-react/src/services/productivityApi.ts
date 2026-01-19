@@ -83,7 +83,7 @@ export interface WorkflowTemplate {
     id: string;
     name: string;
     description?: string;
-    trigger_type?: string; // 'manual', 'event', 'pipeline_stage'
+    trigger_type?: string; // 'manual', 'event', 'pipeline_stage', 'clickfunnel'
     trigger_event?: string; // 'client_created', 'contract_signed', 'lead_stage_changed'
     entity_type?: string; // 'client' o 'lead'
     trigger_pipeline_stage?: string; // Stage della pipeline (es. 'optin', 'prima_chiamata')

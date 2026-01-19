@@ -1,12 +1,13 @@
 from fastapi import FastAPI, Depends, HTTPException, Request, Body, BackgroundTasks
 from sqlalchemy.orm import Session
-from database import SessionLocal, init_db, Lead as LeadModel, PipelineStage as PipelineStageModel
+from database import SessionLocal, init_db, Lead as LeadModel, PipelineStage as PipelineStageModel, DATABASE_URL, IS_REAL_PRODUCTION
 from models import Lead, LeadCreate, LeadUpdate, PipelineStage, PipelineStageCreate, PipelineStageUpdate
 import uuid
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List
 import requests
 import os
+import datetime
 
 app = FastAPI(
     title="Sales Service",
@@ -24,21 +25,223 @@ app.add_middleware(
 )
 
 # Dependency DB
+_db_initialized = False
+
 def get_db():
+    global _db_initialized
     db = SessionLocal()
     try:
+        # Se non inizializzato, prova a creare le tabelle al primo accesso
+        if not _db_initialized:
+            try:
+                from database import Base, engine
+                from sqlalchemy import text, inspect
+                inspector = inspect(engine)
+                
+                # Crea le tabelle se non esistono
+                Base.metadata.create_all(bind=engine)
+                
+                # Aggiungi colonne mancanti se la tabella leads esiste già
+                existing_tables = inspector.get_table_names()
+                if 'leads' in existing_tables:
+                    columns = [col['name'] for col in inspector.get_columns('leads')]
+                    
+                    # Rimuovi colonna "nome" legacy se esiste (sostituita da first_name/last_name)
+                    if 'nome' in columns:
+                        print("🔄 Rimozione colonna legacy 'nome' (lazy init)...")
+                        try:
+                            # Prima rendi nullable se non lo è già
+                            db.execute(text("ALTER TABLE leads ALTER COLUMN nome DROP NOT NULL"))
+                        except Exception:
+                            pass  # Potrebbe già essere nullable o non avere constraint
+                        
+                        try:
+                            # Poi elimina la colonna
+                            db.execute(text("ALTER TABLE leads DROP COLUMN nome CASCADE"))
+                            db.commit()
+                            print("✅ Colonna legacy 'nome' rimossa (lazy init).")
+                        except Exception as e:
+                            print(f"⚠️ Errore rimozione colonna 'nome': {e}")
+                            db.rollback()
+                    
+                    # Aggiungi first_name se mancante
+                    if 'first_name' not in columns:
+                        try:
+                            db.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS first_name TEXT"))
+                            db.commit()
+                            print("✅ Colonna first_name aggiunta (lazy init)")
+                        except Exception:
+                            try:
+                                db.execute(text("ALTER TABLE leads ADD COLUMN first_name TEXT"))
+                                db.commit()
+                                print("✅ Colonna first_name aggiunta (lazy init)")
+                            except Exception as e:
+                                print(f"⚠️ Errore aggiunta first_name: {e}")
+                                db.rollback()
+                    
+                    # Aggiungi last_name se mancante
+                    if 'last_name' not in columns:
+                        try:
+                            db.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS last_name TEXT"))
+                            db.commit()
+                            print("✅ Colonna last_name aggiunta (lazy init)")
+                        except Exception:
+                            try:
+                                db.execute(text("ALTER TABLE leads ADD COLUMN last_name TEXT"))
+                                db.commit()
+                                print("✅ Colonna last_name aggiunta (lazy init)")
+                            except Exception as e:
+                                print(f"⚠️ Errore aggiunta last_name: {e}")
+                                db.rollback()
+                    
+                    # Aggiungi phone se mancante
+                    if 'phone' not in columns:
+                        try:
+                            db.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS phone TEXT"))
+                            db.commit()
+                            print("✅ Colonna phone aggiunta (lazy init)")
+                        except Exception:
+                            try:
+                                db.execute(text("ALTER TABLE leads ADD COLUMN phone TEXT"))
+                                db.commit()
+                                print("✅ Colonna phone aggiunta (lazy init)")
+                            except Exception as e:
+                                print(f"⚠️ Errore aggiunta phone: {e}")
+                                db.rollback()
+                    
+                    # Aggiungi email se mancante
+                    if 'email' not in columns:
+                        try:
+                            db.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS email TEXT UNIQUE"))
+                            db.commit()
+                            print("✅ Colonna email aggiunta (lazy init)")
+                        except Exception:
+                            try:
+                                db.execute(text("ALTER TABLE leads ADD COLUMN email TEXT"))
+                                try:
+                                    db.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS leads_email_key ON leads(email)"))
+                                except Exception:
+                                    pass
+                                db.commit()
+                                print("✅ Colonna email aggiunta (lazy init)")
+                            except Exception as e:
+                                print(f"⚠️ Errore aggiunta email: {e}")
+                                db.rollback()
+                    
+                    # Aggiungi notes se mancante
+                    if 'notes' not in columns:
+                        try:
+                            db.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS notes TEXT"))
+                            db.commit()
+                            print("✅ Colonna notes aggiunta (lazy init)")
+                        except Exception:
+                            try:
+                                db.execute(text("ALTER TABLE leads ADD COLUMN notes TEXT"))
+                                db.commit()
+                                print("✅ Colonna notes aggiunta (lazy init)")
+                            except Exception as e:
+                                print(f"⚠️ Errore aggiunta notes: {e}")
+                                db.rollback()
+                    
+                    # Gestisci colonna stage: se esiste come ENUM, convertila a TEXT
+                    if 'stage' in columns:
+                        # Verifica se è un ENUM
+                        stage_col = next((col for col in inspector.get_columns('leads') if col['name'] == 'stage'), None)
+                        if stage_col:
+                            col_type = stage_col.get('type')
+                            col_type_str = str(col_type)
+                            type_name = type(col_type).__name__ if col_type else ''
+                            
+                            # Rileva ENUM in vari modi
+                            is_enum = (
+                                'ENUM' in col_type_str.upper() or 
+                                'enum' in col_type_str.lower() or
+                                'ENUM' in type_name.upper() or
+                                'EnumType' in type_name
+                            )
+                            
+                            if is_enum:
+                                print("🔄 Conversione colonna stage da ENUM a TEXT (lazy init)...")
+                                try:
+                                    # Salva valori esistenti PRIMA di eliminare la colonna
+                                    existing_values = db.execute(text("SELECT id, stage FROM leads")).fetchall()
+                                    print(f"📊 Trovati {len(existing_values)} lead da preservare durante conversione (lazy init)")
+                                    
+                                    # Rimuovi ENUM e ricrea come TEXT
+                                    db.execute(text("ALTER TABLE leads DROP COLUMN stage CASCADE"))
+                                    db.execute(text("ALTER TABLE leads ADD COLUMN stage TEXT DEFAULT 'optin'"))
+                                    
+                                    # Ripristina valori
+                                    for row in existing_values:
+                                        stage_value = str(row[1]) if row[1] else 'optin'
+                                        db.execute(
+                                            text("UPDATE leads SET stage = :stage WHERE id = :id"),
+                                            {"stage": stage_value, "id": row[0]}
+                                        )
+                                    db.commit()
+                                    print(f"✅ Colonna stage convertita da ENUM a TEXT (lazy init, {len(existing_values)} lead preservati)")
+                                except Exception as e:
+                                    print(f"⚠️ Errore conversione stage: {e}")
+                                    import traceback
+                                    traceback.print_exc()
+                                    db.rollback()
+                    else:
+                        # Aggiungi stage se mancante
+                        try:
+                            db.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS stage TEXT DEFAULT 'optin'"))
+                            db.commit()
+                            print("✅ Colonna stage aggiunta (lazy init)")
+                        except Exception:
+                            try:
+                                db.execute(text("ALTER TABLE leads ADD COLUMN stage TEXT DEFAULT 'optin'"))
+                                db.commit()
+                                print("✅ Colonna stage aggiunta (lazy init)")
+                            except Exception as e:
+                                print(f"⚠️ Errore aggiunta stage: {e}")
+                                db.rollback()
+                
+                _db_initialized = True
+                print("✅ Database Sales inizializzato al primo accesso")
+            except Exception as e:
+                print(f"⚠️ Errore inizializzazione database al primo accesso: {e}")
+                # Continua comunque, potrebbe essere un problema temporaneo
         yield db
     finally:
         db.close()
 
-# Inizializza il database quando il modulo viene caricato
-print("🚀 Sales Service: Inizializzazione DB...")
-init_db()
+# NON inizializzare il database durante l'import - verrà fatto al primo accesso
+# Questo evita di bloccare l'avvio dell'applicazione se il database non è disponibile
+print("🚀 Sales Service: Database verrà inizializzato al primo accesso...")
 
 # --- WEBHOOK CLICKFUNNELS ---
+def trigger_workflow_for_clickfunnel_lead(lead_id: str, stage: str):
+    """Chiama il webhook del productivity-service per triggerare workflow quando un lead viene creato da ClickFunnel"""
+    try:
+        PRODUCTIVITY_SERVICE_URL = os.getenv("PRODUCTIVITY_SERVICE_URL") or os.getenv("BASE_URL") or os.getenv("GATEWAY_URL")
+        if not PRODUCTIVITY_SERVICE_URL:
+            raise ValueError("PRODUCTIVITY_SERVICE_URL, BASE_URL o GATEWAY_URL deve essere configurato")
+        response = requests.post(
+            f"{PRODUCTIVITY_SERVICE_URL}/api/hooks/clickfunnel-lead-created",
+            json={
+                "lead_id": lead_id,
+                "stage": stage
+            },
+            timeout=5
+        )
+        if response.status_code == 200:
+            print(f"✅ Workflow ClickFunnel triggerato per lead {lead_id} in stage {stage}")
+        else:
+            print(f"⚠️ Errore trigger workflow ClickFunnel: {response.status_code}")
+    except Exception as e:
+        print(f"⚠️ Errore chiamata webhook workflow ClickFunnel: {e}")
+
 @app.post("/webhook/clickfunnels")
-async def clickfunnels_webhook(request: Request, db: Session = Depends(get_db)):
-    """Endpoint pubblico per ricevere dati da ClickFunnels."""
+async def clickfunnels_webhook(request: Request, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    """
+    Endpoint pubblico per ricevere dati da ClickFunnels.
+    URL configurabile via CLICKFUNNEL_WEBHOOK_URL (es. https://www.evoluzioneimprese.com/webhook/clickfunnels)
+    Stage iniziale configurabile via CLICKFUNNEL_INITIAL_STAGE (default: "optin")
+    """
     try:
         content_type = request.headers.get('content-type', '')
         
@@ -72,10 +275,18 @@ async def clickfunnels_webhook(request: Request, db: Session = Depends(get_db)):
             db.commit()
             return {"status": "updated", "id": existing.id}
 
-        initial_stage = "optin"
-        first_stage = db.query(PipelineStageModel).order_by(PipelineStageModel.index).first()
-        if first_stage:
-            initial_stage = first_stage.key
+        # Determina stage iniziale: prima da env, poi primo stage disponibile, poi default "optin"
+        initial_stage = os.getenv("CLICKFUNNEL_INITIAL_STAGE", "optin")
+        
+        # Se lo stage configurato non esiste, cerca il primo stage disponibile
+        configured_stage = db.query(PipelineStageModel).filter(PipelineStageModel.key == initial_stage).first()
+        if not configured_stage:
+            first_stage = db.query(PipelineStageModel).order_by(PipelineStageModel.index).first()
+            if first_stage:
+                initial_stage = first_stage.key
+                print(f"⚠️ Stage {os.getenv('CLICKFUNNEL_INITIAL_STAGE')} non trovato, uso primo stage disponibile: {initial_stage}")
+            else:
+                print(f"⚠️ Nessuno stage configurato, uso default: {initial_stage}")
 
         new_lead = LeadModel(
             id=str(uuid.uuid4()),
@@ -86,18 +297,34 @@ async def clickfunnels_webhook(request: Request, db: Session = Depends(get_db)):
             stage=initial_stage,
             source="clickfunnels",
             clickfunnels_data=data,
-            notes="Importato da Webhook"
+            notes="Importato da Webhook ClickFunnel"
         )
         
         db.add(new_lead)
         db.commit()
         db.refresh(new_lead)
-        print(f"✅ Nuovo Lead creato: {email} in stage {initial_stage}")
         
-        return {"status": "created", "id": new_lead.id}
+        # Verifica che il lead sia stato salvato correttamente
+        verify_lead = db.query(LeadModel).filter(LeadModel.id == new_lead.id).first()
+        if not verify_lead:
+            print(f"❌ ERRORE CRITICO: Lead {new_lead.id} non trovato dopo commit!")
+            return {"status": "error", "detail": "Errore salvataggio lead"}
+        
+        total_leads = db.query(LeadModel).count()
+        print(f"✅ Nuovo Lead creato da ClickFunnel: {email} (ID: {new_lead.id}, Stage: {initial_stage}, Totale lead nel DB: {total_leads})")
+        
+        # Triggera workflow per ClickFunnel (in background)
+        background_tasks.add_task(trigger_workflow_for_clickfunnel_lead, new_lead.id, initial_stage)
+        
+        # Triggera anche workflow per stage change (se ci sono workflow configurati per lo stage)
+        background_tasks.add_task(trigger_workflow_for_stage_change, new_lead.id, initial_stage, None)
+        
+        return {"status": "created", "id": new_lead.id, "stage": initial_stage}
 
     except Exception as e:
         print(f"❌ Errore Webhook: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return {"status": "error", "detail": str(e)}
 
 # --- API STAGES ---
@@ -169,7 +396,16 @@ def get_leads(stage: str = None, db: Session = Depends(get_db)):
     query = db.query(LeadModel)
     if stage:
         query = query.filter(LeadModel.stage == stage)
-    return query.order_by(LeadModel.created_at.desc()).all()
+    leads = query.order_by(LeadModel.created_at.desc()).all()
+    
+    # Log per debugging (solo se ci sono problemi)
+    total_count = db.query(LeadModel).count()
+    if total_count == 0:
+        print("⚠️ ATTENZIONE: Nessun lead trovato nel database")
+    elif stage:
+        print(f"📊 Recuperati {len(leads)} lead per stage '{stage}' (totale nel DB: {total_count})")
+    
+    return leads
 
 @app.post("/api/leads", response_model=Lead)
 def create_lead(lead_in: LeadCreate, db: Session = Depends(get_db)):
@@ -198,15 +434,30 @@ def create_lead(lead_in: LeadCreate, db: Session = Depends(get_db)):
     db.add(new_lead)
     db.commit()
     db.refresh(new_lead)
-    print(f"✅ Lead creato manualmente: {lead_in.email}")
+    
+    # Verifica che il lead sia stato salvato correttamente
+    verify_lead = db.query(LeadModel).filter(LeadModel.id == new_lead.id).first()
+    if not verify_lead:
+        print(f"❌ ERRORE CRITICO: Lead {new_lead.id} non trovato dopo commit!")
+        raise HTTPException(status_code=500, detail="Errore salvataggio lead")
+    
+    total_leads = db.query(LeadModel).count()
+    print(f"✅ Lead creato manualmente: {lead_in.email} (ID: {new_lead.id}, Stage: {stage}, Totale lead nel DB: {total_leads})")
     return new_lead
 
 def trigger_workflow_for_stage_change(lead_id: str, new_stage: str, previous_stage: str):
-    """Chiama il webhook del productivity-service per triggerare workflow quando un lead cambia stage"""
+    """
+    Chiama il webhook del productivity-service per triggerare workflow quando un lead cambia stage.
+    Questo è un evento trigger che attiva automaticamente i workflow configurati per lo stage specifico.
+    """
     try:
         PRODUCTIVITY_SERVICE_URL = os.getenv("PRODUCTIVITY_SERVICE_URL") or os.getenv("BASE_URL") or os.getenv("GATEWAY_URL")
         if not PRODUCTIVITY_SERVICE_URL:
-            raise ValueError("PRODUCTIVITY_SERVICE_URL, BASE_URL o GATEWAY_URL deve essere configurato")
+            print("⚠️ PRODUCTIVITY_SERVICE_URL non configurato, workflow non triggerati")
+            return
+        
+        print(f"🔔 Evento trigger: Lead {lead_id} cambia stage '{previous_stage}' -> '{new_stage}'")
+        
         response = requests.post(
             f"{PRODUCTIVITY_SERVICE_URL}/api/hooks/lead-stage-changed",
             json={
@@ -214,17 +465,30 @@ def trigger_workflow_for_stage_change(lead_id: str, new_stage: str, previous_sta
                 "new_stage": new_stage,
                 "previous_stage": previous_stage
             },
-            timeout=5
+            timeout=10  # Aumentato timeout per workflow complessi
         )
+        
         if response.status_code == 200:
-            print(f"✅ Workflow triggerato per lead {lead_id} in stage {new_stage}")
+            result = response.json()
+            triggered_count = len(result.get("triggered_workflows", []))
+            if triggered_count > 0:
+                print(f"✅ {triggered_count} workflow triggerati per lead {lead_id} in stage '{new_stage}'")
+            else:
+                print(f"ℹ️ Nessun workflow configurato per stage '{new_stage}' (lead {lead_id})")
         else:
-            print(f"⚠️ Errore trigger workflow: {response.status_code}")
+            print(f"⚠️ Errore trigger workflow: {response.status_code} - {response.text[:200]}")
+    except requests.exceptions.Timeout:
+        print(f"⚠️ Timeout chiamata webhook workflow per lead {lead_id}")
     except Exception as e:
         print(f"⚠️ Errore chiamata webhook workflow: {e}")
+        import traceback
+        traceback.print_exc()
 
 @app.put("/api/leads/{lead_id}", response_model=Lead)
 def update_lead(lead_id: str, lead_in: LeadUpdate, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    """
+    Aggiorna un lead. Se lo stage cambia, triggera automaticamente i workflow configurati.
+    """
     lead = db.query(LeadModel).filter(LeadModel.id == lead_id).first()
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
@@ -238,13 +502,18 @@ def update_lead(lead_id: str, lead_in: LeadUpdate, background_tasks: BackgroundT
         if value is not None:
             if key == "stage" and value != previous_stage:
                 stage_changed = True
+                print(f"🔄 Lead {lead_id}: Stage cambiato da '{previous_stage}' a '{value}'")
             setattr(lead, key, value)
+    
+    # Aggiorna updated_at
+    lead.updated_at = datetime.datetime.utcnow()
         
     db.commit()
     db.refresh(lead)
     
-    # Se lo stage è cambiato, triggera workflow
+    # Se lo stage è cambiato, triggera workflow in background
     if stage_changed and lead.stage:
+        print(f"🚀 Trigger workflow per lead {lead_id}: stage '{previous_stage}' -> '{lead.stage}'")
         background_tasks.add_task(trigger_workflow_for_stage_change, lead_id, lead.stage, previous_stage)
     
     return lead
@@ -263,3 +532,67 @@ def delete_lead(lead_id: str, db: Session = Depends(get_db)):
 @app.get("/health")
 def health_check():
     return {"status": "healthy", "service": "sales-service"}
+
+@app.get("/api/events/triggers")
+def get_trigger_events(db: Session = Depends(get_db)):
+    """
+    Restituisce informazioni sugli eventi trigger configurati per gli stage changes.
+    Utile per verificare quali workflow vengono attivati quando un lead cambia stage.
+    """
+    try:
+        PRODUCTIVITY_SERVICE_URL = os.getenv("PRODUCTIVITY_SERVICE_URL") or os.getenv("BASE_URL") or os.getenv("GATEWAY_URL")
+        
+        # Recupera tutti gli stage
+        stages = db.query(PipelineStageModel).order_by(PipelineStageModel.index).all()
+        
+        trigger_info = {
+            "service_url": PRODUCTIVITY_SERVICE_URL or "Non configurato",
+            "endpoint": "/api/hooks/lead-stage-changed",
+            "stages": []
+        }
+        
+        for stage in stages:
+            trigger_info["stages"].append({
+                "key": stage.key,
+                "label": stage.label,
+                "workflow_endpoint": f"{PRODUCTIVITY_SERVICE_URL}/api/hooks/lead-stage-changed" if PRODUCTIVITY_SERVICE_URL else None,
+                "description": f"Quando un lead passa allo stage '{stage.label}', vengono triggerati i workflow configurati con trigger_pipeline_stage='{stage.key}'"
+            })
+        
+        return trigger_info
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Errore recupero trigger events: {str(e)}")
+
+# Diagnostic endpoint per verificare persistenza dati
+@app.get("/api/diagnostics")
+def diagnostics(db: Session = Depends(get_db)):
+    """Endpoint di diagnostica per verificare lo stato del database e la persistenza dei dati"""
+    try:
+        leads_count = db.query(LeadModel).count()
+        stages_count = db.query(PipelineStageModel).count()
+        
+        # Conta lead per stage
+        leads_by_stage = {}
+        for stage in db.query(PipelineStageModel).all():
+            count = db.query(LeadModel).filter(LeadModel.stage == stage.key).count()
+            leads_by_stage[stage.key] = count
+        
+        # Informazioni database
+        db_info = {
+            "database_url": DATABASE_URL.split("@")[-1] if "@" in DATABASE_URL else "local",
+            "is_sqlite": DATABASE_URL.startswith("sqlite"),
+            "is_production": IS_REAL_PRODUCTION
+        }
+        
+        return {
+            "status": "ok",
+            "database": db_info,
+            "counts": {
+                "total_leads": leads_count,
+                "total_stages": stages_count,
+                "leads_by_stage": leads_by_stage
+            },
+            "message": "Database operativo, dati persistenti" if leads_count > 0 or stages_count > 0 else "Database vuoto (normale se appena inizializzato)"
+        }
+    except Exception as e:
+        return {"status": "error", "detail": str(e)}

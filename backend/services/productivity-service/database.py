@@ -15,14 +15,35 @@ DATABASE_URL = os.environ.get("DATABASE_URL")
 if DATABASE_URL and DATABASE_URL.startswith("postgresql://"):
     DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
 
-# Connection pool size configurabile - ridotto per evitare saturazione in produzione
-DB_POOL_MIN_SIZE = int(os.environ.get("DB_POOL_MIN_SIZE", "0"))  # 0 = nessuna connessione iniziale
-DB_POOL_MAX_SIZE = int(os.environ.get("DB_POOL_MAX_SIZE", "1"))  # 1 = massimo 1 connessione per servizio
+# Aggiungi parametri SSL per Render.com se non presenti
+# Render.com richiede SSL, ma asyncpg ha bisogno di sslmode=prefer nell'URL
+if DATABASE_URL and DATABASE_URL.startswith("postgresql+asyncpg://") and "sslmode" not in DATABASE_URL:
+    separator = "&" if "?" in DATABASE_URL else "?"
+    DATABASE_URL = f"{DATABASE_URL}{separator}sslmode=prefer"
+    print(f"🔒 SSL mode aggiunto all'URL per Render.com")
 
-database = Database(DATABASE_URL, min_size=DB_POOL_MIN_SIZE, max_size=DB_POOL_MAX_SIZE) if DATABASE_URL else None
+# Connection pool size configurabile - default come prima (nessun parametro = default)
+DB_POOL_MIN_SIZE = int(os.environ.get("DB_POOL_MIN_SIZE", "0"))  # Default 0 (come Database() senza parametri)
+DB_POOL_MAX_SIZE = int(os.environ.get("DB_POOL_MAX_SIZE", "10"))  # Default 10 (come Database() senza parametri)
+
+# Se non configurato, usa default (come prima)
+if not DATABASE_URL:
+    database = None
+elif DB_POOL_MIN_SIZE == 0 and DB_POOL_MAX_SIZE == 10:
+    database = Database(DATABASE_URL)
+else:
+    database = Database(DATABASE_URL, min_size=DB_POOL_MIN_SIZE, max_size=DB_POOL_MAX_SIZE)
+
+# Flag per tracciare se il database è stato inizializzato
+_db_initialized = False
 
 async def init_database():
-    if database:
+    """Inizializza il database. Non blocca l'avvio se fallisce."""
+    global _db_initialized
+    if not database:
+        return
+    
+    try:
         await database.connect()
         print("✅ Database connesso (Productivity Service)")
         
@@ -37,11 +58,12 @@ async def init_database():
             rows = await database.fetch_all(check_query)
             columns = [r['column_name'] for r in rows]
             
-            # Se rileviamo colonne legacy che causano conflitti (es. list_id), eliminiamo la tabella per ricrearla pulita
+            # ⚠️ IMPORTANTE: NON eliminiamo mai la tabella tasks anche se ci sono colonne legacy
+            # Le colonne legacy verranno ignorate, ma i dati devono essere preservati
+            # Se ci sono colonne legacy, aggiungiamo solo le nuove colonne necessarie
             if 'list_id' in columns or 'date_created' in columns:
-                print("🧹 Rilevato schema legacy incompatibile. Eliminazione tabella 'tasks' e ricreazione...")
-                await database.execute("DROP TABLE tasks")
-                print("✅ Tabella 'tasks' eliminata.")
+                print("⚠️ Rilevato schema legacy (list_id/date_created). Colonne legacy verranno ignorate, dati preservati.")
+                # NON fare DROP TABLE - preserva i dati esistenti
             
             # Altrimenti procedi con le normali alterazioni se la tabella esiste ancora (caso non legacy)
             elif 'tasks' in [r[0] for r in await database.fetch_all("SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname != 'pg_catalog' AND schemaname != 'information_schema'")]:
@@ -218,23 +240,43 @@ async def init_database():
                 )
             print("✅ Default statuses seeded.")
 
-        # Esegui seed templates se necessario
-        try:
-            from seed_data import seed_templates
-            await seed_templates(database)
-        except ImportError:
-            # Fallback: aggiungi il percorso corrente al sys.path
-            import sys
-            import os
-            current_dir = os.path.dirname(os.path.abspath(__file__))
-            if current_dir not in sys.path:
-                sys.path.insert(0, current_dir)
-            try:
-                from seed_data import seed_templates
-                await seed_templates(database)
-            except ImportError as e:
-                print(f"⚠️ Impossibile importare seed_data: {e}. Saltando seed templates.")
+        # Seed templates rimosso: i workflow vengono creati solo dall'utente tramite l'interfaccia
+        # Nessun workflow di default viene inserito automaticamente
+        
+        _db_initialized = True
+        print("✅ Database Productivity Service inizializzato con successo")
+    except Exception as e:
+        error_msg = str(e)
+        print(f"⚠️ Errore inizializzazione database Productivity Service: {error_msg[:200]}...")
+        print(f"⚠️ Il database verrà inizializzato al primo accesso.")
+        # Non bloccare l'avvio, l'inizializzazione verrà fatta lazy
+
+async def ensure_database_initialized():
+    """Garantisce che il database sia connesso e inizializzato. Usa lazy initialization."""
+    global _db_initialized
+    if _db_initialized:
+        return
+    
+    if not database:
+        raise Exception("Database non configurato")
+    
+    try:
+        # Prova a connettere se non connesso
+        if not database.is_connected:
+            await database.connect()
+            print("✅ Database connesso (Productivity Service - lazy)")
+        
+        # Se non inizializzato, inizializza ora
+        if not _db_initialized:
+            await init_database()
+    except Exception as e:
+        error_msg = str(e)
+        print(f"⚠️ Errore inizializzazione database lazy: {error_msg[:200]}...")
+        # Rilancia l'eccezione per permettere al chiamante di gestirla
+        raise
 
 async def close_database():
+    global _db_initialized
     if database:
         await database.disconnect()
+        _db_initialized = False
