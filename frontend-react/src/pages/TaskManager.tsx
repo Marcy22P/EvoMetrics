@@ -424,13 +424,14 @@ const TaskManager: React.FC = () => {
       let category = null;
       if (task.category_id) {
           const found = categories.find(c => c.id === task.category_id);
-          if (found) category = { label: found.label, tone: found.tone, type: found.id };
+          if (found) category = { label: found.label, tone: found.tone, type: found.id, icon: found.icon };
       }
       if (!category) {
           category = inferTaskCategory(task, categories);
       }
       
-      const iconSource = getTaskIcon(task.icon); // Fallback icona legacy o custom se non category
+      // Usa l'icona della categoria, poi fallback all'icona del task, poi default
+      const iconSource = getTaskIcon(category?.icon || task.icon);
 
     return (
       <IndexTable.Row

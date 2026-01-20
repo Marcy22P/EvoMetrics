@@ -39,12 +39,19 @@ export const getTaskIcon = (iconName?: string) => {
     return (iconName && TASK_ICONS_MAP[iconName]) ? TASK_ICONS_MAP[iconName] : ClipboardIcon;
 };
 
+export interface InferredCategory {
+    label: string;
+    tone: string;
+    type: string;
+    icon?: string;  // Icona della categoria
+}
+
 export const inferTaskCategory = (
     task: { title?: string, icon?: string, extendedProps?: any, category_id?: string }, 
     categories: TaskCategory[]
-): { label: string, tone: string, type: string } | null => {
+): InferredCategory | null => {
     const title = (task.title || '').toLowerCase();
-    const icon = task.icon || task.extendedProps?.icon;
+    const taskIcon = task.icon || task.extendedProps?.icon;
     const categoryId = task.category_id || task.extendedProps?.category_id;
     
     // Ordina categorie
@@ -54,27 +61,27 @@ export const inferTaskCategory = (
     if (categoryId) {
         const found = sortedCats.find(c => c.id === categoryId);
         if (found) {
-            return { label: found.label, tone: found.tone, type: found.id };
+            return { label: found.label, tone: found.tone, type: found.id, icon: found.icon };
         }
     }
 
     for (const cat of sortedCats) {
         // Match Icon
-        if (icon && cat.icon === icon) {
-             return { label: cat.label, tone: cat.tone, type: cat.id };
+        if (taskIcon && cat.icon === taskIcon) {
+             return { label: cat.label, tone: cat.tone, type: cat.id, icon: cat.icon };
         }
         // Match Keywords
         if (cat.keywords && cat.keywords.some(k => title.includes(k.toLowerCase()))) {
-             return { label: cat.label, tone: cat.tone, type: cat.id };
+             return { label: cat.label, tone: cat.tone, type: cat.id, icon: cat.icon };
         }
     }
     
     // Fallback: cerca categoria con keywords vuote (spesso usata come default 'Operativa')
     const defaultCat = sortedCats.find(c => c.keywords.length === 0);
     if (defaultCat) {
-        return { label: defaultCat.label, tone: defaultCat.tone, type: defaultCat.id };
+        return { label: defaultCat.label, tone: defaultCat.tone, type: defaultCat.id, icon: defaultCat.icon };
     }
 
-    return { label: 'Generico', tone: 'base', type: 'generic' };
+    return { label: 'Generico', tone: 'base', type: 'generic', icon: 'admin' };
 };
 

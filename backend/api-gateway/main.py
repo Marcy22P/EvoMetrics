@@ -294,14 +294,96 @@ async def get_dashboard_summary(request: Request, _: str = Depends(verify_token)
 if FRONTEND_DIR.exists():
     app.mount("/assets", StaticFiles(directory=FRONTEND_DIR / "assets"), name="assets")
 
-# Health check
+# Health check - endpoint leggero senza auth per monitoraggio
 @app.get("/health")
 async def health_check():
-    """Health check endpoint"""
+    """Health check endpoint semplice"""
+    return {"status": "ok"}
+
+@app.get("/api/health/services")
+async def services_health():
+    """
+    Health check dettagliato per tutti i servizi.
+    Non richiede autenticazione - usato dalla pagina Integrazioni.
+    Verifica solo che i servizi siano caricati correttamente.
+    """
+    services_status = {}
+    
+    # Verifica servizi interni (sono già caricati come moduli)
+    internal_services = {
+        'auth': auth_app,
+        'users': user_app,
+        'sales': sales_app,
+        'productivity': productivity_app,
+        'clienti': clienti_app,
+        'preventivi': preventivi_app,
+        'contratti': contratti_app,
+        'pagamenti': pagamenti_app,
+        'assessments': assessments_app,
+        'gradimento': gradimento_app,
+        'email': email_app,
+        'mcp': mcp_app,
+        'sibill': sibill_app,
+        'shopify': shopify_app,
+    }
+    
+    for name, service in internal_services.items():
+        try:
+            # Verifica che il servizio sia un'app FastAPI valida
+            if service and hasattr(service, 'router'):
+                services_status[name] = {
+                    'status': 'online',
+                    'type': 'internal'
+                }
+            else:
+                services_status[name] = {
+                    'status': 'offline',
+                    'type': 'internal',
+                    'error': 'Service not loaded'
+                }
+        except Exception as e:
+            services_status[name] = {
+                'status': 'offline',
+                'type': 'internal',
+                'error': str(e)
+            }
+    
+    # Stato database
+    try:
+        if database:
+            if database.is_connected:
+                services_status['database'] = {'status': 'online', 'type': 'internal'}
+            else:
+                # Prova a connettere lazy
+                await database.connect()
+                services_status['database'] = {'status': 'online', 'type': 'internal'}
+        else:
+            services_status['database'] = {'status': 'offline', 'type': 'internal', 'error': 'Not configured'}
+    except Exception as e:
+        services_status['database'] = {'status': 'offline', 'type': 'internal', 'error': str(e)[:100]}
+    
+    # Servizi esterni - stato configurazione (non chiamate esterne)
+    external_config = {
+        'google_drive': bool(os.getenv('GOOGLE_CLIENT_ID')),
+        'google_calendar': bool(os.getenv('GOOGLE_CLIENT_ID')),
+        'clickfunnel': True,  # Webhook sempre disponibile
+    }
+    
+    for name, configured in external_config.items():
+        services_status[name] = {
+            'status': 'configured' if configured else 'not_configured',
+            'type': 'external'
+        }
+    
+    # Conta servizi online
+    online_count = sum(1 for s in services_status.values() if s.get('status') == 'online')
+    total_internal = sum(1 for s in services_status.values() if s.get('type') == 'internal')
+    
     return {
-        "status": "healthy",
-        "gateway": "running",
-        "services": "unified"
+        'status': 'ok' if online_count == total_internal else 'degraded',
+        'summary': f'{online_count}/{total_internal} internal services online',
+        'services': services_status,
+        'environment': 'production' if os.getenv('RENDER') else 'development'
     }
 
 # Serve frontend React (deve essere l'ultimo route per catturare tutto il resto)

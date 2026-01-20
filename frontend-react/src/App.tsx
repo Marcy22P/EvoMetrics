@@ -17,7 +17,7 @@ import Gradimento from './pages/Gradimento' // Legacy
 import GradimentoForm from './pages/GradimentoForm' // Nuovo Form Polaris
 import GradimentoList from './pages/GradimentoList' // Private List (Punto 6)
 import { AuthProvider, useAuth } from './hooks/useAuth'
-import AccountsManager from './pages/AccountsManager'
+// AccountsManager ora è in Settings.tsx come AccountsManagerPolaris
 import ProfileForm from './pages/ProfileForm'
 import ShopifyIntegration from './pages/ShopifyIntegration' // Ex Clienti
 import AnagraficaClienti from './pages/AnagraficaClienti' // Unified Registry (Punto 3)
@@ -31,7 +31,8 @@ import DrivePage from './pages/DrivePage'
 import Team from './pages/Team'
 import Calendar from './pages/Calendar'
 import CalendarCallback from './pages/CalendarCallback'
-import SettingsTasks from './pages/SettingsTasks'
+// SettingsTasks ora è integrato in Settings.tsx
+import Settings from './pages/Settings'
 import SalesPipeline from './pages/SalesPipeline'
 // import TeamCollaborators from './pages/TeamCollaborators' // Used internally by Team.tsx
 import ShopifyLayout from './components/Layout/ShopifyLayout' // Nuovo Layout Polaris
@@ -263,19 +264,25 @@ const AppRoutes: React.FC = () => {
             </RequirePermission>
         } />
 
-        {/* IMPOSTAZIONI */}
+        {/* IMPOSTAZIONI - Con sub-routes */}
+        <Route path="/impostazioni" element={<Navigate to="/impostazioni/accounts" replace />} />
         <Route path="/impostazioni/accounts" element={
-          <RequirePermission perm="users:write">
-            <AccountsManager />
+          <RequirePermission perm="users:read">
+            <Settings tab="accounts" />
           </RequirePermission>
         } />
-        
         <Route path="/impostazioni/tasks" element={
           <RequirePermission perm="admin">
-            <SettingsTasks />
+            <Settings tab="tasks" />
+          </RequirePermission>
+        } />
+        <Route path="/impostazioni/integrations" element={
+          <RequirePermission perm="admin">
+            <Settings tab="integrations" />
           </RequirePermission>
         } />
         
+        {/* Redirect vecchie route */}
         <Route path="/accounts_manager" element={<Navigate to="/impostazioni/accounts" replace />} />
         
         <Route path="/profile" element={<ProfileForm />} />

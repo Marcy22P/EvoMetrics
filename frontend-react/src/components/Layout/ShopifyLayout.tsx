@@ -12,7 +12,8 @@ import {
   CalendarIcon,
   TeamIcon,
   ListBulletedIcon,
-  TargetIcon
+  TargetIcon,
+  SettingsIcon
 } from '@shopify/polaris-icons';
 import { useAuth } from '../../hooks/useAuth';
 import './ShopifyLayout.css';
@@ -225,7 +226,7 @@ const ShopifyLayout: React.FC = () => {
             icon: ListBulletedIcon,
             url: '/task',
             onClick: () => navigate('/task'),
-            selected: location.pathname.startsWith('/task') || location.pathname.startsWith('/drive') || location.pathname.startsWith('/impostazioni/tasks'),
+            selected: location.pathname.startsWith('/task') || location.pathname.startsWith('/drive'),
             subNavigationItems: [
               {
                   label: 'Task',
@@ -236,11 +237,6 @@ const ShopifyLayout: React.FC = () => {
                   label: 'Drive',
                   url: '/drive',
                   onClick: () => navigate('/drive'),
-              },
-              {
-                  label: 'Categorie Task',
-                  url: '/impostazioni/tasks',
-                  onClick: () => navigate('/impostazioni/tasks'),
               }
             ]
           },
@@ -280,11 +276,28 @@ const ShopifyLayout: React.FC = () => {
         title="Impostazioni"
         items={[
             {
-            label: 'Gestione Account',
-            icon: PersonIcon,
+            label: 'Impostazioni',
+            icon: SettingsIcon,
             url: '/impostazioni/accounts',
             onClick: () => navigate('/impostazioni/accounts'),
-            selected: location.pathname.startsWith('/impostazioni/accounts')
+            selected: location.pathname.startsWith('/impostazioni'),
+            subNavigationItems: [
+              {
+                label: 'Gestione Account',
+                url: '/impostazioni/accounts',
+                onClick: () => navigate('/impostazioni/accounts'),
+              },
+              {
+                label: 'Categorie Task',
+                url: '/impostazioni/tasks',
+                onClick: () => navigate('/impostazioni/tasks'),
+              },
+              {
+                label: 'Integrazioni',
+                url: '/impostazioni/integrations',
+                onClick: () => navigate('/impostazioni/integrations'),
+              }
+            ]
             }
         ]}
       />

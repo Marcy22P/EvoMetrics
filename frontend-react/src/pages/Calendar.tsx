@@ -1,5 +1,5 @@
 import React, { useRef, useState, useCallback, useEffect } from 'react';
-import { Page, Card, Box, ButtonGroup, Button, Text, InlineStack, Spinner, Modal, Icon, Badge, Divider, BlockStack, Avatar } from '@shopify/polaris';
+import { Page, Card, Box, ButtonGroup, Button, Text, InlineStack, Spinner, Modal, Icon, Badge, Divider, BlockStack, Avatar, Banner, Select } from '@shopify/polaris';
 import FullCalendar from '@fullcalendar/react';
 import dayGridPlugin from '@fullcalendar/daygrid';
 import timeGridPlugin from '@fullcalendar/timegrid';
@@ -11,17 +11,19 @@ import {
   CalendarIcon,
   ClockIcon,
   ExternalIcon,
-  WorkIcon // Per il cliente
+  WorkIcon,
+  CheckCircleIcon
 } from '@shopify/polaris-icons';
 import { useAuth } from '../hooks/useAuth';
 import calendarApi from '../services/calendarApi';
+import type { UserCalendarInfo } from '../services/calendarApi';
 import { productivityApi } from '../services/productivityApi';
 import { usersApi } from '../services/usersApi';
 import { clientiApi } from '../services/clientiApi';
 import { inferTaskCategory, getTaskIcon } from '../utils/taskUtils';
 import { useTasksConfiguration } from '../contexts/TasksConfigurationContext';
 import toast from 'react-hot-toast';
-import './Calendar.css'; // Reintrodurrò un CSS minimale per lo stile degli eventi
+import './Calendar.css';
 
 const Calendar: React.FC = () => {
   const { categories } = useTasksConfiguration();
@@ -48,6 +50,16 @@ const Calendar: React.FC = () => {
 
   // Range corrente visualizzato
   const [dateRange, setDateRange] = useState<{ start: Date; end: Date } | null>(null);
+
+  // Google Calendar Connection
+  const [calendarConnected, setCalendarConnected] = useState<boolean | null>(null);
+  const [calendarEmail, setCalendarEmail] = useState<string>('');
+  const [connectingCalendar, setConnectingCalendar] = useState(false);
+
+  // Admin: Lista utenti con calendario collegato
+  const [connectedUsers, setConnectedUsers] = useState<UserCalendarInfo[]>([]);
+  const [selectedUserFilter, setSelectedUserFilter] = useState<string>('all');
+  const isAdmin = user?.role === 'admin' || user?.role === 'superadmin';
 
   const handleViewChange = useCallback((view: string) => {
     const api = calendarRef.current?.getApi();
@@ -83,36 +95,103 @@ const Calendar: React.FC = () => {
     loadData();
   }, []);
 
-  // Fetch dati Google per range
-  const fetchCalendarData = useCallback(async (start: Date, end: Date) => {
+  // Verifica stato connessione Google Calendar
+  useEffect(() => {
+    const checkCalendarConnection = async () => {
+      if (!user?.id) return;
+      try {
+        const status = await calendarApi.getConnectionStatus(String(user.id));
+        setCalendarConnected(status.connected);
+        setCalendarEmail(status.calendar_email || '');
+      } catch (e) {
+        console.warn('Errore verifica calendario:', e);
+        setCalendarConnected(false);
+      }
+    };
+    checkCalendarConnection();
+  }, [user?.id]);
+
+  // Admin: Carica lista utenti con calendario collegato
+  useEffect(() => {
+    const loadConnectedUsers = async () => {
+      if (!isAdmin || !user?.id) return;
+      try {
+        const users = await calendarApi.getConnectedUsers(String(user.id));
+        setConnectedUsers(users);
+      } catch (e) {
+        console.warn('Errore caricamento utenti calendario:', e);
+      }
+    };
+    loadConnectedUsers();
+  }, [isAdmin, user?.id]);
+
+  // Handler per connettere Google Calendar
+  const handleConnectCalendar = async () => {
+    if (!user?.id) return;
+    setConnectingCalendar(true);
+    try {
+      const redirectUri = `${window.location.origin}/calendario/callback`;
+      localStorage.setItem('calendar_oauth_redirect', '/calendario');
+      const authUrl = await calendarApi.getAuthUrl(redirectUri);
+      window.location.href = authUrl;
+    } catch (e: any) {
+      toast.error(e.message || 'Errore avvio collegamento');
+      setConnectingCalendar(false);
+    }
+  };
+
+  // Handler per scollegare Google Calendar
+  const handleDisconnectCalendar = async () => {
+    try {
+      await calendarApi.disconnectCalendar();
+      setCalendarConnected(false);
+      setCalendarEmail('');
+      toast.success('Calendario scollegato');
+    } catch (e: any) {
+      toast.error(e.message || 'Errore scollegamento');
+    }
+  };
+
+  // Fetch dati Google per range (con supporto filtro utente per admin)
+  const fetchCalendarData = useCallback(async (start: Date, end: Date, forceRefresh = false) => {
     if (!user?.id) return;
     
-    const rangeKey = `${start.getFullYear()}-${start.getMonth()}-${end.getFullYear()}-${end.getMonth()}`;
-    if (loadedGoogleRanges.current.has(rangeKey)) {
+    const filterKey = selectedUserFilter === 'all' ? 'all' : selectedUserFilter;
+    const rangeKey = `${start.getFullYear()}-${start.getMonth()}-${end.getFullYear()}-${end.getMonth()}-${filterKey}`;
+    
+    if (!forceRefresh && loadedGoogleRanges.current.has(rangeKey)) {
         return; // Skip se già caricato
     }
 
     setLoading(true);
     try {
-      const isAdmin = user.role === 'admin' || user.role === 'superadmin';
       let newGoogleEvents: any[] = [];
       
       try {
           if (isAdmin) {
-            const res = await calendarApi.getAllEvents(String(user.id), start, end);
+            // Admin: carica eventi di tutti o di un utente specifico
+            const userIds = selectedUserFilter !== 'all' ? [selectedUserFilter] : undefined;
+            const res = await calendarApi.getAllEvents(String(user.id), start, end, userIds);
             newGoogleEvents = res.events || [];
-          } else {
+          } else if (calendarConnected) {
+            // Utente normale: solo i propri eventi (se collegato)
             newGoogleEvents = await calendarApi.getEvents(String(user.id), start, end);
           }
       } catch (e) {
           console.warn('Errore fetch Google Calendar:', e);
       }
 
-      setGoogleEventsCache(prev => {
-          const combined = [...prev, ...newGoogleEvents];
-          const unique = new Map(combined.map(e => [e.id, e]));
-          return Array.from(unique.values());
-      });
+      // Quando cambia filtro, sostituisci invece di aggiungere
+      if (forceRefresh) {
+        setGoogleEventsCache(newGoogleEvents);
+        loadedGoogleRanges.current.clear();
+      } else {
+        setGoogleEventsCache(prev => {
+            const combined = [...prev, ...newGoogleEvents];
+            const unique = new Map(combined.map(e => [e.id, e]));
+            return Array.from(unique.values());
+        });
+      }
       loadedGoogleRanges.current.add(rangeKey);
 
     } catch (error) {
@@ -121,7 +200,17 @@ const Calendar: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [user]);
+  }, [user, isAdmin, calendarConnected, selectedUserFilter]);
+
+  // Mappa tone Polaris → Colori FullCalendar
+  const TONE_COLORS: Record<string, string> = {
+    critical: '#D72C0D',   // Rosso
+    warning: '#B98900',    // Arancione/Giallo
+    success: '#50B83C',    // Verde
+    info: '#4285F4',       // Blu
+    base: '#637381',       // Grigio
+    attention: '#F49342',  // Arancione default
+  };
 
   // Unione Eventi (Memoized)
   useEffect(() => {
@@ -136,18 +225,28 @@ const Calendar: React.FC = () => {
             extendedProps: { type: 'google', ...e }
       }));
 
-      const mappedTasks = (cachedTasks || []).map((t: any) => ({
-            id: `task-${t.id}`,
-            title: `📋 ${t.title}`,
-            start: t.due_date,
-            allDay: true,
-            backgroundColor: t.status === 'done' ? '#50B83C' : '#F49342',
-            borderColor: t.status === 'done' ? '#50B83C' : '#F49342',
-            extendedProps: { type: 'task', ...t }
-      }));
+      const mappedTasks = (cachedTasks || []).map((t: any) => {
+            // Determina il colore dalla categoria
+            const category = inferTaskCategory(t, categories);
+            const tone = category?.tone || 'base';
+            
+            // Task completate: usa verde indipendentemente dalla categoria
+            const isCompleted = t.status === 'done' || t.status === 'completed';
+            const bgColor = isCompleted ? '#50B83C' : (TONE_COLORS[tone] || TONE_COLORS.base);
+            
+            return {
+                id: `task-${t.id}`,
+                title: t.title,
+                start: t.due_date,
+                allDay: true,
+                backgroundColor: bgColor,
+                borderColor: bgColor,
+                extendedProps: { type: 'task', category, ...t }
+            };
+      });
 
       setEvents([...mappedGoogle, ...mappedTasks]);
-  }, [googleEventsCache, cachedTasks]);
+  }, [googleEventsCache, cachedTasks, categories]);
 
 
   // Aggiorna dati quando cambia il range (es. cambio mese)
@@ -156,6 +255,13 @@ const Calendar: React.FC = () => {
         fetchCalendarData(dateRange.start, dateRange.end);
     }
   }, [dateRange, fetchCalendarData]);
+
+  // Refresh quando cambia il filtro utente (admin)
+  useEffect(() => {
+    if (isAdmin && dateRange) {
+        fetchCalendarData(dateRange.start, dateRange.end, true);
+    }
+  }, [selectedUserFilter]);
 
   const handleEventClick = useCallback((info: any) => {
     const eventObj = {
@@ -295,8 +401,78 @@ const Calendar: React.FC = () => {
 
 
 
+  // Opzioni filtro utenti per admin
+  const userFilterOptions = [
+    { label: 'Tutti i calendari', value: 'all' },
+    ...connectedUsers
+      .filter(u => u.is_connected)
+      .map(u => ({
+        label: `${u.nome || u.username} ${u.cognome || ''}`.trim() + (u.calendar_email ? ` (${u.calendar_email})` : ''),
+        value: u.user_id
+      }))
+  ];
+
   return (
     <Page fullWidth title="Calendario">
+      <BlockStack gap="400">
+        {/* Banner connessione Google Calendar (solo se non connesso) */}
+        {calendarConnected === false && (
+          <Banner
+            title="Collega il tuo Google Calendar"
+            tone="info"
+            action={{
+              content: connectingCalendar ? 'Collegamento...' : 'Collega ora',
+              onAction: handleConnectCalendar,
+              loading: connectingCalendar
+            }}
+            onDismiss={() => setCalendarConnected(null)}
+          >
+            <p>Sincronizza i tuoi eventi Google Calendar per visualizzarli insieme alle task.</p>
+          </Banner>
+        )}
+
+        {/* Banner calendario collegato (mostra email) */}
+        {calendarConnected && calendarEmail && (
+          <Banner
+            tone="success"
+            icon={CheckCircleIcon}
+            action={{
+              content: 'Scollega',
+              onAction: handleDisconnectCalendar
+            }}
+          >
+            <InlineStack gap="200" blockAlign="center">
+              <Text as="span">Google Calendar collegato:</Text>
+              <Text as="span" fontWeight="semibold">{calendarEmail}</Text>
+            </InlineStack>
+          </Banner>
+        )}
+
+        {/* Admin: Filtro utenti e panoramica */}
+        {isAdmin && connectedUsers.length > 0 && (
+          <Card>
+            <Box padding="400">
+              <InlineStack align="space-between" blockAlign="center">
+                <BlockStack gap="100">
+                  <Text variant="headingSm" as="h3">Vista Admin - Calendari Team</Text>
+                  <Text variant="bodySm" tone="subdued" as="p">
+                    {connectedUsers.filter(u => u.is_connected).length} di {connectedUsers.length} utenti con calendario collegato
+                  </Text>
+                </BlockStack>
+                <div style={{ width: '300px' }}>
+                  <Select
+                    label="Filtra per utente"
+                    labelHidden
+                    options={userFilterOptions}
+                    value={selectedUserFilter}
+                    onChange={(value) => setSelectedUserFilter(value)}
+                  />
+                </div>
+              </InlineStack>
+            </Box>
+          </Card>
+        )}
+
       <Card>
         <Box padding="400" borderBlockEndWidth="025" borderColor="border">
           <InlineStack align="space-between" blockAlign="center">
@@ -306,9 +482,9 @@ const Calendar: React.FC = () => {
                  {loading && <Spinner size="small" />}
                </InlineStack>
                <ButtonGroup variant="segmented">
-                  <Button icon={ChevronLeftIcon} onClick={handlePrev} />
+                  <Button icon={ChevronLeftIcon} onClick={handlePrev} accessibilityLabel="Mese precedente" />
                   <Button onClick={handleToday}>Oggi</Button>
-                  <Button icon={ChevronRightIcon} onClick={handleNext} />
+                  <Button icon={ChevronRightIcon} onClick={handleNext} accessibilityLabel="Mese successivo" />
                </ButtonGroup>
             </InlineStack>
             <ButtonGroup variant="segmented">
@@ -343,7 +519,11 @@ const Calendar: React.FC = () => {
             eventContent={(eventInfo) => {
                 const { event } = eventInfo;
                 const isTask = event.extendedProps.type === 'task';
-                const iconSource = isTask ? getTaskIcon(event.extendedProps.icon) : CalendarIcon;
+                const category = event.extendedProps.category;
+                // Usa l'icona della categoria o del task, fallback a ClipboardIcon
+                const iconSource = isTask 
+                    ? getTaskIcon(category?.icon || event.extendedProps.icon)
+                    : CalendarIcon;
                 
                 if (eventInfo.view.type === 'listWeek') {
                     return null; 
@@ -352,11 +532,11 @@ const Calendar: React.FC = () => {
                 return (
                     <div className="fc-event-content-custom">
                         <div className="fc-event-icon">
-                            <Icon source={iconSource} tone={isTask ? 'base' : 'subdued'} />
+                            <Icon source={iconSource} tone="base" />
                         </div>
                         <div className="fc-event-text-container">
                             {eventInfo.timeText && !event.allDay && <div className="fc-event-time-custom">{eventInfo.timeText}</div>}
-                            <div className="fc-event-title-custom">{event.title.replace(/^📋\s*/, '')}</div>
+                            <div className="fc-event-title-custom">{event.title}</div>
                         </div>
                     </div>
                 );
@@ -369,6 +549,7 @@ const Calendar: React.FC = () => {
           />
         </div>
       </Card>
+      </BlockStack>
       {renderEventDetailModal()}
     </Page>
   );

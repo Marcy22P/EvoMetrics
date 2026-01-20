@@ -3,6 +3,7 @@ import {
   Page, Layout, Card, ResourceList, ResourceItem, Text, Badge, Button,
   Modal, FormLayout, TextField, Select, InlineStack, BlockStack, Icon, Banner
 } from '@shopify/polaris';
+// BlockStack già importato
 import { PlusIcon, DeleteIcon } from '@shopify/polaris-icons';
 import { useTasksConfiguration } from '../contexts/TasksConfigurationContext';
 import { productivityApi, type TaskCategory, type TaskCategoryCreate } from '../services/productivityApi';
@@ -17,7 +18,11 @@ const TONE_OPTIONS = [
   { label: 'Base (Grigio)', value: 'base' },
 ];
 
-const SettingsTasks: React.FC = () => {
+interface SettingsTasksProps {
+  embedded?: boolean;
+}
+
+const SettingsTasks: React.FC<SettingsTasksProps> = ({ embedded = false }) => {
   const { categories, refreshCategories } = useTasksConfiguration();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingCat, setEditingCat] = useState<TaskCategory | null>(null);
@@ -78,20 +83,19 @@ const SettingsTasks: React.FC = () => {
     }
   };
 
-  return (
-    <Page 
-        title="Impostazioni Categorie Task" 
-        primaryAction={<Button variant="primary" icon={PlusIcon} onClick={() => { setEditingCat(null); setIsModalOpen(true); }}>Nuova Categoria</Button>}
-    >
-      <Layout>
-        <Layout.Section>
-            <Banner tone="info">
-                Le categorie determinano il colore e l'icona dei task. Le "Keywords" servono per assegnare automaticamente la categoria in base al titolo del task.
-            </Banner>
-        </Layout.Section>
-        <Layout.Section>
-          <Card>
-            <ResourceList
+  const content = (
+    <BlockStack gap="400">
+      <InlineStack align="space-between" blockAlign="center">
+        <Text variant="headingLg" as="h2">Categorie Task</Text>
+        <Button variant="primary" icon={PlusIcon} onClick={() => { setEditingCat(null); setIsModalOpen(true); }}>
+          Nuova Categoria
+        </Button>
+      </InlineStack>
+      <Banner tone="info">
+        <p>Le categorie determinano il colore e l'icona dei task. Le "Keywords" servono per assegnare automaticamente la categoria in base al titolo.</p>
+      </Banner>
+      <Card>
+        <ResourceList
               resourceName={{ singular: 'categoria', plural: 'categorie' }}
               items={categories}
               renderItem={(item) => {
@@ -134,9 +138,7 @@ const SettingsTasks: React.FC = () => {
                 );
               }}
             />
-          </Card>
-        </Layout.Section>
-      </Layout>
+      </Card>
 
       <Modal
         open={isModalOpen}
@@ -155,7 +157,23 @@ const SettingsTasks: React.FC = () => {
             <FormLayout>
                 <TextField label="Nome Categoria" value={label} onChange={setLabel} autoComplete="off" />
                 <Select label="Colore / Tono" options={TONE_OPTIONS} value={tone} onChange={setTone} />
-                <Select label="Icona Default" options={TASK_ICONS_OPTIONS} value={icon} onChange={setIcon} />
+                <BlockStack gap="200">
+                    <Text as="span" variant="bodySm">Icona Default</Text>
+                    <InlineStack gap="300" blockAlign="center">
+                        <div style={{ width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f6f6f7', borderRadius: '8px' }}>
+                            <Icon source={getTaskIcon(icon)} tone="base" />
+                        </div>
+                        <div style={{ flex: 1 }}>
+                            <Select 
+                                label="Icona" 
+                                labelHidden 
+                                options={TASK_ICONS_OPTIONS.map(opt => ({ label: opt.label, value: opt.value }))} 
+                                value={icon} 
+                                onChange={setIcon} 
+                            />
+                        </div>
+                    </InlineStack>
+                </BlockStack>
                 <TextField 
                     label="Keywords (separare con virgola)" 
                     value={keywords} 
@@ -167,6 +185,22 @@ const SettingsTasks: React.FC = () => {
             </FormLayout>
         </Modal.Section>
       </Modal>
+    </BlockStack>
+  );
+
+  // Se embedded, ritorna solo il contenuto
+  if (embedded) {
+    return content;
+  }
+
+  // Altrimenti wrappa in Page
+  return (
+    <Page title="Impostazioni Categorie Task">
+      <Layout>
+        <Layout.Section>
+          {content}
+        </Layout.Section>
+      </Layout>
     </Page>
   );
 };
