@@ -132,8 +132,7 @@ const Assessment: React.FC = () => {
     window.dispatchEvent(progressEvent);
     
     // Debug console per verificare funzionamento
-    console.log(`🎯 Progress Update: ${completedFields}/${totalFields} = ${Math.round(progress)}%`);
-    console.log(`📊 Completed fields: ${completedFields}, Total fields: ${totalFields}`);
+    console.log(`[Progress] ${completedFields}/${totalFields} = ${Math.round(progress)}%`);
   };
 
     // Attendi che il DOM sia completamente caricato

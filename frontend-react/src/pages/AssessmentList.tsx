@@ -29,7 +29,6 @@ import {
   PlusIcon,
   RefreshIcon,
   EmailIcon,
-  PhoneIcon,
   CalendarIcon,
   ExternalIcon
 } from '@shopify/polaris-icons';

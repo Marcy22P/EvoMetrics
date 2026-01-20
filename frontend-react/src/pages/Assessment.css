@@ -1,231 +1,394 @@
-/* Assessment Form Styles */
+/* =====================================================
+   ASSESSMENT FORM - STILE MODERNO PROFESSIONALE
+   ===================================================== */
 
+/* Container principale */
 .assessment-container {
-  max-width: 800px;
+  max-width: 720px;
   margin: 0 auto;
-  padding: 2rem;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+  padding: 40px 24px;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Roboto, sans-serif;
+  background: #f5f6f7;
+  min-height: 100vh;
+  color: #1a1a1a;
 }
 
-.assessment-header {
+.assessment-container *,
+.assessment-container *::before,
+.assessment-container *::after {
+  box-sizing: border-box;
+}
+
+/* ===== HEADER ===== */
+.assessment-container .assessment-header {
   text-align: center;
-  margin-bottom: 2rem;
-  padding: 1.5rem;
-  background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-  border-radius: 12px;
-  color: white;
+  margin-bottom: 32px;
+  padding: 40px 32px;
+  background: linear-gradient(145deg, #1e293b 0%, #0f172a 100%);
+  border-radius: 20px;
+  color: #fff;
+  box-shadow: 0 10px 40px rgba(15, 23, 42, 0.25);
 }
 
-.assessment-header h1 {
-  margin: 0 0 0.5rem 0;
-  font-size: 1.75rem;
-  font-weight: 600;
-}
-
-.assessment-header p {
+.assessment-container .assessment-header h1 {
   margin: 0;
-  opacity: 0.8;
-  font-size: 1rem;
+  font-size: 26px;
+  font-weight: 700;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  line-height: 1.3;
 }
 
-/* Progress Bar */
-.progress-container {
-  margin: 1.5rem 0;
+.assessment-container .assessment-header h1 svg {
+  width: 28px;
+  height: 28px;
+  stroke: #22c55e;
 }
 
-.progress-bar {
+.assessment-container .assessment-header .subtitle {
+  margin: 16px 0 0;
+  font-size: 15px;
+  line-height: 1.6;
+  color: rgba(255, 255, 255, 0.8);
+  max-width: 480px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* ===== PROGRESS BAR ===== */
+.assessment-container .progress-container {
+  background: #fff;
+  border-radius: 16px;
+  padding: 20px 24px;
+  margin-bottom: 32px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  border: 1px solid #e5e7eb;
+}
+
+.assessment-container .progress-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.assessment-container .progress-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: #6b7280;
+}
+
+.assessment-container .progress-percentage {
+  font-size: 20px;
+  font-weight: 700;
+  color: #1e293b;
+}
+
+.assessment-container .progress-bar {
   height: 8px;
-  background: rgba(255, 255, 255, 0.2);
+  background: #e5e7eb;
   border-radius: 4px;
   overflow: hidden;
 }
 
-.progress-fill {
+.assessment-container .progress-fill {
   height: 100%;
-  background: linear-gradient(90deg, #00d4aa 0%, #00c49a 100%);
+  background: linear-gradient(90deg, #10b981 0%, #059669 100%);
   border-radius: 4px;
-  transition: width 0.3s ease;
+  transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-.progress-text {
-  text-align: center;
-  margin-top: 0.5rem;
-  font-size: 0.875rem;
-  opacity: 0.9;
+.assessment-container .progress-stats {
+  display: flex;
+  justify-content: center;
+  margin-top: 12px;
 }
 
-/* Form Fields */
-.form-field {
-  margin-bottom: 1.5rem;
-}
-
-.form-field label {
-  display: block;
-  margin-bottom: 0.5rem;
+.assessment-container .progress-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #4b5563;
   font-weight: 500;
-  color: #333;
 }
 
-.form-field input,
-.form-field select,
-.form-field textarea {
-  width: 100%;
-  padding: 0.75rem 1rem;
-  border: 1px solid #ddd;
-  border-radius: 8px;
-  font-size: 1rem;
-  transition: border-color 0.2s, box-shadow 0.2s;
+.assessment-container .progress-label svg {
+  width: 18px;
+  height: 18px;
 }
 
-.form-field input:focus,
-.form-field select:focus,
-.form-field textarea:focus {
-  outline: none;
-  border-color: #007bff;
-  box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.1);
+/* ===== SECTION HEADER ===== */
+.assessment-container .section-header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 12px;
+  padding: 0;
 }
 
-.field-hint {
-  display: block;
-  margin-top: 0.25rem;
-  font-size: 0.875rem;
-  color: #666;
-}
-
-/* Fieldsets */
-fieldset {
-  border: 1px solid #e0e0e0;
+.assessment-container .section-icon {
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(145deg, #3b82f6 0%, #2563eb 100%);
   border-radius: 12px;
-  padding: 1.5rem;
-  margin-bottom: 2rem;
-  background: white;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+  color: #fff;
+  flex-shrink: 0;
 }
 
-fieldset legend {
-  font-size: 1.25rem;
+.assessment-container .section-icon svg {
+  width: 22px;
+  height: 22px;
+  stroke: currentColor;
+}
+
+.assessment-container .section-titles h2 {
+  margin: 0;
+  font-size: 18px;
   font-weight: 600;
-  color: #1a1a2e;
-  padding: 0 0.5rem;
+  color: #1e293b;
 }
 
-/* Radio & Checkbox Groups */
-.radio-group,
-.checkbox-group {
+.assessment-container .section-titles p {
+  margin: 2px 0 0 0;
+  color: #6b7280;
+  font-size: 13px;
+}
+
+/* ===== FIELDSET (Sezioni) ===== */
+.assessment-container fieldset {
+  border: none;
+  border-radius: 16px;
+  padding: 28px;
+  margin: 0 0 32px 0;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  border: 1px solid #e5e7eb;
+}
+
+.assessment-container fieldset legend {
+  font-size: 15px;
+  font-weight: 600;
+  color: #374151;
+  padding: 0 8px 0 0;
+  margin-bottom: 8px;
+  background: transparent;
+  float: none;
+  width: auto;
+}
+
+/* ===== FORM FIELDS ===== */
+.assessment-container .form-field {
+  margin-bottom: 24px;
+}
+
+.assessment-container .form-field:last-child {
+  margin-bottom: 0;
+}
+
+.assessment-container .form-field label {
+  display: block;
+  margin-bottom: 8px;
+  font-weight: 500;
+  font-size: 14px;
+  color: #374151;
+}
+
+.assessment-container .form-field input[type="text"],
+.assessment-container .form-field input[type="email"],
+.assessment-container .form-field input[type="tel"],
+.assessment-container .form-field input[type="url"],
+.assessment-container .form-field input[type="number"],
+.assessment-container .form-field select,
+.assessment-container .form-field textarea {
+  width: 100%;
+  padding: 12px 16px;
+  border: 1px solid #d1d5db;
+  border-radius: 10px;
+  font-size: 15px;
+  font-family: inherit;
+  background-color: #fff;
+  color: #1f2937;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.assessment-container .form-field input:hover,
+.assessment-container .form-field select:hover,
+.assessment-container .form-field textarea:hover {
+  border-color: #9ca3af;
+}
+
+.assessment-container .form-field input:focus,
+.assessment-container .form-field select:focus,
+.assessment-container .form-field textarea:focus {
+  outline: none;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+}
+
+.assessment-container .form-field input::placeholder,
+.assessment-container .form-field textarea::placeholder {
+  color: #9ca3af;
+}
+
+.assessment-container .form-field textarea {
+  min-height: 100px;
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.assessment-container .form-field select {
+  background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='m6 8 4 4 4-4'/%3e%3c/svg%3e");
+  background-position: right 12px center;
+  background-repeat: no-repeat;
+  background-size: 20px;
+  padding-right: 44px;
+  cursor: pointer;
+}
+
+.assessment-container .field-hint {
+  display: block;
+  margin-top: 6px;
+  font-size: 12px;
+  color: #6b7280;
+  line-height: 1.4;
+}
+
+/* ===== RADIO & CHECKBOX GROUPS ===== */
+.assessment-container .radio-group,
+.assessment-container .checkbox-group {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: 10px;
 }
 
-.radio-option,
-.checkbox-option {
+.assessment-container .radio-option,
+.assessment-container .checkbox-option {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
-  padding: 0.75rem 1rem;
-  border: 1px solid #e0e0e0;
-  border-radius: 8px;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
   cursor: pointer;
-  transition: border-color 0.2s, background-color 0.2s;
+  transition: all 0.15s ease;
+  background: #fff;
 }
 
-.radio-option:hover,
-.checkbox-option:hover {
-  border-color: #007bff;
-  background-color: #f8f9ff;
+.assessment-container .radio-option:hover,
+.assessment-container .checkbox-option:hover {
+  border-color: #3b82f6;
+  background: #f8fafc;
 }
 
-.radio-option input,
-.checkbox-option input {
-  width: auto;
+.assessment-container .radio-option input[type="radio"],
+.assessment-container .checkbox-option input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
   margin: 0;
+  flex-shrink: 0;
+  cursor: pointer;
+  accent-color: #3b82f6;
 }
 
-/* Section Header */
-.section-header {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-  margin-bottom: 1.5rem;
+.assessment-container .radio-option span,
+.assessment-container .checkbox-option span {
+  font-size: 14px;
+  color: #374151;
 }
 
-.section-icon {
-  font-size: 2rem;
-}
-
-.section-titles h2 {
-  margin: 0;
-  font-size: 1.25rem;
-  color: #1a1a2e;
-}
-
-.section-titles p {
-  margin: 0.25rem 0 0 0;
-  color: #666;
-  font-size: 0.875rem;
-}
-
-/* Summary Panel */
+/* ===== SUMMARY PANEL ===== */
 .assessment-summary {
   position: fixed;
   top: 100px;
-  right: 20px;
-  width: 250px;
-  background: white;
-  border-radius: 12px;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
-  z-index: 100;
+  right: 24px;
+  width: 240px;
+  background: #fff;
+  border-radius: 16px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.12);
+  border: 1px solid #e5e7eb;
+  z-index: 1000;
   overflow: hidden;
 }
 
 .assessment-summary-toggle {
   position: fixed;
   top: 100px;
-  right: 20px;
+  right: 24px;
   width: 48px;
   height: 48px;
-  border-radius: 50%;
-  background: #1a1a2e;
-  color: white;
+  border-radius: 14px;
+  background: linear-gradient(145deg, #1e293b 0%, #0f172a 100%);
+  color: #fff;
   border: none;
-  font-size: 1.5rem;
   cursor: pointer;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
-  z-index: 100;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.2);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.assessment-summary-toggle:hover {
+  transform: scale(1.05);
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.3);
+}
+
+.assessment-summary-toggle svg {
+  width: 22px;
+  height: 22px;
 }
 
 .summary-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 1rem;
-  background: #1a1a2e;
-  color: white;
+  padding: 16px 20px;
+  background: linear-gradient(145deg, #1e293b 0%, #0f172a 100%);
+  color: #fff;
 }
 
 .summary-header h3 {
   margin: 0;
-  font-size: 1rem;
+  font-size: 14px;
+  font-weight: 600;
 }
 
 .summary-header button {
   background: transparent;
   border: none;
-  color: white;
-  font-size: 1.5rem;
+  color: rgba(255, 255, 255, 0.7);
   cursor: pointer;
   padding: 0;
-  line-height: 1;
+  display: flex;
+  transition: color 0.15s;
+}
+
+.summary-header button:hover {
+  color: #fff;
 }
 
 .summary-list {
   list-style: none;
   padding: 0;
   margin: 0;
+  max-height: 360px;
+  overflow-y: auto;
 }
 
 .summary-list li {
-  border-bottom: 1px solid #f0f0f0;
+  border-bottom: 1px solid #f1f5f9;
 }
 
 .summary-list li:last-child {
@@ -235,78 +398,186 @@ fieldset legend {
 .summary-list button {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
+  gap: 12px;
   width: 100%;
-  padding: 0.75rem 1rem;
+  padding: 14px 20px;
   background: transparent;
   border: none;
   cursor: pointer;
   text-align: left;
-  transition: background-color 0.2s;
+  transition: background-color 0.15s;
+  font-family: inherit;
+  font-size: 13px;
+  color: #374151;
 }
 
 .summary-list button:hover {
-  background: #f8f9fa;
+  background: #f8fafc;
 }
 
-/* Submit Button */
-.submit-button {
-  display: block;
+.summary-list .section-icon {
+  width: 28px;
+  height: 28px;
+  background: #f1f5f9;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.summary-list .section-icon svg {
+  width: 16px;
+  height: 16px;
+  stroke: #64748b;
+}
+
+.summary-list .section-title {
+  font-weight: 500;
+}
+
+/* ===== SUBMIT SECTION ===== */
+.assessment-container .submit-section {
+  margin-top: 16px;
+}
+
+.assessment-container .submit-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
   width: 100%;
-  padding: 1rem 2rem;
-  background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
-  color: white;
+  padding: 16px 24px;
+  background: linear-gradient(145deg, #3b82f6 0%, #2563eb 100%);
+  color: #fff;
   border: none;
   border-radius: 12px;
-  font-size: 1.125rem;
+  font-size: 16px;
   font-weight: 600;
+  font-family: inherit;
   cursor: pointer;
-  transition: transform 0.2s, box-shadow 0.2s;
+  transition: transform 0.15s, box-shadow 0.15s;
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.25);
 }
 
-.submit-button:hover {
+.assessment-container .submit-button:hover:not(:disabled) {
   transform: translateY(-2px);
-  box-shadow: 0 6px 20px rgba(0, 123, 255, 0.3);
+  box-shadow: 0 8px 20px rgba(37, 99, 235, 0.35);
 }
 
-.submit-button:disabled {
+.assessment-container .submit-button:disabled {
   opacity: 0.6;
   cursor: not-allowed;
   transform: none;
   box-shadow: none;
 }
 
-/* Thank You Page */
-.thank-you-container {
+.assessment-container .submit-button svg {
+  width: 20px;
+  height: 20px;
+}
+
+.assessment-container .loading-spinner {
+  width: 20px;
+  height: 20px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spinner 0.7s linear infinite;
+}
+
+@keyframes spinner {
+  to { transform: rotate(360deg); }
+}
+
+/* ===== VALIDATION ERROR ===== */
+.assessment-container .validation-error-container {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 12px;
+  padding: 20px;
+  margin-top: 20px;
+  color: #b91c1c;
+}
+
+/* ===== THANK YOU PAGE ===== */
+.thank-you-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(145deg, #f8fafc 0%, #f1f5f9 100%);
+  padding: 24px;
+}
+
+.thank-you-content {
   text-align: center;
-  padding: 4rem 2rem;
+  max-width: 440px;
+  background: #fff;
+  padding: 48px 40px;
+  border-radius: 24px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.08);
+  border: 1px solid #e5e7eb;
 }
 
-.thank-you-container h1 {
-  font-size: 2rem;
-  color: #1a1a2e;
-  margin-bottom: 1rem;
+.thank-you-content .success-icon {
+  margin-bottom: 24px;
 }
 
-.thank-you-container p {
-  font-size: 1.125rem;
-  color: #666;
-  max-width: 500px;
-  margin: 0 auto;
+.thank-you-title {
+  font-size: 28px;
+  font-weight: 700;
+  color: #1e293b;
+  margin: 0 0 16px 0;
 }
 
-/* Responsive */
-@media (max-width: 768px) {
-  .assessment-container {
-    padding: 1rem;
-  }
-  
+.thank-you-message {
+  font-size: 15px;
+  color: #64748b;
+  line-height: 1.7;
+  margin: 0;
+}
+
+/* ===== RESPONSIVE ===== */
+@media (max-width: 900px) {
   .assessment-summary,
   .assessment-summary-toggle {
     display: none;
   }
-  
-  fieldset {
-    padding: 1rem;
+}
+
+@media (max-width: 640px) {
+  .assessment-container {
+    padding: 24px 16px;
   }
+  
+  .assessment-container .assessment-header {
+    padding: 32px 24px;
+    border-radius: 16px;
+  }
+  
+  .assessment-container .assessment-header h1 {
+    font-size: 22px;
+  }
+  
+  .assessment-container fieldset {
+    padding: 20px;
+    border-radius: 14px;
+  }
+  
+  .thank-you-content {
+    padding: 36px 24px;
+  }
+  
+  .thank-you-title {
+    font-size: 24px;
+  }
+}
+
+/* ===== CONDITIONAL FIELDS ===== */
+.assessment-container [data-conditional] {
+  display: none;
+}
+
+.assessment-container [data-conditional].visible {
+  display: block;
 }
