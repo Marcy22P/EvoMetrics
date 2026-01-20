@@ -105,13 +105,35 @@ DEFAULT_PERMISSIONS_BY_ROLE: Dict[str, Any] = {
         "debug:read": True,
     },
     "user": {
-        # Permessi base per collaboratori
+        # ===== PERMESSI COLLABORATORI =====
+        
+        # Home personalizzata
         "dashboard:read": True,
+        
+        # Clienti: Schede Cliente + Drive (solo lettura)
+        "clienti:read": True,
+        
+        # Sales Pipeline (solo visualizzazione)
+        "sales:read": True,
+        
+        # Team: Overview, Collaboratori, Procedure, Benessere, Bonus
+        "team:read": True,
+        "users:read": True,  # Vedere chi è iscritto alla webapp
+        
+        # Form Gradimento: compilare + vedere risposte
         "gradimento:write": True,
+        "gradimento:read": True,
+        
+        # Task Manager: gestione proprie task
         "task:read": True,
         "task:write": True,
+        
+        # Calendario: proprio calendario + Google Calendar
         "calendar:read": True,
         "calendar:write": True,
+        
+        # Impostazioni: account, password, profilo
+        "settings:read": True,
     },
 }
 

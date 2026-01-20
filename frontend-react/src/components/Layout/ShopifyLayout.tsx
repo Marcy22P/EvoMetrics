@@ -19,8 +19,9 @@ import { useAuth } from '../../hooks/useAuth';
 import './ShopifyLayout.css';
 
 // Definizione permessi per sezione
+// NOTA: Basta avere UNO dei permessi elencati per accedere alla sezione
 const PERMISSION_MAP = {
-  // Finanza
+  // Finanza (solo admin)
   finanza: ['finanza:read', 'pagamenti:read'],
   entrate: ['finanza:read', 'pagamenti:read'],
   uscite: ['finanza:read', 'pagamenti:read'],
@@ -33,30 +34,31 @@ const PERMISSION_MAP = {
   assessment: ['clienti:read', 'assessments:read'],
   preventivi: ['preventivi:read'],
   contratti: ['contratti:read'],
-  sales: ['sales:read', 'clienti:read'],
+  sales: ['sales:read'],
   
   // Gestione Team
   team: ['team:read', 'users:read'],
-  collaboratori: ['users:read'],
-  gradimento: ['gradimento:read'],
+  collaboratori: ['users:read'],  // Tutti possono vedere chi è iscritto
+  gradimento: ['gradimento:read', 'gradimento:write'],  // Chi può compilare O vedere
   produttivita: ['task:read'],
-  benessere: ['team:read', 'gradimento:read'],
-  bonus: ['team:read', 'pagamenti:read'],
-  procedure: ['team:read'],
-  calendario: ['calendar:read', 'task:read'],
+  benessere: ['team:read'],  // Coming Soon - visibile a chi ha team:read
+  bonus: ['team:read'],  // Coming Soon - visibile a chi ha team:read
+  procedure: ['team:read'],  // Coming Soon - visibile a chi ha team:read
+  calendario: ['calendar:read'],
   
   // Gestione Progetti
   task: ['task:read'],
   drive: ['clienti:read'],
-  workflow: ['workflow:read', 'task:write'],
+  workflow: ['workflow:read'],
   
-  // Analisi
-  analisi: ['analytics:read', 'finanza:read'],
+  // Analisi (solo admin)
+  analisi: ['analytics:read'],
   report: ['analytics:read'],
   
   // Impostazioni
   impostazioni: ['settings:read'],
-  accounts: ['users:read', 'users:write'],
+  accounts: ['users:write'],  // Solo chi può modificare vede Gestione Account
+  accountsView: ['users:read'],  // Per vedere lista collaboratori (non modificare)
   taskCategories: ['task:write'],
   integrations: ['settings:read'],
 };
@@ -348,6 +350,17 @@ const ShopifyLayout: React.FC = () => {
 
     // Sezione IMPOSTAZIONI
     const impostazioniSubItems = [];
+    
+    // Profilo personale - sempre visibile per tutti
+    if (canAccess('impostazioni')) {
+      impostazioniSubItems.push({
+        label: 'Il Mio Profilo',
+        url: '/impostazioni/profile',
+        onClick: () => navigate('/impostazioni/profile'),
+      });
+    }
+    
+    // Gestione Account - solo admin
     if (canAccess('accounts')) {
       impostazioniSubItems.push({
         label: 'Gestione Account',

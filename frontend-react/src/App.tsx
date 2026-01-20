@@ -265,9 +265,10 @@ const AppRoutes: React.FC = () => {
         } />
 
         {/* IMPOSTAZIONI - Con sub-routes */}
-        <Route path="/impostazioni" element={<Navigate to="/impostazioni/accounts" replace />} />
+        <Route path="/impostazioni" element={<Navigate to="/impostazioni/profile" replace />} />
+        <Route path="/impostazioni/profile" element={<ProfileForm />} />
         <Route path="/impostazioni/accounts" element={
-          <RequirePermission perm="users:read">
+          <RequirePermission perm="users:write">
             <Settings tab="accounts" />
           </RequirePermission>
         } />
