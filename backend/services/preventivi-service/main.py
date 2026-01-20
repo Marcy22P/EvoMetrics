@@ -12,7 +12,7 @@ from datetime import datetime
 from jose import JWTError, jwt
 from contextlib import asynccontextmanager
 
-from database import database, init_database, close_database
+from database import database, init_database, close_database, ensure_database_initialized
 from models import PreventivoData, PreventivoResponse
 from serializers import serialize_preventivo
 
@@ -70,6 +70,9 @@ async def get_current_user(request: Request) -> Dict[str, Any]:
     except JWTError:
         raise credentials_exception
     
+    # Lazy init database
+    await ensure_database_initialized()
+    
     query = "SELECT id, username, role, is_active FROM users WHERE username = :username AND is_active = true"
     user = await database.fetch_one(query, {"username": username})
     if user is None:
@@ -117,14 +120,10 @@ def calculate_totals(servizi: List[Dict[str, Any]]) -> Dict[str, float]:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Lifespan event handler per startup e shutdown"""
-    print("🚀 Avvio Preventivi Service...")
-    await init_database()
-    print("✅ Preventivi Service avviato")
+    """Lifespan event handler per startup e shutdown - lazy init"""
+    print("[Preventivi] Service pronto (lazy DB init)")
     yield
-    print("⏹️ Spegnimento Preventivi Service...")
     await close_database()
-    print("✅ Preventivi Service fermato")
 
 
 app = FastAPI(

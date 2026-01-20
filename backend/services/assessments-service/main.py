@@ -14,7 +14,7 @@ from datetime import datetime
 from jose import JWTError, jwt
 from contextlib import asynccontextmanager
 
-from database import database, init_database, close_database
+from database import database, init_database, close_database, ensure_database_initialized
 from models import AssessmentData, AssessmentResponse, WebhookResponse
 
 # Carica variabili d'ambiente dalla root del progetto
@@ -69,6 +69,9 @@ async def get_current_user(request: Request) -> Dict[str, Any]:
             raise credentials_exception
     except JWTError:
         raise credentials_exception
+    
+    # Lazy init database
+    await ensure_database_initialized()
     
     query = "SELECT id, username, role, is_active FROM users WHERE username = :username AND is_active = true"
     user = await database.fetch_one(query, {"username": username})
@@ -143,14 +146,10 @@ def serialize_assessment(row: Dict[str, Any]) -> Dict[str, Any]:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Lifespan event handler per startup e shutdown"""
-    print("🚀 Avvio Assessments Service...")
-    await init_database()
-    print("✅ Assessments Service avviato")
+    """Lifespan event handler - lazy init"""
+    print("[Assessments] Service pronto (lazy DB init)")
     yield
-    print("⏹️ Spegnimento Assessments Service...")
     await close_database()
-    print("✅ Assessments Service fermato")
 
 
 app = FastAPI(
