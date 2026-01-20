@@ -767,34 +767,43 @@ async def connect_google_calendar(
         loop = asyncio.get_event_loop()
         
         def exchange_token():
-            flow = Flow.from_client_config(
-                {
-                    "web": {
-                        "client_id": GOOGLE_CLIENT_ID,
-                        "client_secret": GOOGLE_CLIENT_SECRET,
-                        "auth_uri": GOOGLE_AUTH_URI,
-                        "token_uri": GOOGLE_TOKEN_URI,
-                    }
-                },
-                scopes=GOOGLE_CALENDAR_SCOPES,
-                redirect_uri=redirect_uri
+            # Scambio token manuale per evitare il controllo rigoroso degli scope
+            # Google può restituire scope aggiuntivi se l'utente ha già autorizzato l'app per altro (es. Drive)
+            token_response = requests.post(
+                GOOGLE_TOKEN_URI,
+                data={
+                    'client_id': GOOGLE_CLIENT_ID,
+                    'client_secret': GOOGLE_CLIENT_SECRET,
+                    'code': code,
+                    'grant_type': 'authorization_code',
+                    'redirect_uri': redirect_uri,
+                }
             )
-            flow.fetch_token(code=code)
-            return flow.credentials
+            
+            if token_response.status_code != 200:
+                raise Exception(f"Token exchange failed: {token_response.text}")
+            
+            token_data = token_response.json()
+            return token_data
 
-        credentials = await loop.run_in_executor(None, exchange_token)
+        token_data = await loop.run_in_executor(None, exchange_token)
+        
+        access_token = token_data.get('access_token')
+        refresh_token = token_data.get('refresh_token')
+        
+        if not access_token:
+            raise Exception("No access token received from Google")
         
         # Ottieni email dell'account collegato per verifica
         def get_user_info():
             resp = requests.get(
                 GOOGLE_USERINFO_URI,
-                headers={'Authorization': f'Bearer {credentials.token}'}
+                headers={'Authorization': f'Bearer {access_token}'}
             )
             return resp.json()
 
         google_user_info = await loop.run_in_executor(None, get_user_info)
         connected_email = google_user_info.get('email')
-        refresh_token = credentials.refresh_token
 
         # Aggiorna DB - sempre salva refresh_token se disponibile
         # Se non c'è refresh_token, potrebbe essere un re-consent (mantieni quello esistente)
