@@ -17,7 +17,8 @@ import {
   IndexTable,
   useIndexResourceState,
   Filters,
-  EmptyState
+  EmptyState,
+  Tooltip
 } from '@shopify/polaris';
 import {
   ArrowRightIcon,
@@ -422,15 +423,23 @@ const SalesPipeline: React.FC = () => {
           onClick={() => handleOpenModal(lead)}
         >
           <IndexTable.Cell>
-            <Text variant="bodyMd" fontWeight="bold" as="span">
-              {getLeadTitle(lead)}
-            </Text>
+            <Tooltip content={getLeadTitle(lead)} dismissOnMouseOut>
+              <div style={{ maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <Text variant="bodyMd" fontWeight="bold" as="span">
+                  {getLeadTitle(lead)}
+                </Text>
+              </div>
+            </Tooltip>
           </IndexTable.Cell>
           <IndexTable.Cell>
-            <Text variant="bodySm" as="span">{fullName || '-'}</Text>
+            <div style={{ maxWidth: '150px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <Text variant="bodySm" as="span">{fullName || '-'}</Text>
+            </div>
           </IndexTable.Cell>
           <IndexTable.Cell>
-            <Text variant="bodySm" as="span">{lead.email}</Text>
+            <div style={{ maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <Text variant="bodySm" as="span">{lead.email}</Text>
+            </div>
           </IndexTable.Cell>
           <IndexTable.Cell>
             <Text variant="bodySm" as="span">{lead.phone || '-'}</Text>

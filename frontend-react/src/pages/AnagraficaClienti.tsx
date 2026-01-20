@@ -16,7 +16,8 @@ import {
   EmptyState,
   Banner,
   TextField,
-  FormLayout
+  FormLayout,
+  Tooltip
 } from '@shopify/polaris';
 import {
   PlusIcon,
@@ -163,11 +164,19 @@ const AnagraficaClienti: React.FC = () => {
         onClick={() => navigate(`/clienti/${id}`)}
       >
         <IndexTable.Cell>
-          <Text variant="bodyMd" fontWeight="bold" as="span">
-            {nome_azienda}
-          </Text>
+          <Tooltip content={nome_azienda} dismissOnMouseOut>
+            <div style={{ maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <Text variant="bodyMd" fontWeight="bold" as="span">
+                {nome_azienda}
+              </Text>
+            </div>
+          </Tooltip>
         </IndexTable.Cell>
-        <IndexTable.Cell>{contatti?.email || '-'}</IndexTable.Cell>
+        <IndexTable.Cell>
+          <div style={{ maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {contatti?.email || '-'}
+          </div>
+        </IndexTable.Cell>
         <IndexTable.Cell>{contatti?.telefono || '-'}</IndexTable.Cell>
         <IndexTable.Cell>
             {servizi_attivi && servizi_attivi.length > 0 ? (
