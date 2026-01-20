@@ -30,6 +30,7 @@ class LeadBase(BaseModel):
     first_name: Optional[str] = None
     last_name: Optional[str] = None
     phone: Optional[str] = None
+    azienda: Optional[str] = None  # Nome azienda
     stage: Optional[str] = "optin"
     notes: Optional[str] = None
 
@@ -42,6 +43,7 @@ class LeadUpdate(BaseModel):
     first_name: Optional[str] = None
     last_name: Optional[str] = None
     phone: Optional[str] = None
+    azienda: Optional[str] = None  # Nome azienda
 
 class Lead(LeadBase):
     id: str

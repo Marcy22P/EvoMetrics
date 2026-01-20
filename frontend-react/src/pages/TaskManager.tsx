@@ -34,7 +34,8 @@ import {
     ExportIcon,
     SettingsIcon,
     AlertCircleIcon,
-    FilterIcon
+    FilterIcon,
+    TargetIcon
 } from '@shopify/polaris-icons';
 import { productivityApi, type Task, type Attachment, type WorkflowTemplate, type TaskStatus } from '../services/productivityApi';
 import { clientiApi, type DriveFile, type Cliente } from '../services/clientiApi';
@@ -79,7 +80,9 @@ const TaskManager: React.FC = () => {
   const [newTaskDesc, setNewTaskDesc] = useState('');
   const [newTaskAssignee, setNewTaskAssignee] = useState('');
   const [newTaskPriority, setNewTaskPriority] = useState('medium');
+  const [newTaskEntityType, setNewTaskEntityType] = useState<'client' | 'lead'>('client');
   const [newTaskClient, setNewTaskClient] = useState('');
+  const [newTaskLead, setNewTaskLead] = useState('');
   const [newTaskDueDate, setNewTaskDueDate] = useState<Date | undefined>(undefined);
   const [newTaskCategoryId, setNewTaskCategoryId] = useState('');
   const [newTaskIcon, setNewTaskIcon] = useState('');
@@ -186,11 +189,15 @@ const TaskManager: React.FC = () => {
   // Task Actions
   const handleCreateTask = async () => {
       try {
+          // Determina project_id in base all'entity_type selezionato
+          const projectId = newTaskEntityType === 'lead' ? newTaskLead : newTaskClient;
+          
           await productivityApi.createTask({
               title: newTaskTitle,
               description: newTaskDesc,
               assignee_id: newTaskAssignee || undefined,
-              project_id: newTaskClient || undefined,
+              project_id: projectId || undefined,
+              entity_type: projectId ? newTaskEntityType : undefined,
               priority: newTaskPriority,
               due_date: newTaskDueDate?.toISOString(),
               category_id: newTaskCategoryId || undefined,
@@ -230,7 +237,9 @@ const TaskManager: React.FC = () => {
       setNewTaskDesc('');
       setNewTaskAssignee('');
       setNewTaskPriority('medium');
+      setNewTaskEntityType('client');
       setNewTaskClient('');
+      setNewTaskLead('');
       setNewTaskDueDate(undefined);
       setNewTaskCategoryId('');
       setNewTaskIcon('');
@@ -447,7 +456,10 @@ const TaskManager: React.FC = () => {
                           return (
                               <>
                                   {task.entity_type === 'lead' && leadName && (
-                                      <Badge tone="attention">{`🎯 ${leadName}`}</Badge>
+                                      <InlineStack gap="100" blockAlign="center">
+                                          <Icon source={TargetIcon} tone="caution" />
+                                          <Badge tone="attention">{leadName}</Badge>
+                                      </InlineStack>
                                   )}
                                   {task.entity_type !== 'lead' && clientName && (
                                       <Badge tone="info">{clientName}</Badge>
@@ -588,12 +600,43 @@ const TaskManager: React.FC = () => {
                         value={newTaskIcon}
                         onChange={setNewTaskIcon}
                     />
-                    <Select 
-                        label="Cliente"
-                        options={[{label: 'Nessuno', value: ''}, ...clients.map(c => ({label: c.nome_azienda, value: c.id}))]}
-                        value={newTaskClient}
-                        onChange={setNewTaskClient}
-                    />
+                    <InlineStack gap="400" align="start">
+                        <div style={{flex: 1}}>
+                            <Select 
+                                label="Collega a"
+                                options={[
+                                    {label: 'Cliente', value: 'client'},
+                                    {label: 'Lead (Sales Pipeline)', value: 'lead'}
+                                ]}
+                                value={newTaskEntityType}
+                                onChange={(v) => {
+                                    setNewTaskEntityType(v as 'client' | 'lead');
+                                    setNewTaskClient('');
+                                    setNewTaskLead('');
+                                }}
+                            />
+                        </div>
+                        <div style={{flex: 2}}>
+                            {newTaskEntityType === 'client' ? (
+                                <Select 
+                                    label="Cliente"
+                                    options={[{label: 'Nessuno', value: ''}, ...clients.map(c => ({label: c.nome_azienda, value: c.id}))]}
+                                    value={newTaskClient}
+                                    onChange={setNewTaskClient}
+                                />
+                            ) : (
+                                <Select 
+                                    label="Lead"
+                                    options={[{label: 'Nessuno', value: ''}, ...leads.map(l => ({
+                                        label: l.azienda || `${l.first_name || ''} ${l.last_name || ''}`.trim() || l.email,
+                                        value: l.id
+                                    }))]}
+                                    value={newTaskLead}
+                                    onChange={setNewTaskLead}
+                                />
+                            )}
+                        </div>
+                    </InlineStack>
                     <InlineStack gap="400" align="start">
                         <div style={{flex:1}}>
                             <Select 

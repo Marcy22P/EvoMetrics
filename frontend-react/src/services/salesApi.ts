@@ -37,6 +37,7 @@ export interface Lead {
   first_name?: string;
   last_name?: string;
   phone?: string;
+  azienda?: string;  // Nome azienda
   stage: string;
   source: string;
   clickfunnels_data?: { [key: string]: any };
@@ -50,6 +51,7 @@ export interface LeadCreate {
   first_name?: string;
   last_name?: string;
   phone?: string;
+  azienda?: string;  // Nome azienda
   stage?: string;
   notes?: string;
   clickfunnels_data?: { [key: string]: any };
@@ -61,6 +63,7 @@ export interface LeadUpdatePayload {
   first_name?: string;
   last_name?: string;
   phone?: string;
+  azienda?: string;  // Nome azienda
 }
 
 export const salesApi = {

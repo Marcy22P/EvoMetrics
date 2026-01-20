@@ -91,6 +91,7 @@ class Lead(Base):
     first_name = Column(String, nullable=True)
     last_name = Column(String, nullable=True)
     phone = Column(String, nullable=True)
+    azienda = Column(String, nullable=True)  # Nome azienda (da ClickFunnel o manuale)
     stage = Column(String, default="optin")
     source = Column(String, default="manual")
     clickfunnels_data = Column(JSON, nullable=True)
@@ -224,6 +225,16 @@ def init_db():
                             db.execute(text("ALTER TABLE leads ADD COLUMN notes TEXT"))
                         db.commit()
                         print("✅ Colonna notes aggiunta.")
+                    
+                    # Aggiungi azienda se mancante
+                    if 'azienda' not in columns:
+                        print("🔄 Aggiungo colonna azienda alla tabella leads...")
+                        try:
+                            db.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS azienda TEXT"))
+                        except Exception:
+                            db.execute(text("ALTER TABLE leads ADD COLUMN azienda TEXT"))
+                        db.commit()
+                        print("✅ Colonna azienda aggiunta.")
                     
                     # Gestisci colonna stage: se esiste come ENUM, convertila a TEXT
                     if 'stage' in columns:

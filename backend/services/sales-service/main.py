@@ -145,6 +145,21 @@ def get_db():
                                 print(f"⚠️ Errore aggiunta notes: {e}")
                                 db.rollback()
                     
+                    # Aggiungi azienda se mancante
+                    if 'azienda' not in columns:
+                        try:
+                            db.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS azienda TEXT"))
+                            db.commit()
+                            print("✅ Colonna azienda aggiunta (lazy init)")
+                        except Exception:
+                            try:
+                                db.execute(text("ALTER TABLE leads ADD COLUMN azienda TEXT"))
+                                db.commit()
+                                print("✅ Colonna azienda aggiunta (lazy init)")
+                            except Exception as e:
+                                print(f"⚠️ Errore aggiunta azienda: {e}")
+                                db.rollback()
+                    
                     # Gestisci colonna stage: se esiste come ENUM, convertila a TEXT
                     if 'stage' in columns:
                         # Verifica se è un ENUM
@@ -455,8 +470,10 @@ async def clickfunnels_webhook(request: Request, background_tasks: BackgroundTas
             existing.first_name = first_name or existing.first_name
             existing.last_name = last_name or existing.last_name
             existing.phone = phone or existing.phone
+            existing.azienda = azienda or existing.azienda  # Aggiorna anche l'azienda!
             existing.clickfunnels_data = data
             db.commit()
+            print(f"✅ Lead aggiornato: {email} (Azienda: {existing.azienda})")
             return {"status": "updated", "id": existing.id}
 
         # Determina stage iniziale: prima da env, poi primo stage disponibile, poi default "optin"
@@ -478,10 +495,11 @@ async def clickfunnels_webhook(request: Request, background_tasks: BackgroundTas
             first_name=first_name,
             last_name=last_name,
             phone=phone,
+            azienda=azienda,
             stage=initial_stage,
             source="clickfunnels",
             clickfunnels_data=data,
-            notes=f"Importato da Webhook ClickFunnel{f' - Azienda: {azienda}' if azienda else ''}"
+            notes="Importato da Webhook ClickFunnel"
         )
         
         db.add(new_lead)
@@ -495,7 +513,7 @@ async def clickfunnels_webhook(request: Request, background_tasks: BackgroundTas
             return {"status": "error", "detail": "Errore salvataggio lead"}
         
         total_leads = db.query(LeadModel).count()
-        print(f"✅ Nuovo Lead creato da ClickFunnel: {email} (ID: {new_lead.id}, Stage: {initial_stage}, Totale lead nel DB: {total_leads})")
+        print(f"✅ Nuovo Lead creato da ClickFunnel: {email} (ID: {new_lead.id}, Stage: {initial_stage}, Azienda: {azienda}, Totale lead nel DB: {total_leads})")
         
         # Crea workflow direttamente nel database (in background)
         background_tasks.add_task(create_workflow_tasks_for_clickfunnel_lead, new_lead.id, initial_stage)
@@ -609,6 +627,7 @@ def create_lead(lead_in: LeadCreate, db: Session = Depends(get_db)):
         first_name=lead_in.first_name,
         last_name=lead_in.last_name,
         phone=lead_in.phone,
+        azienda=lead_in.azienda,
         stage=stage,
         source="manual",
         notes=lead_in.notes,

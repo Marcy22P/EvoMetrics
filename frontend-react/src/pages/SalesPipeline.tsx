@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Page,
   Card,
@@ -12,14 +12,21 @@ import {
   Modal,
   TextField,
   Select,
-  Spinner
+  Spinner,
+  Tabs,
+  IndexTable,
+  useIndexResourceState,
+  Filters,
+  EmptyState
 } from '@shopify/polaris';
 import {
-  PhoneIcon,
   ArrowRightIcon,
   SettingsIcon,
   PlusIcon,
-  ArrowLeftIcon
+  ArrowLeftIcon,
+  PersonIcon,
+  EmailIcon,
+  PhoneIcon
 } from '@shopify/polaris-icons';
 import { salesApi, type Lead, type PipelineStage, type LeadCreate } from '../services/salesApi';
 import { PipelineSettingsModal } from '../components/sales/PipelineSettingsModal';
@@ -32,6 +39,9 @@ const SalesPipeline: React.FC = () => {
   
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
   
+  // Tab state: 0 = Pipeline view, 1 = List view
+  const [selectedTab, setSelectedTab] = useState(0);
+  
   // Modale Edit/Dettaglio
   const [showModal, setShowModal] = useState(false);
   const [editNotes, setEditNotes] = useState('');
@@ -39,6 +49,7 @@ const SalesPipeline: React.FC = () => {
   const [editFirstName, setEditFirstName] = useState('');
   const [editLastName, setEditLastName] = useState('');
   const [editPhone, setEditPhone] = useState('');
+  const [editAzienda, setEditAzienda] = useState('');
 
   // Modale Creazione Lead
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -46,6 +57,7 @@ const SalesPipeline: React.FC = () => {
   const [newLeadFirstName, setNewLeadFirstName] = useState('');
   const [newLeadLastName, setNewLeadLastName] = useState('');
   const [newLeadPhone, setNewLeadPhone] = useState('');
+  const [newLeadAzienda, setNewLeadAzienda] = useState('');
   const [newLeadStage, setNewLeadStage] = useState('');
   const [newLeadNotes, setNewLeadNotes] = useState('');
 
@@ -55,6 +67,10 @@ const SalesPipeline: React.FC = () => {
   // Drag & Drop State
   const [draggingLeadId, setDraggingLeadId] = useState<string | null>(null);
   const [dragOverStageKey, setDragOverStageKey] = useState<string | null>(null);
+  
+  // List view filters
+  const [queryValue, setQueryValue] = useState('');
+  const [stageFilter, setStageFilter] = useState<string>('');
 
   const fetchStages = useCallback(async () => {
     try {
@@ -102,6 +118,7 @@ const SalesPipeline: React.FC = () => {
     setEditFirstName(lead.first_name || '');
     setEditLastName(lead.last_name || '');
     setEditPhone(lead.phone || '');
+    setEditAzienda(lead.azienda || '');
     setShowModal(true);
   };
 
@@ -113,7 +130,8 @@ const SalesPipeline: React.FC = () => {
         stage: editStage,
         first_name: editFirstName,
         last_name: editLastName,
-        phone: editPhone
+        phone: editPhone,
+        azienda: editAzienda
       });
       toast.success('Lead aggiornato');
       setShowModal(false);
@@ -147,6 +165,7 @@ const SalesPipeline: React.FC = () => {
         first_name: newLeadFirstName || undefined,
         last_name: newLeadLastName || undefined,
         phone: newLeadPhone || undefined,
+        azienda: newLeadAzienda || undefined,
         stage: newLeadStage || undefined,
         notes: newLeadNotes || undefined
       };
@@ -165,6 +184,7 @@ const SalesPipeline: React.FC = () => {
     setNewLeadFirstName('');
     setNewLeadLastName('');
     setNewLeadPhone('');
+    setNewLeadAzienda('');
     setNewLeadStage('');
     setNewLeadNotes('');
   };
@@ -208,6 +228,130 @@ const SalesPipeline: React.FC = () => {
     setDragOverStageKey(null);
   };
 
+  // Helper per ottenere i dati del lead in modo strutturato
+  const getLeadTitle = (lead: Lead): string => {
+    // Titolo = SOLO Azienda, mai email
+    return lead.azienda || 'Azienda non specificata';
+  };
+
+  const getLeadFullName = (lead: Lead): string | null => {
+    const fullName = [lead.first_name, lead.last_name].filter(Boolean).join(' ');
+    return fullName || null;
+  };
+
+  // Stageemap per colori
+  const stageMap = useMemo(() => {
+    const map = new Map<string, PipelineStage>();
+    stages.forEach(s => map.set(s.key, s));
+    return map;
+  }, [stages]);
+
+  // Filtered leads per list view
+  const filteredLeads = useMemo(() => {
+    return leads.filter(lead => {
+      // Filter by query
+      if (queryValue) {
+        const q = queryValue.toLowerCase();
+        const matchesQuery = 
+          lead.email.toLowerCase().includes(q) ||
+          (lead.first_name?.toLowerCase().includes(q)) ||
+          (lead.last_name?.toLowerCase().includes(q)) ||
+          (lead.azienda?.toLowerCase().includes(q)) ||
+          (lead.phone?.includes(q));
+        if (!matchesQuery) return false;
+      }
+      // Filter by stage
+      if (stageFilter && lead.stage !== stageFilter) return false;
+      return true;
+    });
+  }, [leads, queryValue, stageFilter]);
+
+  // Index table selection
+  const { selectedResources, allResourcesSelected, handleSelectionChange } = 
+    useIndexResourceState(filteredLeads.map(l => ({ id: l.id })));
+
+  // Componente Card Lead pulito
+  const LeadCard: React.FC<{ lead: Lead; stage: PipelineStage }> = ({ lead, stage }) => {
+    const currentStageIndex = stages.findIndex(s => s.key === stage.key);
+    const prevStage = stages[currentStageIndex - 1];
+    const nextStage = stages[currentStageIndex + 1];
+    const fullName = getLeadFullName(lead);
+
+    return (
+      <div 
+        draggable
+        onDragStart={(e) => handleDragStart(e, lead.id)}
+        onDragEnd={handleDragEnd}
+        onClick={() => handleOpenModal(lead)}
+        style={{ 
+          cursor: 'grab',
+          opacity: draggingLeadId === lead.id ? 0.5 : 1,
+          transition: 'opacity 0.15s ease'
+        }}
+      >
+        <Card padding="300">
+          <BlockStack gap="150">
+            {/* Riga 1: Titolo (Azienda) + Badge Fonte */}
+            <InlineStack align="space-between" blockAlign="start">
+              <Text variant="headingSm" as="h4" truncate fontWeight={lead.azienda ? 'bold' : 'regular'}>
+                {getLeadTitle(lead)}
+              </Text>
+              <Badge tone={lead.source === 'clickfunnels' ? 'info' : 'success'} size="small">
+                {lead.source === 'clickfunnels' ? 'CF' : 'M'}
+              </Badge>
+            </InlineStack>
+            
+            {/* Riga 2: Nome e Cognome (se presente) */}
+            {fullName && (
+              <InlineStack gap="100" blockAlign="center">
+                <Box><Icon source={PersonIcon} tone="subdued" /></Box>
+                <Text variant="bodySm" as="span" tone="subdued">{fullName}</Text>
+              </InlineStack>
+            )}
+            
+            {/* Riga 3: Email */}
+            <InlineStack gap="100" blockAlign="center">
+              <Box><Icon source={EmailIcon} tone="subdued" /></Box>
+              <Text variant="bodySm" as="span" tone="subdued" truncate>{lead.email}</Text>
+            </InlineStack>
+            
+            {/* Riga 4: Telefono (se presente) */}
+            {lead.phone && (
+              <InlineStack gap="100" blockAlign="center">
+                <Box><Icon source={PhoneIcon} tone="subdued" /></Box>
+                <Text variant="bodySm" as="span" tone="subdued">{lead.phone}</Text>
+              </InlineStack>
+            )}
+            
+            {/* Pulsanti Navigazione Stage */}
+            <Box paddingBlockStart="100">
+              <InlineStack align="end" gap="200">
+                <div onClick={(e) => e.stopPropagation()}>
+                  <Button 
+                    icon={ArrowLeftIcon} 
+                    size="slim"
+                    variant="tertiary"
+                    disabled={!prevStage}
+                    onClick={() => prevStage && handleMoveStage(lead, prevStage.key)}
+                  />
+                </div>
+                <div onClick={(e) => e.stopPropagation()}>
+                  <Button 
+                    icon={ArrowRightIcon} 
+                    size="slim"
+                    variant="tertiary"
+                    disabled={!nextStage}
+                    onClick={() => nextStage && handleMoveStage(lead, nextStage.key)}
+                  />
+                </div>
+              </InlineStack>
+            </Box>
+          </BlockStack>
+        </Card>
+      </div>
+    );
+  };
+
   const renderColumn = (stage: PipelineStage) => {
     const stageLeads = leads.filter(l => l.stage === stage.key);
     const isDragOver = dragOverStageKey === stage.key;
@@ -216,114 +360,44 @@ const SalesPipeline: React.FC = () => {
       <div 
         key={stage.key} 
         style={{ 
-          flex: '0 0 300px', 
-          minWidth: '300px',
-          transition: 'background-color 0.2s',
-          backgroundColor: isDragOver ? 'var(--p-color-bg-surface-info-active)' : undefined,
-          borderRadius: 'var(--p-border-radius-200)'
+          flex: '0 0 280px', 
+          minWidth: '280px',
+          maxWidth: '280px',
+          display: 'flex',
+          flexDirection: 'column'
         }}
         onDragOver={(e) => handleDragOver(e, stage.key)}
         onDrop={(e) => handleDrop(e, stage.key)}
         onDragLeave={handleDragLeave}
       >
-        <Box background="bg-surface-secondary" padding="300" borderRadius="200">
+        <Box 
+          background={isDragOver ? "bg-surface-info-active" : "bg-surface-secondary"} 
+          padding="300" 
+          borderRadius="200"
+        >
           <BlockStack gap="300">
-            <InlineStack align="space-between">
+            {/* Header Stage */}
+            <InlineStack align="space-between" blockAlign="center">
               <Text variant="headingSm" as="h3">{stage.label}</Text>
               <Badge tone={stage.color as any}>{stageLeads.length.toString()}</Badge>
             </InlineStack>
             
-            <div style={{ minHeight: '400px' }}>
-              <BlockStack gap="300">
+            {/* Container scrollabile per le card */}
+            <div style={{ 
+              maxHeight: 'calc(100vh - 300px)', 
+              overflowY: 'auto',
+              overflowX: 'hidden'
+            }}>
+              <BlockStack gap="200">
                 {stageLeads.map(lead => (
-                  <div 
-                    key={lead.id} 
-                    draggable
-                    onDragStart={(e) => handleDragStart(e, lead.id)}
-                    onDragEnd={handleDragEnd}
-                    onClick={() => handleOpenModal(lead)}
-                    style={{ 
-                      cursor: 'grab',
-                      opacity: draggingLeadId === lead.id ? 0.5 : 1,
-                      transition: 'opacity 0.2s'
-                    }}
-                  >
-                    <Card>
-                      <BlockStack gap="200">
-                        {/* Header: Nome e Badge */}
-                        <InlineStack align="space-between" blockAlign="center" wrap={false}>
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <Text variant="bodyMd" fontWeight="bold" as="h4" truncate>
-                              {lead.first_name || lead.email.split('@')[0]} {lead.last_name || ''}
-                            </Text>
-                          </div>
-                          <Badge tone={lead.source === 'clickfunnels' ? 'info' : 'success'} size="small">
-                            {lead.source === 'clickfunnels' ? 'CF' : 'Manual'}
-                          </Badge>
-                        </InlineStack>
-                        
-                        {/* Email */}
-                        <Text variant="bodySm" tone="subdued" as="p" truncate>
-                          {lead.email}
-                        </Text>
-                        
-                        {/* Telefono */}
-                        {lead.phone && (
-                          <Box paddingBlockStart="050">
-                            <InlineStack gap="100" align="start" blockAlign="center">
-                              <Box paddingBlockStart="025">
-                                <Icon source={PhoneIcon} tone="subdued" />
-                              </Box>
-                              <Text variant="bodySm" as="span" truncate>
-                                {lead.phone}
-                              </Text>
-                            </InlineStack>
-                          </Box>
-                        )}
-                        
-                        {/* Pulsanti Navigazione */}
-                        <InlineStack align="end" gap="200" blockAlign="center">
-                          {(() => {
-                            const currentStageIndex = stages.findIndex(s => s.key === stage.key);
-                            const prevStage = stages[currentStageIndex - 1];
-                            const nextStage = stages[currentStageIndex + 1];
-                            
-                            return (
-                              <>
-                                <div onClick={(e) => e.stopPropagation()}>
-                                  {prevStage ? (
-                                    <Button 
-                                      icon={ArrowLeftIcon} 
-                                      size="slim" 
-                                      onClick={() => handleMoveStage(lead, prevStage.key)}
-                                    />
-                                  ) : (
-                                    <div style={{ width: '28px', height: '28px' }} />
-                                  )}
-                                </div>
-                                <div onClick={(e) => e.stopPropagation()}>
-                                  {nextStage ? (
-                                    <Button 
-                                      icon={ArrowRightIcon} 
-                                      size="slim" 
-                                      onClick={() => handleMoveStage(lead, nextStage.key)}
-                                    />
-                                  ) : (
-                                    <div style={{ width: '28px', height: '28px' }} />
-                                  )}
-                                </div>
-                              </>
-                            );
-                          })()}
-                        </InlineStack>
-                      </BlockStack>
-                    </Card>
-                  </div>
+                  <LeadCard key={lead.id} lead={lead} stage={stage} />
                 ))}
                 {stageLeads.length === 0 && (
-                  <div style={{ textAlign: 'center', padding: '20px', opacity: 0.5 }}>
-                    <Text variant="bodySm" as="p">Nessun lead</Text>
-                  </div>
+                  <Box padding="400">
+                    <Text variant="bodySm" as="p" tone="subdued" alignment="center">
+                      Nessun lead
+                    </Text>
+                  </Box>
                 )}
               </BlockStack>
             </div>
@@ -332,6 +406,138 @@ const SalesPipeline: React.FC = () => {
       </div>
     );
   };
+
+  // List View
+  const renderListView = () => {
+    const rowMarkup = filteredLeads.map((lead, index) => {
+      const stage = stageMap.get(lead.stage);
+      const fullName = getLeadFullName(lead);
+      
+      return (
+        <IndexTable.Row
+          id={lead.id}
+          key={lead.id}
+          selected={selectedResources.includes(lead.id)}
+          position={index}
+          onClick={() => handleOpenModal(lead)}
+        >
+          <IndexTable.Cell>
+            <Text variant="bodyMd" fontWeight="bold" as="span">
+              {getLeadTitle(lead)}
+            </Text>
+          </IndexTable.Cell>
+          <IndexTable.Cell>
+            <Text variant="bodySm" as="span">{fullName || '-'}</Text>
+          </IndexTable.Cell>
+          <IndexTable.Cell>
+            <Text variant="bodySm" as="span">{lead.email}</Text>
+          </IndexTable.Cell>
+          <IndexTable.Cell>
+            <Text variant="bodySm" as="span">{lead.phone || '-'}</Text>
+          </IndexTable.Cell>
+          <IndexTable.Cell>
+            {stage && <Badge tone={stage.color as any}>{stage.label}</Badge>}
+          </IndexTable.Cell>
+          <IndexTable.Cell>
+            <Badge tone={lead.source === 'clickfunnels' ? 'info' : 'success'} size="small">
+              {lead.source === 'clickfunnels' ? 'ClickFunnel' : 'Manuale'}
+            </Badge>
+          </IndexTable.Cell>
+          <IndexTable.Cell>
+            <Text variant="bodySm" tone="subdued" as="span">
+              {new Date(lead.created_at).toLocaleDateString('it-IT')}
+            </Text>
+          </IndexTable.Cell>
+        </IndexTable.Row>
+      );
+    });
+
+    return (
+      <Card padding="0">
+        <Box padding="400">
+          <Filters
+            queryValue={queryValue}
+            queryPlaceholder="Cerca per azienda, nome, email..."
+            onQueryChange={setQueryValue}
+            onQueryClear={() => setQueryValue('')}
+            filters={[
+              {
+                key: 'stage',
+                label: 'Stage',
+                filter: (
+                  <Select
+                    label="Stage"
+                    labelHidden
+                    options={[
+                      { label: 'Tutti gli stage', value: '' },
+                      ...stages.map(s => ({ label: s.label, value: s.key }))
+                    ]}
+                    value={stageFilter}
+                    onChange={setStageFilter}
+                  />
+                ),
+                shortcut: true
+              }
+            ]}
+            onClearAll={() => {
+              setQueryValue('');
+              setStageFilter('');
+            }}
+          />
+        </Box>
+        
+        {filteredLeads.length === 0 ? (
+          <EmptyState
+            heading="Nessun lead trovato"
+            image=""
+          >
+            <p>Modifica i filtri o crea un nuovo lead.</p>
+          </EmptyState>
+        ) : (
+          <IndexTable
+            resourceName={{ singular: 'lead', plural: 'leads' }}
+            itemCount={filteredLeads.length}
+            selectedItemsCount={allResourcesSelected ? 'All' : selectedResources.length}
+            onSelectionChange={handleSelectionChange}
+            headings={[
+              { title: 'Azienda' },
+              { title: 'Nome' },
+              { title: 'Email' },
+              { title: 'Telefono' },
+              { title: 'Stage' },
+              { title: 'Fonte' },
+              { title: 'Data' }
+            ]}
+            selectable={false}
+          >
+            {rowMarkup}
+          </IndexTable>
+        )}
+      </Card>
+    );
+  };
+
+  // Pipeline View
+  const renderPipelineView = () => (
+    <Card padding="0">
+      <Box padding="400">
+        <div style={{ 
+          overflowX: 'auto', 
+          overflowY: 'hidden',
+          WebkitOverflowScrolling: 'touch'
+        }}>
+          <div style={{ 
+            display: 'flex', 
+            gap: '12px', 
+            paddingBottom: '8px',
+            minWidth: 'max-content'
+          }}>
+            {stages.map(stage => renderColumn(stage))}
+          </div>
+        </div>
+      </Box>
+    </Card>
+  );
 
   if (loading && stages.length === 0) {
     return (
@@ -342,6 +548,11 @@ const SalesPipeline: React.FC = () => {
       </Page>
     );
   }
+
+  const tabs = [
+    { id: 'pipeline', content: `Pipeline (${leads.length})`, panelID: 'pipeline-panel' },
+    { id: 'list', content: 'Leads List', panelID: 'list-panel' }
+  ];
 
   return (
     <Page 
@@ -357,21 +568,17 @@ const SalesPipeline: React.FC = () => {
         { content: 'Configura Pipeline', icon: SettingsIcon, onAction: () => setShowSettings(true) }
       ]}
     >
-      <Card padding="0">
-        <Box padding="400">
-          <div style={{ overflowX: 'auto', overflowY: 'hidden', overscrollBehavior: 'contain' }}>
-            <div style={{ display: 'flex', gap: '16px', paddingBottom: '16px' }}>
-              {stages.map(stage => renderColumn(stage))}
-            </div>
-          </div>
+      <Tabs tabs={tabs} selected={selectedTab} onSelect={setSelectedTab}>
+        <Box paddingBlockStart="400">
+          {selectedTab === 0 ? renderPipelineView() : renderListView()}
         </Box>
-      </Card>
+      </Tabs>
 
       {/* Modal Dettaglio/Modifica Lead */}
       <Modal
         open={showModal}
         onClose={() => setShowModal(false)}
-        title={`Lead: ${selectedLead?.email}`}
+        title={`Lead: ${selectedLead?.azienda || selectedLead?.email}`}
         primaryAction={{ content: 'Salva Modifiche', onAction: handleSaveLead }}
         secondaryActions={[{ content: 'Elimina Lead', destructive: true, onAction: handleDeleteLead }]}
       >
@@ -404,6 +611,14 @@ const SalesPipeline: React.FC = () => {
                 </InlineStack>
               </BlockStack>
             </Box>
+
+            <TextField 
+              label="Nome Azienda" 
+              value={editAzienda} 
+              onChange={setEditAzienda} 
+              autoComplete="off" 
+              placeholder="Nome dell'azienda..."
+            />
 
             <InlineStack gap="400">
               <div style={{ flex: 1 }}>
@@ -448,6 +663,13 @@ const SalesPipeline: React.FC = () => {
       >
         <Modal.Section>
           <BlockStack gap="400">
+            <TextField 
+              label="Nome Azienda" 
+              value={newLeadAzienda} 
+              onChange={setNewLeadAzienda} 
+              autoComplete="off" 
+              placeholder="Nome dell'azienda..."
+            />
             <TextField label="Email" type="email" value={newLeadEmail} onChange={setNewLeadEmail} autoComplete="off" requiredIndicator placeholder="email@esempio.com" />
             <InlineStack gap="400">
               <div style={{ flex: 1 }}>
