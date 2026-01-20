@@ -97,9 +97,15 @@ def build_credentials(access_token: str = "", refresh_token: str = None, token_e
     )
 
 def refresh_credentials_if_needed(creds: Credentials) -> Tuple[Credentials, bool]:
-    """Aggiorna le credenziali se scadute. Ritorna (creds, was_refreshed)"""
-    # Controlla se scaduto o sta per scadere (entro 5 minuti)
-    if creds.expired or (creds.expiry and (creds.expiry - datetime.utcnow()).total_seconds() < 300):
+    """Aggiorna le credenziali se scadute o mancanti. Ritorna (creds, was_refreshed)"""
+    # Se non c'è token o è scaduto, fai refresh
+    needs_refresh = (
+        not creds.token or 
+        creds.expired or 
+        (creds.expiry and (creds.expiry - datetime.utcnow()).total_seconds() < 300)
+    )
+    
+    if needs_refresh:
         if creds.refresh_token:
             try:
                 creds.refresh(Request())
@@ -111,15 +117,29 @@ def refresh_credentials_if_needed(creds: Credentials) -> Tuple[Credentials, bool
                 traceback.print_exc()
                 raise Exception("Token scaduto e refresh fallito. Ricollegare il calendario.")
         else:
-            print("⚠️ Token scaduto ma nessun refresh_token disponibile")
+            print("⚠️ Token scaduto/mancante ma nessun refresh_token disponibile")
             raise Exception("Token scaduto e nessun refresh_token disponibile. Ricollegare il calendario.")
     return creds, False
 
 def get_calendar_service(access_token: str, refresh_token: str = None, token_expiry: str = None):
     """Ottiene il service Google Calendar con le credenziali fornite"""
     creds = build_credentials(access_token, refresh_token, token_expiry)
-    creds, _ = refresh_credentials_if_needed(creds)
-    return build('calendar', 'v3', credentials=creds)
+    creds, was_refreshed = refresh_credentials_if_needed(creds)
+    
+    # Log per debug
+    if was_refreshed:
+        print(f"🔄 Token refreshato, nuovo token: {creds.token[:20] if creds.token else 'None'}...")
+    
+    # Usa http autorizzato esplicitamente per compatibilità
+    from google.auth.transport.requests import AuthorizedSession
+    from googleapiclient.http import build_http
+    import google_auth_httplib2
+    import httplib2
+    
+    # Crea http autorizzato usando google-auth-httplib2
+    http = google_auth_httplib2.AuthorizedHttp(creds, http=httplib2.Http())
+    
+    return build('calendar', 'v3', http=http)
 
 def get_calendar_email(service) -> Optional[str]:
     """Ottiene l'email principale del calendario"""
