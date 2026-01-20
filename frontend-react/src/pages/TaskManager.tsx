@@ -39,6 +39,7 @@ import {
 import { productivityApi, type Task, type Attachment, type WorkflowTemplate, type TaskStatus } from '../services/productivityApi';
 import { clientiApi, type DriveFile, type Cliente } from '../services/clientiApi';
 import { usersApi, type User } from '../services/usersApi';
+import { salesApi, type Lead } from '../services/salesApi';
 import { useAuth } from '../hooks/useAuth';
 import { isPast, isToday, format } from 'date-fns';
 import { it } from 'date-fns/locale';
@@ -54,6 +55,7 @@ const TaskManager: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [users, setUsers] = useState<User[]>([]); 
   const [clients, setClients] = useState<Cliente[]>([]);
+  const [leads, setLeads] = useState<Lead[]>([]);
   const [statuses, setStatuses] = useState<TaskStatus[]>([]);
   const [workflowTemplates, setWorkflowTemplates] = useState<WorkflowTemplate[]>([]);
 
@@ -110,6 +112,15 @@ const TaskManager: React.FC = () => {
       return map;
   }, [clients]);
 
+  const leadMap = useMemo(() => {
+      const map = new Map<string, string>();
+      leads.forEach(l => {
+          const name = [l.first_name, l.last_name].filter(Boolean).join(' ') || l.email.split('@')[0];
+          map.set(l.id, name);
+      });
+      return map;
+  }, [leads]);
+
   const userMap = useMemo(() => {
       const map = new Map<string, User>();
       users.forEach(u => map.set(String(u.id), u));
@@ -126,15 +137,17 @@ const TaskManager: React.FC = () => {
   const loadData = useCallback(async () => {
       setLoading(true);
     try {
-        const [tasksData, usersData, clientsData, statusesData] = await Promise.all([
+        const [tasksData, usersData, clientsData, leadsData, statusesData] = await Promise.all([
             productivityApi.getTasks(), // Carica tutto per gestire filtri client-side
             usersApi.getUsers(),
             clientiApi.getClienti(),
+            salesApi.getLeads(),
             productivityApi.getStatuses()
         ]);
         setTasks(tasksData);
         setUsers(usersData);
         setClients(clientsData);
+        setLeads(leadsData);
         setStatuses(statusesData);
     } catch (e) {
         console.error(e);
@@ -336,8 +349,11 @@ const TaskManager: React.FC = () => {
               if (selectedTab === 0 && user?.id && String(t.assignee_id) !== String(user.id)) return false;
           }
 
+          const entityName = t.entity_type === 'lead' 
+              ? (leadMap.get(t.project_id || '') || '')
+              : (clientMap.get(t.project_id || '') || '');
           const matchesQuery = t.title.toLowerCase().includes(queryValue.toLowerCase()) || 
-                               (clientMap.get(t.project_id || '') || '').toLowerCase().includes(queryValue.toLowerCase());
+                               entityName.toLowerCase().includes(queryValue.toLowerCase());
           if (!matchesQuery) return false;
           
           if (showOverdueOnly) {
@@ -425,9 +441,20 @@ const TaskManager: React.FC = () => {
                       {task.title}
           </Text>
                   <InlineStack gap="200">
-                      {clientMap.get(task.project_id || '') && (
-                          <Badge tone="info">{clientMap.get(task.project_id || '')}</Badge>
-          )}
+                      {(() => {
+                          const leadName = task.project_id ? leadMap.get(task.project_id) : null;
+                          const clientName = task.project_id ? clientMap.get(task.project_id) : null;
+                          return (
+                              <>
+                                  {task.entity_type === 'lead' && leadName && (
+                                      <Badge tone="attention">{`🎯 ${leadName}`}</Badge>
+                                  )}
+                                  {task.entity_type !== 'lead' && clientName && (
+                                      <Badge tone="info">{clientName}</Badge>
+                                  )}
+                              </>
+                          );
+                      })()}
                       {task.priority === 'urgent' && <Badge tone="critical">URGENTE</Badge>}
                   </InlineStack>
               </BlockStack>

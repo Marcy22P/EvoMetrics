@@ -17,7 +17,8 @@ export interface Task {
   status: string; // Ora è una stringa dinamica, non più un enum fisso
   assignee_id?: string;
   role_required?: string;
-  project_id?: string; // Client ID
+  project_id?: string; // Client ID o Lead ID
+  entity_type?: 'client' | 'lead'; // Tipo di entità collegata (default: client)
   priority: 'low' | 'medium' | 'high' | 'urgent';
   estimated_minutes: number;
   due_date?: string;
@@ -35,6 +36,7 @@ export interface TaskCreate {
   title: string;
   description?: string;
   project_id?: string;
+  entity_type?: 'client' | 'lead';
   assignee_id?: string;
   role_required?: string;
   priority?: string;
