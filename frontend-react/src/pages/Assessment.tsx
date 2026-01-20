@@ -132,8 +132,8 @@ const Assessment: React.FC = () => {
     window.dispatchEvent(progressEvent);
     
     // Debug console per verificare funzionamento
-    console.log(`🎯 Progress Update: ${completedFields}/${totalFields} = ${Math.round(progress)}%`);
-    console.log(`📊 Completed fields: ${completedFields}, Total fields: ${totalFields}`);
+    console.log(`Progress Update: ${completedFields}/${totalFields} = ${Math.round(progress)}%`);
+    console.log(`Completed fields: ${completedFields}, Total fields: ${totalFields}`);
   };
 
     // Attendi che il DOM sia completamente caricato
@@ -685,7 +685,7 @@ const Assessment: React.FC = () => {
                     color: '#991b1b',
                     fontStyle: 'italic'
                   }}>
-                    💡 Suggerimento: Usa il riepilogo in alto per navigare velocemente alle sezioni mancanti
+                    Suggerimento: Usa il riepilogo in alto per navigare velocemente alle sezioni mancanti
                   </div>
                 </div>
               </div>

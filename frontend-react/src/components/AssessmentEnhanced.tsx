@@ -1,4 +1,14 @@
 import React from 'react';
+import { 
+  BuildingIcon, 
+  GlobeIcon, 
+  TargetIcon, 
+  MegaphoneIcon, 
+  BarChartIcon, 
+  InfoIcon, 
+  NotesIcon,
+  ListIcon
+} from './Icons/AssessmentIcons';
 
 interface SectionHeaderProps {
   title: string;
@@ -18,23 +28,23 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({ title, subtitle, i
   );
 };
 
-export const getStepIcon = (step: number): string => {
-  const icons: Record<number, string> = {
-    1: '🏢',
-    2: '🌐',
-    3: '🎯',
-    4: '📣',
-    5: '📊',
-    6: '⚠️',
-    7: '📝'
+export const getStepIcon = (step: number): React.ReactNode => {
+  const icons: Record<number, React.ReactNode> = {
+    0: <BuildingIcon size="large" />,
+    1: <GlobeIcon size="large" />,
+    2: <TargetIcon size="large" />,
+    3: <MegaphoneIcon size="large" />,
+    4: <BarChartIcon size="large" />,
+    5: <InfoIcon size="large" />,
+    6: <NotesIcon size="large" />
   };
-  return icons[step] || '📋';
+  return icons[step] || <ListIcon size="large" />;
 };
 
 interface SectionDataItem {
   id: string;
   title: string;
-  icon: string;
+  icon: React.ReactNode;
   description: string;
   subtitle: string;
 }
@@ -44,49 +54,49 @@ export const getSectionData = (): SectionDataItem[] => {
     {
       id: 'anagrafica',
       title: 'Anagrafica',
-      icon: '🏢',
+      icon: <BuildingIcon />,
       description: 'Informazioni aziendali',
       subtitle: 'Chi siete e come contattarvi'
     },
     {
       id: 'presenza-online',
       title: 'Presenza Online',
-      icon: '🌐',
+      icon: <GlobeIcon />,
       description: 'Sito web e social',
       subtitle: 'La vostra presenza digitale'
     },
     {
       id: 'obiettivi',
       title: 'Obiettivi',
-      icon: '🎯',
+      icon: <TargetIcon />,
       description: 'Traguardi e sfide',
       subtitle: 'Cosa volete raggiungere'
     },
     {
       id: 'marketing',
       title: 'Marketing',
-      icon: '📣',
+      icon: <MegaphoneIcon />,
       description: 'Strategie attuali',
       subtitle: 'Come promuovete la vostra azienda'
     },
     {
       id: 'dati',
       title: 'Dati e Strumenti',
-      icon: '📊',
+      icon: <BarChartIcon />,
       description: 'Analytics e CRM',
       subtitle: 'Gli strumenti che utilizzate'
     },
     {
       id: 'ostacoli',
       title: 'Ostacoli',
-      icon: '⚠️',
+      icon: <InfoIcon />,
       description: 'Sfide e blocchi',
       subtitle: 'Cosa vi sta frenando'
     },
     {
       id: 'note',
       title: 'Note Finali',
-      icon: '📝',
+      icon: <NotesIcon />,
       description: 'Considerazioni aggiuntive',
       subtitle: 'Altre informazioni utili'
     }

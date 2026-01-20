@@ -2,7 +2,7 @@ import React, { useState, useMemo, useCallback } from 'react';
 import {
   Page,
   Layout,
-  LegacyCard,
+  Card,
   IndexTable,
   useIndexResourceState,
   Text,
@@ -12,11 +12,27 @@ import {
   Modal,
   BlockStack,
   Box,
-  Grid,
+  InlineStack,
   EmptyState,
   Icon,
+  Divider,
+  Tooltip,
+  ButtonGroup,
 } from '@shopify/polaris';
-import { DeleteIcon, ViewIcon, PersonIcon, WorkIcon, GlobeIcon, NoteIcon } from '@shopify/polaris-icons';
+import { 
+  DeleteIcon, 
+  ViewIcon, 
+  PersonIcon, 
+  WorkIcon, 
+  GlobeIcon, 
+  NoteIcon,
+  PlusIcon,
+  RefreshIcon,
+  EmailIcon,
+  PhoneIcon,
+  CalendarIcon,
+  ExternalIcon
+} from '@shopify/polaris-icons';
 import { useAuth } from '../hooks/useAuth';
 import { toast } from 'react-hot-toast';
 import { getServiceUrl } from '../utils/apiConfig';
@@ -124,6 +140,18 @@ const AssessmentList: React.FC = () => {
     }
   };
 
+  // URL Assessment pubblico
+  const assessmentPublicUrl = `${window.location.origin}/assessment`;
+
+  const handleCopyLink = () => {
+    navigator.clipboard.writeText(assessmentPublicUrl);
+    toast.success('Link copiato negli appunti');
+  };
+
+  const handleOpenAssessment = () => {
+    window.open('/assessment', '_blank');
+  };
+
   // Filtri
   const handleQueryValueChange = useCallback((value: string) => setQueryValue(value), []);
   const handleQueryValueRemove = useCallback(() => setQueryValue(''), []);
@@ -155,7 +183,11 @@ const AssessmentList: React.FC = () => {
   const rowMarkup = filteredAssessments.map(
     (assessment, index) => {
       const {id, created_at, data} = assessment;
-      const date = new Date(created_at).toLocaleDateString('it-IT');
+      const date = new Date(created_at).toLocaleDateString('it-IT', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric'
+      });
 
       return (
         <IndexTable.Row
@@ -165,116 +197,195 @@ const AssessmentList: React.FC = () => {
           position={index}
         >
           <IndexTable.Cell>
-            <Text variant="bodyMd" fontWeight="bold" as="span">{data.ragione_sociale || 'Azienda Sconosciuta'}</Text>
-          </IndexTable.Cell>
-          <IndexTable.Cell>
-            <BlockStack gap="100">
-                <Text as="span" variant="bodySm">{data.referente_nome}</Text>
-                <Text as="span" tone="subdued" variant="bodyXs">{data.referente_email}</Text>
+            <BlockStack gap="050">
+              <Text variant="bodyMd" fontWeight="bold" as="span">
+                {data.ragione_sociale || 'Azienda non specificata'}
+              </Text>
+              {data.settore_attivita && (
+                <Text as="span" tone="subdued" variant="bodySm">{data.settore_attivita}</Text>
+              )}
             </BlockStack>
           </IndexTable.Cell>
           <IndexTable.Cell>
-            {data.settore_attivita || '-'}
+            <BlockStack gap="050">
+              <InlineStack gap="100" blockAlign="center">
+                <Icon source={PersonIcon} tone="subdued" />
+                <Text as="span" variant="bodySm">{data.referente_nome || '-'}</Text>
+              </InlineStack>
+              {data.referente_email && (
+                <InlineStack gap="100" blockAlign="center">
+                  <Icon source={EmailIcon} tone="subdued" />
+                  <Text as="span" tone="subdued" variant="bodyXs">{data.referente_email}</Text>
+                </InlineStack>
+              )}
+            </BlockStack>
           </IndexTable.Cell>
           <IndexTable.Cell>
-            <Badge tone="info">{date}</Badge>
+            <InlineStack gap="100" blockAlign="center">
+              <Icon source={CalendarIcon} tone="subdued" />
+              <Badge tone="info">{date}</Badge>
+            </InlineStack>
           </IndexTable.Cell>
           <IndexTable.Cell>
-             <div style={{display: 'flex', gap: '8px', justifyContent: 'flex-end'}}>
-                <div onClick={(e) => e.stopPropagation()}>
-                  <Button icon={ViewIcon} onClick={() => { setSelectedAssessment(assessment); setIsDetailModalOpen(true); }} variant="plain" accessibilityLabel="Vedi dettagli" />
-                </div>
-                <div onClick={(e) => e.stopPropagation()}>
-                  <Button icon={DeleteIcon} onClick={() => { setAssessmentToDelete(id); setIsDeleteModalOpen(true); }} tone="critical" variant="plain" accessibilityLabel="Elimina" />
-                </div>
-             </div>
+            <ButtonGroup>
+              <Tooltip content="Visualizza dettagli">
+                <Button 
+                  icon={ViewIcon} 
+                  onClick={() => { setSelectedAssessment(assessment); setIsDetailModalOpen(true); }} 
+                  variant="plain" 
+                  accessibilityLabel="Vedi dettagli" 
+                />
+              </Tooltip>
+              <Tooltip content="Elimina assessment">
+                <Button 
+                  icon={DeleteIcon} 
+                  onClick={() => { setAssessmentToDelete(id); setIsDeleteModalOpen(true); }} 
+                  tone="critical" 
+                  variant="plain" 
+                  accessibilityLabel="Elimina" 
+                />
+              </Tooltip>
+            </ButtonGroup>
           </IndexTable.Cell>
         </IndexTable.Row>
       );
     },
   );
 
-  const renderDetailSection = (title: string, IconSource: React.FunctionComponent<React.SVGProps<SVGSVGElement>>, data: {[key: string]: any}) => {
-    const entries = Object.entries(data).filter(([, v]) => v);
-    if (entries.length === 0) return null;
+  const renderDetailSection = (
+    title: string, 
+    IconSource: React.FunctionComponent<React.SVGProps<SVGSVGElement>>, 
+    items: Array<{label: string, value: any}>
+  ) => {
+    const validItems = items.filter(item => item.value);
+    if (validItems.length === 0) return null;
 
     return (
-        <Box paddingBlockEnd="400">
+      <Box paddingBlockEnd="400">
+        <BlockStack gap="300">
+          <InlineStack gap="200" blockAlign="center">
+            <Icon source={IconSource} tone="base" />
+            <Text variant="headingSm" as="h3">{title}</Text>
+          </InlineStack>
+          <Divider />
+          <Box paddingInlineStart="600">
             <BlockStack gap="200">
-                <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
-                    <div style={{width: '20px', height: '20px'}}>
-                        <Icon source={IconSource} tone="subdued" />
-                    </div>
-                    <Text variant="headingSm" as="h3" tone="subdued">{title}</Text>
-                </div>
-                <Box paddingBlockStart="200">
-                    <Grid>
-                        {entries.map(([k, v]) => (
-                            <Grid.Cell key={k} columnSpan={{xs: 6, sm: 6, md: 4, lg: 4, xl: 4}}>
-                                <BlockStack gap="100">
-                                    <Text variant="bodyXs" tone="subdued" as="p">{k}</Text>
-                                    <Text variant="bodyMd" as="p">{Array.isArray(v) ? v.join(', ') : String(v)}</Text>
-                                </BlockStack>
-                            </Grid.Cell>
-                        ))}
-                    </Grid>
-                </Box>
+              {validItems.map((item, idx) => (
+                <InlineStack key={idx} gap="200" align="start">
+                  <Box minWidth="120px">
+                    <Text variant="bodySm" tone="subdued" as="span">{item.label}</Text>
+                  </Box>
+                  <Text variant="bodyMd" as="span">
+                    {Array.isArray(item.value) ? item.value.join(', ') : String(item.value)}
+                  </Text>
+                </InlineStack>
+              ))}
             </BlockStack>
-        </Box>
+          </Box>
+        </BlockStack>
+      </Box>
     );
   };
 
   if (!hasPermission('assessments:read')) {
-      return <Page title="Accesso Negato"><Text as="p" tone="critical">Non hai i permessi per visualizzare questa pagina.</Text></Page>;
+      return (
+        <Page title="Accesso Negato">
+          <Card>
+            <BlockStack gap="200" align="center">
+              <Text as="p" tone="critical">Non hai i permessi per visualizzare questa pagina.</Text>
+            </BlockStack>
+          </Card>
+        </Page>
+      );
   }
 
   return (
-    <Page title="Assessment Digitali">
+    <Page 
+      title="Assessment Digitali"
+      primaryAction={{
+        content: 'Compila Assessment',
+        icon: PlusIcon,
+        onAction: handleOpenAssessment,
+      }}
+      secondaryActions={[
+        {
+          content: 'Copia Link',
+          icon: ExternalIcon,
+          onAction: handleCopyLink,
+        },
+        {
+          content: 'Aggiorna',
+          icon: RefreshIcon,
+          onAction: fetchAssessments,
+        }
+      ]}
+    >
       <Layout>
         <Layout.Section>
-          <LegacyCard>
-             <div style={{padding: '16px', borderBottom: '1px solid #dfe3e8'}}>
-                <Filters
+          <Card padding="0">
+            <Box padding="400" borderBlockEndWidth="025" borderColor="border">
+              <InlineStack align="space-between" blockAlign="center">
+                <BlockStack gap="100">
+                  <Text variant="headingSm" as="h2">Assessment Compilati</Text>
+                  <Text variant="bodySm" tone="subdued" as="p">
+                    {filteredAssessments.length} assessment totali
+                  </Text>
+                </BlockStack>
+                <div style={{ width: '300px' }}>
+                  <Filters
                     queryValue={queryValue}
                     filters={[]}
                     appliedFilters={[]}
                     onQueryChange={handleQueryValueChange}
                     onQueryClear={handleQueryValueRemove}
                     onClearAll={handleClearAll}
-                    queryPlaceholder="Cerca assessment..."
-                />
-            </div>
+                    queryPlaceholder="Cerca per azienda, nome, email..."
+                  />
+                </div>
+              </InlineStack>
+            </Box>
             {isLoading ? (
-                 <div style={{padding: '2rem', textAlign: 'center'}}>Caricamento...</div>
+              <Box padding="800">
+                <BlockStack gap="200" align="center">
+                  <Text as="p" tone="subdued">Caricamento assessment...</Text>
+                </BlockStack>
+              </Box>
             ) : (
-                <IndexTable
+              <IndexTable
                 resourceName={resourceName}
                 itemCount={filteredAssessments.length}
                 selectedItemsCount={
-                    allResourcesSelected ? 'All' : selectedResources.length
+                  allResourcesSelected ? 'All' : selectedResources.length
                 }
                 onSelectionChange={handleSelectionChange}
                 headings={[
-                    {title: 'Azienda'},
-                    {title: 'Referente'},
-                    {title: 'Settore'},
-                    {title: 'Data Invio'},
-                    {title: 'Azioni', hidden: true}
+                  {title: 'Azienda'},
+                  {title: 'Referente'},
+                  {title: 'Data Invio'},
+                  {title: 'Azioni', hidden: true}
                 ]}
                 emptyState={
-                    <EmptyState
-                        heading="Nessun assessment trovato"
-                        action={{content: 'Ricarica', onAction: fetchAssessments}}
-                        image=""
-                    >
-                        <p>Non ci sono ancora assessment compilati.</p>
-                    </EmptyState>
+                  <EmptyState
+                    heading="Nessun assessment compilato"
+                    action={{
+                      content: 'Compila il primo Assessment',
+                      icon: PlusIcon,
+                      onAction: handleOpenAssessment
+                    }}
+                    secondaryAction={{
+                      content: 'Copia link assessment',
+                      onAction: handleCopyLink
+                    }}
+                    image=""
+                  >
+                    <p>Condividi il link dell'assessment con i tuoi potenziali clienti.</p>
+                  </EmptyState>
                 }
-                >
+              >
                 {rowMarkup}
-                </IndexTable>
+              </IndexTable>
             )}
-          </LegacyCard>
+          </Card>
         </Layout.Section>
       </Layout>
 
@@ -285,45 +396,45 @@ const AssessmentList: React.FC = () => {
         title={selectedAssessment?.data.ragione_sociale || 'Dettaglio Assessment'}
         size="large"
         primaryAction={{
-            content: 'Chiudi',
-            onAction: () => setIsDetailModalOpen(false),
+          content: 'Chiudi',
+          onAction: () => setIsDetailModalOpen(false),
         }}
       >
         <Modal.Section>
-            {selectedAssessment && (
-                <BlockStack gap="400">
-                    {renderDetailSection("Anagrafica", PersonIcon, {
-                        'Referente': selectedAssessment.data.referente_nome,
-                        'Email': selectedAssessment.data.referente_email,
-                        'Telefono': selectedAssessment.data.referente_telefono,
-                        'Ragione Sociale': selectedAssessment.data.ragione_sociale,
-                        'Settore': selectedAssessment.data.settore_attivita,
-                        'Dimensione Team': selectedAssessment.data.dimensione_team
-                    })}
-                    
-                    {renderDetailSection("Business", WorkIcon, {
-                        'Descrizione': selectedAssessment.data.descrizione_business,
-                        'Decisori': selectedAssessment.data.decisori_coinvolti,
-                         'Chi fa cosa': selectedAssessment.data.chi_fa_cosa,
-                         'Metrica Successo': selectedAssessment.data.metrica_successo
-                    })}
+          {selectedAssessment && (
+            <BlockStack gap="400">
+              {renderDetailSection("Anagrafica", PersonIcon, [
+                {label: 'Referente', value: selectedAssessment.data.referente_nome},
+                {label: 'Email', value: selectedAssessment.data.referente_email},
+                {label: 'Telefono', value: selectedAssessment.data.referente_telefono},
+                {label: 'Ragione Sociale', value: selectedAssessment.data.ragione_sociale},
+                {label: 'Settore', value: selectedAssessment.data.settore_attivita},
+                {label: 'Dimensione Team', value: selectedAssessment.data.dimensione_team}
+              ])}
+              
+              {renderDetailSection("Business", WorkIcon, [
+                {label: 'Descrizione', value: selectedAssessment.data.descrizione_business},
+                {label: 'Decisori', value: selectedAssessment.data.decisori_coinvolti},
+                {label: 'Chi fa cosa', value: selectedAssessment.data.chi_fa_cosa},
+                {label: 'Metrica Successo', value: selectedAssessment.data.metrica_successo}
+              ])}
 
-                    {renderDetailSection("Presenza Online", GlobeIcon, {
-                        'Sito Web': selectedAssessment.data.sito_web_presente,
-                        'URL': selectedAssessment.data.sito_web_url,
-                        'E-commerce': selectedAssessment.data.piattaforma_ecommerce,
-                        'Traffico': selectedAssessment.data.traffico_mensile,
-                        'Social': selectedAssessment.data.social_attivi,
-                        'Budget Indicativo': selectedAssessment.data.budget_indicativo
-                    })}
+              {renderDetailSection("Presenza Online", GlobeIcon, [
+                {label: 'Sito Web', value: selectedAssessment.data.sito_web_presente},
+                {label: 'URL', value: selectedAssessment.data.sito_web_url},
+                {label: 'E-commerce', value: selectedAssessment.data.piattaforma_ecommerce},
+                {label: 'Traffico', value: selectedAssessment.data.traffico_mensile},
+                {label: 'Social', value: selectedAssessment.data.social_attivi},
+                {label: 'Budget', value: selectedAssessment.data.budget_indicativo}
+              ])}
 
-                    {renderDetailSection("Note & Extra", NoteIcon, {
-                        'Note': selectedAssessment.data.note_finali,
-                        'CRM': selectedAssessment.data.quale_crm,
-                        'Analytics': selectedAssessment.data.quale_analytics
-                    })}
-                </BlockStack>
-            )}
+              {renderDetailSection("Dati e Strumenti", NoteIcon, [
+                {label: 'Note', value: selectedAssessment.data.note_finali},
+                {label: 'CRM', value: selectedAssessment.data.quale_crm},
+                {label: 'Analytics', value: selectedAssessment.data.quale_analytics}
+              ])}
+            </BlockStack>
+          )}
         </Modal.Section>
       </Modal>
 
@@ -333,17 +444,20 @@ const AssessmentList: React.FC = () => {
         onClose={() => setIsDeleteModalOpen(false)}
         title="Elimina Assessment"
         primaryAction={{
-            content: 'Elimina',
-            onAction: handleDelete,
-            destructive: true
+          content: 'Elimina',
+          onAction: handleDelete,
+          destructive: true
         }}
         secondaryActions={[{
-            content: 'Annulla',
-            onAction: () => setIsDeleteModalOpen(false)
+          content: 'Annulla',
+          onAction: () => setIsDeleteModalOpen(false)
         }]}
       >
         <Modal.Section>
-            <Text as="p">Sei sicuro di voler eliminare questo assessment? L'azione non è reversibile.</Text>
+          <BlockStack gap="200">
+            <Text as="p">Sei sicuro di voler eliminare questo assessment?</Text>
+            <Text as="p" tone="subdued">L'azione non è reversibile.</Text>
+          </BlockStack>
         </Modal.Section>
       </Modal>
     </Page>
