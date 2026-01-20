@@ -59,7 +59,7 @@ venv.bak/
 
 # === FRONTEND ===
 frontend-react/node_modules/
-frontend-react/dist/
+# frontend-react/dist/ - NECESSARIO PER DEPLOY! Non ignorare
 frontend-react/.vite/
 frontend-react/.cache/
 frontend-react/build/
