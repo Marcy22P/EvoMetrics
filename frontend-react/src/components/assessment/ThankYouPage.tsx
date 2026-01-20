@@ -1,5 +1,22 @@
 import React from 'react';
 
+// Icona SVG di successo
+const SuccessIcon = () => (
+  <svg 
+    width="64" 
+    height="64" 
+    viewBox="0 0 24 24" 
+    fill="none" 
+    stroke="#008060" 
+    strokeWidth="2" 
+    strokeLinecap="round" 
+    strokeLinejoin="round"
+  >
+    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+    <polyline points="22 4 12 14.01 9 11.01"/>
+  </svg>
+);
+
 interface ThankYouPageProps {
   visible: boolean;
 }
@@ -11,29 +28,11 @@ const ThankYouPage: React.FC<ThankYouPageProps> = ({ visible }) => {
     <div className="thank-you-page">
       <div className="thank-you-content">
         <div className="success-icon">
-          <svg 
-            width="80" 
-            height="80" 
-            viewBox="0 0 80 80" 
-            fill="none" 
-            xmlns="http://www.w3.org/2000/svg"
-          >
-            <circle cx="40" cy="40" r="38" stroke="#22c55e" strokeWidth="4" fill="#dcfce7"/>
-            <path 
-              d="M25 42L35 52L55 28" 
-              stroke="#22c55e" 
-              strokeWidth="5" 
-              strokeLinecap="round" 
-              strokeLinejoin="round"
-              fill="none"
-            />
-          </svg>
+          <SuccessIcon />
         </div>
         <h2 className="thank-you-title">Questionario Inviato!</h2>
         <p className="thank-you-message">
-          Grazie mille per aver compilato il questionario. 
-          <br /><br />
-          Il nostro team analizzerà le tue risposte e ti contatterà presto con una proposta personalizzata.
+          Grazie mille per aver compilato il questionario, seguiranno aggiornamenti.
         </p>
       </div>
     </div>

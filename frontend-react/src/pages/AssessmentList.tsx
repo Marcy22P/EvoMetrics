@@ -14,7 +14,6 @@ import {
   Box,
   InlineStack,
   EmptyState,
-  Icon,
   Divider,
   Tooltip,
   ButtonGroup,
@@ -22,14 +21,8 @@ import {
 import { 
   DeleteIcon, 
   ViewIcon, 
-  PersonIcon, 
-  WorkIcon, 
-  GlobeIcon, 
-  NoteIcon,
   PlusIcon,
   RefreshIcon,
-  EmailIcon,
-  CalendarIcon,
   ExternalIcon
 } from '@shopify/polaris-icons';
 import { useAuth } from '../hooks/useAuth';
@@ -196,34 +189,18 @@ const AssessmentList: React.FC = () => {
           position={index}
         >
           <IndexTable.Cell>
-            <BlockStack gap="050">
-              <Text variant="bodyMd" fontWeight="bold" as="span">
-                {data.ragione_sociale || 'Azienda non specificata'}
-              </Text>
-              {data.settore_attivita && (
-                <Text as="span" tone="subdued" variant="bodySm">{data.settore_attivita}</Text>
-              )}
-            </BlockStack>
+            <Text variant="bodyMd" fontWeight="semibold" as="span">
+              {data.ragione_sociale || 'Azienda non specificata'}
+            </Text>
           </IndexTable.Cell>
           <IndexTable.Cell>
-            <BlockStack gap="050">
-              <InlineStack gap="100" blockAlign="center">
-                <Icon source={PersonIcon} tone="subdued" />
-                <Text as="span" variant="bodySm">{data.referente_nome || '-'}</Text>
-              </InlineStack>
-              {data.referente_email && (
-                <InlineStack gap="100" blockAlign="center">
-                  <Icon source={EmailIcon} tone="subdued" />
-                  <Text as="span" tone="subdued" variant="bodyXs">{data.referente_email}</Text>
-                </InlineStack>
-              )}
-            </BlockStack>
+            <Text as="span" variant="bodyMd">{data.referente_nome || '-'}</Text>
           </IndexTable.Cell>
           <IndexTable.Cell>
-            <InlineStack gap="100" blockAlign="center">
-              <Icon source={CalendarIcon} tone="subdued" />
-              <Badge tone="info">{date}</Badge>
-            </InlineStack>
+            <Text as="span" variant="bodySm" tone="subdued">{data.referente_email || '-'}</Text>
+          </IndexTable.Cell>
+          <IndexTable.Cell>
+            <Badge tone="info">{date}</Badge>
           </IndexTable.Cell>
           <IndexTable.Cell>
             <ButtonGroup>
@@ -231,16 +208,16 @@ const AssessmentList: React.FC = () => {
                 <Button 
                   icon={ViewIcon} 
                   onClick={() => { setSelectedAssessment(assessment); setIsDetailModalOpen(true); }} 
-                  variant="plain" 
+                  variant="tertiary"
                   accessibilityLabel="Vedi dettagli" 
                 />
               </Tooltip>
-              <Tooltip content="Elimina assessment">
+              <Tooltip content="Elimina">
                 <Button 
                   icon={DeleteIcon} 
                   onClick={() => { setAssessmentToDelete(id); setIsDeleteModalOpen(true); }} 
                   tone="critical" 
-                  variant="plain" 
+                  variant="tertiary"
                   accessibilityLabel="Elimina" 
                 />
               </Tooltip>
@@ -251,35 +228,29 @@ const AssessmentList: React.FC = () => {
     },
   );
 
-  const renderDetailSection = (
-    title: string, 
-    IconSource: React.FunctionComponent<React.SVGProps<SVGSVGElement>>, 
-    items: Array<{label: string, value: any}>
-  ) => {
+  // Render sezione dettaglio nel modale
+  const renderDetailSection = (title: string, items: Array<{label: string, value: any}>) => {
     const validItems = items.filter(item => item.value);
     if (validItems.length === 0) return null;
 
     return (
-      <Box paddingBlockEnd="400">
+      <Box paddingBlockEnd="500">
         <BlockStack gap="300">
-          <InlineStack gap="200" blockAlign="center">
-            <Icon source={IconSource} tone="base" />
-            <Text variant="headingSm" as="h3">{title}</Text>
-          </InlineStack>
+          <Text variant="headingSm" as="h3" fontWeight="semibold">{title}</Text>
           <Divider />
-          <Box paddingInlineStart="600">
-            <BlockStack gap="200">
-              {validItems.map((item, idx) => (
-                <InlineStack key={idx} gap="200" align="start">
-                  <Box minWidth="120px">
+          <Box paddingBlockStart="200">
+            {validItems.map((item, idx) => (
+              <Box key={idx} paddingBlockEnd="200">
+                <InlineStack gap="400" wrap={false}>
+                  <Box minWidth="140px">
                     <Text variant="bodySm" tone="subdued" as="span">{item.label}</Text>
                   </Box>
-                  <Text variant="bodyMd" as="span">
+                  <Text variant="bodyMd" as="span" breakWord>
                     {Array.isArray(item.value) ? item.value.join(', ') : String(item.value)}
                   </Text>
                 </InlineStack>
-              ))}
-            </BlockStack>
+              </Box>
+            ))}
           </Box>
         </BlockStack>
       </Box>
@@ -290,9 +261,7 @@ const AssessmentList: React.FC = () => {
       return (
         <Page title="Accesso Negato">
           <Card>
-            <BlockStack gap="200" align="center">
-              <Text as="p" tone="critical">Non hai i permessi per visualizzare questa pagina.</Text>
-            </BlockStack>
+            <Text as="p" tone="critical">Non hai i permessi per visualizzare questa pagina.</Text>
           </Card>
         </Page>
       );
@@ -330,7 +299,7 @@ const AssessmentList: React.FC = () => {
                     {filteredAssessments.length} assessment totali
                   </Text>
                 </BlockStack>
-                <div style={{ width: '300px' }}>
+                <Box minWidth="280px">
                   <Filters
                     queryValue={queryValue}
                     filters={[]}
@@ -338,15 +307,15 @@ const AssessmentList: React.FC = () => {
                     onQueryChange={handleQueryValueChange}
                     onQueryClear={handleQueryValueRemove}
                     onClearAll={handleClearAll}
-                    queryPlaceholder="Cerca per azienda, nome, email..."
+                    queryPlaceholder="Cerca..."
                   />
-                </div>
+                </Box>
               </InlineStack>
             </Box>
             {isLoading ? (
               <Box padding="800">
                 <BlockStack gap="200" align="center">
-                  <Text as="p" tone="subdued">Caricamento assessment...</Text>
+                  <Text as="p" tone="subdued">Caricamento...</Text>
                 </BlockStack>
               </Box>
             ) : (
@@ -360,19 +329,20 @@ const AssessmentList: React.FC = () => {
                 headings={[
                   {title: 'Azienda'},
                   {title: 'Referente'},
-                  {title: 'Data Invio'},
+                  {title: 'Email'},
+                  {title: 'Data'},
                   {title: 'Azioni', hidden: true}
                 ]}
                 emptyState={
                   <EmptyState
-                    heading="Nessun assessment compilato"
+                    heading="Nessun assessment"
                     action={{
-                      content: 'Compila il primo Assessment',
+                      content: 'Compila Assessment',
                       icon: PlusIcon,
                       onAction: handleOpenAssessment
                     }}
                     secondaryAction={{
-                      content: 'Copia link assessment',
+                      content: 'Copia link',
                       onAction: handleCopyLink
                     }}
                     image=""
@@ -402,23 +372,23 @@ const AssessmentList: React.FC = () => {
         <Modal.Section>
           {selectedAssessment && (
             <BlockStack gap="400">
-              {renderDetailSection("Anagrafica", PersonIcon, [
+              {renderDetailSection("Anagrafica", [
                 {label: 'Referente', value: selectedAssessment.data.referente_nome},
                 {label: 'Email', value: selectedAssessment.data.referente_email},
                 {label: 'Telefono', value: selectedAssessment.data.referente_telefono},
                 {label: 'Ragione Sociale', value: selectedAssessment.data.ragione_sociale},
                 {label: 'Settore', value: selectedAssessment.data.settore_attivita},
-                {label: 'Dimensione Team', value: selectedAssessment.data.dimensione_team}
+                {label: 'Team', value: selectedAssessment.data.dimensione_team}
               ])}
               
-              {renderDetailSection("Business", WorkIcon, [
+              {renderDetailSection("Business", [
                 {label: 'Descrizione', value: selectedAssessment.data.descrizione_business},
                 {label: 'Decisori', value: selectedAssessment.data.decisori_coinvolti},
                 {label: 'Chi fa cosa', value: selectedAssessment.data.chi_fa_cosa},
                 {label: 'Metrica Successo', value: selectedAssessment.data.metrica_successo}
               ])}
 
-              {renderDetailSection("Presenza Online", GlobeIcon, [
+              {renderDetailSection("Presenza Online", [
                 {label: 'Sito Web', value: selectedAssessment.data.sito_web_presente},
                 {label: 'URL', value: selectedAssessment.data.sito_web_url},
                 {label: 'E-commerce', value: selectedAssessment.data.piattaforma_ecommerce},
@@ -427,10 +397,10 @@ const AssessmentList: React.FC = () => {
                 {label: 'Budget', value: selectedAssessment.data.budget_indicativo}
               ])}
 
-              {renderDetailSection("Dati e Strumenti", NoteIcon, [
-                {label: 'Note', value: selectedAssessment.data.note_finali},
+              {renderDetailSection("Strumenti e Note", [
                 {label: 'CRM', value: selectedAssessment.data.quale_crm},
-                {label: 'Analytics', value: selectedAssessment.data.quale_analytics}
+                {label: 'Analytics', value: selectedAssessment.data.quale_analytics},
+                {label: 'Note', value: selectedAssessment.data.note_finali}
               ])}
             </BlockStack>
           )}
@@ -453,10 +423,7 @@ const AssessmentList: React.FC = () => {
         }]}
       >
         <Modal.Section>
-          <BlockStack gap="200">
-            <Text as="p">Sei sicuro di voler eliminare questo assessment?</Text>
-            <Text as="p" tone="subdued">L'azione non è reversibile.</Text>
-          </BlockStack>
+          <Text as="p">Sei sicuro di voler eliminare questo assessment? L'azione non è reversibile.</Text>
         </Modal.Section>
       </Modal>
     </Page>
