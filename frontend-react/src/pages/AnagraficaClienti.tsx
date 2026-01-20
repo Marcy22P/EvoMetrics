@@ -174,10 +174,10 @@ const AnagraficaClienti: React.FC = () => {
         </IndexTable.Cell>
         <IndexTable.Cell>
           <div style={{ maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {contatti?.email || '-'}
+            {(contatti?.email && contatti.email.trim()) || '-'}
           </div>
         </IndexTable.Cell>
-        <IndexTable.Cell>{contatti?.telefono || '-'}</IndexTable.Cell>
+        <IndexTable.Cell>{(contatti?.telefono && contatti.telefono.trim()) || '-'}</IndexTable.Cell>
         <IndexTable.Cell>
             {servizi_attivi && servizi_attivi.length > 0 ? (
                 <InlineStack gap="200">
