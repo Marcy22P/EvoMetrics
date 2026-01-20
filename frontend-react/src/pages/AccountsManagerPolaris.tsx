@@ -228,7 +228,7 @@ const AccountsManager: React.FC = () => {
     }
   };
 
-  // Permessi disponibili - organizzati meglio
+  // Permessi disponibili - organizzati per area
   const permissionGroups = [
     {
       title: 'Accesso Base',
@@ -237,10 +237,27 @@ const AccountsManager: React.FC = () => {
       ],
     },
     {
-      title: 'Gradimento',
+      title: 'Finanza',
       perms: [
-        { key: 'gradimento:write', label: 'Compila Form' },
-        { key: 'gradimento:read', label: 'Vedi Tutte le Risposte' },
+        { key: 'finanza:read', label: 'Situazione Finanziaria' },
+        { key: 'finanza:write', label: 'Gestisci Movimenti' },
+        { key: 'investimenti:read', label: 'Vedi Investimenti' },
+        { key: 'investimenti:write', label: 'Gestisci Investimenti' },
+      ],
+    },
+    {
+      title: 'Clienti',
+      perms: [
+        { key: 'clienti:read', label: 'Visualizza' },
+        { key: 'clienti:write', label: 'Crea / Modifica' },
+        { key: 'clienti:delete', label: 'Elimina' },
+      ],
+    },
+    {
+      title: 'Sales Pipeline',
+      perms: [
+        { key: 'sales:read', label: 'Visualizza Lead' },
+        { key: 'sales:write', label: 'Gestisci Lead' },
       ],
     },
     {
@@ -264,6 +281,52 @@ const AccountsManager: React.FC = () => {
       perms: [
         { key: 'pagamenti:read', label: 'Visualizza' },
         { key: 'pagamenti:write', label: 'Gestisci' },
+      ],
+    },
+    {
+      title: 'Team',
+      perms: [
+        { key: 'team:read', label: 'Visualizza Team' },
+        { key: 'team:write', label: 'Gestisci Team' },
+        { key: 'users:read', label: 'Vedi Collaboratori' },
+        { key: 'users:write', label: 'Gestisci Collaboratori' },
+      ],
+    },
+    {
+      title: 'Gradimento',
+      perms: [
+        { key: 'gradimento:write', label: 'Compila Form' },
+        { key: 'gradimento:read', label: 'Vedi Tutte le Risposte' },
+      ],
+    },
+    {
+      title: 'Task & Progetti',
+      perms: [
+        { key: 'task:read', label: 'Visualizza Task' },
+        { key: 'task:write', label: 'Crea / Modifica Task' },
+        { key: 'task:delete', label: 'Elimina Task' },
+        { key: 'workflow:read', label: 'Visualizza Workflow' },
+        { key: 'workflow:write', label: 'Gestisci Workflow' },
+      ],
+    },
+    {
+      title: 'Calendario',
+      perms: [
+        { key: 'calendar:read', label: 'Visualizza' },
+        { key: 'calendar:write', label: 'Gestisci Eventi' },
+      ],
+    },
+    {
+      title: 'Analisi & Report',
+      perms: [
+        { key: 'analytics:read', label: 'Visualizza Analisi' },
+      ],
+    },
+    {
+      title: 'Impostazioni',
+      perms: [
+        { key: 'settings:read', label: 'Visualizza' },
+        { key: 'settings:write', label: 'Modifica' },
       ],
     },
   ];

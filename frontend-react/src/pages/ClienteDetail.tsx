@@ -16,6 +16,7 @@ import {
 } from '@shopify/polaris';
 import { SaveIcon, DeleteIcon } from '@shopify/polaris-icons';
 import { clientiApi, type Cliente, type DettagliCliente, type Task } from '../services/clientiApi';
+import { useAuth } from '../hooks/useAuth';
 
 // Import Components
 import ClienteHeader from '../components/clienti/ClienteHeader';
@@ -31,6 +32,14 @@ import ClienteDrive from '../components/clienti/ClienteDrive';
 const ClienteDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { hasPermission } = useAuth();
+  
+  // Permessi per sezioni specifiche
+  const canViewFinance = hasPermission('finanza:read') || hasPermission('pagamenti:read');
+  const canViewContratti = hasPermission('contratti:read');
+  const canViewPreventivi = hasPermission('preventivi:read');
+  const canViewDocuments = canViewContratti || canViewPreventivi;
+  const canDeleteCliente = hasPermission('clienti:delete');
   
   const [cliente, setCliente] = useState<Cliente | null>(null);
   const [documents, setDocuments] = useState<{ preventivi: any[], contratti: any[] }>({ preventivi: [], contratti: [] });
@@ -220,7 +229,7 @@ const ClienteDetail: React.FC = () => {
             loading: saving,
             icon: SaveIcon
         }}
-      secondaryActions={[
+      secondaryActions={canDeleteCliente ? [
         {
             content: 'Elimina',
           destructive: true,
@@ -232,7 +241,7 @@ const ClienteDetail: React.FC = () => {
                 }
             }
         }
-      ]}
+      ] : []}
     >
       <Layout>
           {/* HEADER SECTION */}
@@ -282,9 +291,10 @@ const ClienteDetail: React.FC = () => {
                     <BlockStack gap="400">
                 <ClienteReferente 
                     referente={cliente.dettagli?.referente || emptyDettagli.referente!} 
-                    documents={documents}
+                    documents={canViewDocuments ? documents : { preventivi: [], contratti: [] }}
                     onChange={handleReferenteChange}
                     clienteId={cliente.id}
+                    showDocuments={canViewDocuments}
                 />
                 
                 <ClienteDrive 
@@ -305,14 +315,17 @@ const ClienteDetail: React.FC = () => {
                     onChange={handleBrandChange}
                 />
 
-                <ClienteStats
+                {/* Stats finanziari - solo se ha permessi finanza */}
+                {canViewFinance && (
+                  <ClienteStats
                     situazioneInizio={cliente.dettagli?.situazione_inizio || { fatturato: 0, spesa_adv: 0 }}
                     situazioneAttuale={cliente.dettagli?.situazione_attuale || { fatturato: 0, spesa_adv: 0 }}
                     obiettivo={cliente.dettagli?.obiettivo || ''}
                     onInizioChange={(f, v) => handleStatsChange('inizio', f as string, v)}
                     onAttualeChange={(f, v) => handleStatsChange('attuale', f as string, v)}
                     onObiettivoChange={(val) => updateDettagli('obiettivo', val)}
-                />
+                  />
+                )}
 
                 <ClienteRecordings 
                     registrazioni={cliente.dettagli?.registrazioni || []}
@@ -327,7 +340,10 @@ const ClienteDetail: React.FC = () => {
                     onRemove={handleRemoveTask}
                 />
 
-                <ClienteDealHistory deals={dealsHistory} />
+                {/* Storico documenti - solo se ha permessi preventivi o contratti */}
+                {canViewDocuments && (
+                  <ClienteDealHistory deals={dealsHistory} />
+                )}
 
                 <LegacyCard title="Note Rapide" sectioned>
                     <TextField

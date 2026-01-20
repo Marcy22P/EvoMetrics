@@ -10,9 +10,10 @@ interface ClienteReferenteProps {
   documents: { preventivi: any[], contratti: any[] };
   onChange: (field: keyof Referente, value: string) => void;
   clienteId?: string;
+  showDocuments?: boolean;
 }
 
-const ClienteReferente: React.FC<ClienteReferenteProps> = ({ referente, documents, onChange, clienteId }) => {
+const ClienteReferente: React.FC<ClienteReferenteProps> = ({ referente, documents, onChange, clienteId, showDocuments = true }) => {
   const [isDbModalOpen, setIsDbModalOpen] = useState(false);
   const [analyzingFile, setAnalyzingFile] = useState(false);
   
@@ -117,6 +118,8 @@ const ClienteReferente: React.FC<ClienteReferenteProps> = ({ referente, document
           autoComplete="tel"
         />
 
+        {/* Sezione Documenti - visibile solo se showDocuments è true */}
+        {showDocuments && (
         <BlockStack gap="400">
           <InlineStack align="space-between" blockAlign="center">
             <Text as="h3" variant="headingSm">Documenti Contrattuali</Text>
@@ -176,9 +179,11 @@ const ClienteReferente: React.FC<ClienteReferenteProps> = ({ referente, document
              </div>
           </InlineStack>
         </BlockStack>
+        )}
       </FormLayout>
 
-      {/* Modal Selezione Documenti da DB */}
+      {/* Modal Selezione Documenti da DB - visibile solo se showDocuments */}
+      {showDocuments && (
       <Modal
         open={isDbModalOpen}
         onClose={() => setIsDbModalOpen(false)}
@@ -229,6 +234,7 @@ const ClienteReferente: React.FC<ClienteReferenteProps> = ({ referente, document
             )}
         </Modal.Section>
       </Modal>
+      )}
     </LegacyCard>
   );
 };

@@ -44,34 +44,74 @@ except ImportError:
 DEFAULT_PERMISSIONS_BY_ROLE: Dict[str, Any] = {
     "superadmin": {"__all__": True},
     "admin": {
+        # Dashboard e base
         "dashboard:read": True,
+        # Finanza
+        "finanza:read": True,
+        "finanza:write": True,
+        "investimenti:read": True,
+        "investimenti:write": True,
+        # Preventivi
         "preventivi:read": True,
         "preventivi:write": True,
         "preventivi:delete": True,
+        # Contratti
         "contratti:read": True,
         "contratti:write": True,
         "contratti:delete": True,
+        # Pagamenti
         "pagamenti:read": True,
         "pagamenti:write": True,
+        # Clienti
         "clienti:read": True,
+        "clienti:write": True,
         "clienti:create": True,
         "clienti:update": True,
         "clienti:delete": True,
+        # Sales
+        "sales:read": True,
+        "sales:write": True,
+        # Assessments
         "assessments:read": True,
         "assessments:delete": True,
+        # Team
+        "team:read": True,
+        "team:write": True,
         "gradimento:read": True,
         "gradimento:write": True,
+        # Task & Progetti
+        "task:read": True,
+        "task:write": True,
+        "task:delete": True,
+        "workflow:read": True,
+        "workflow:write": True,
+        # Calendario
+        "calendar:read": True,
+        "calendar:write": True,
+        # Analisi
+        "analytics:read": True,
+        # Utenti
         "users:create": True,
         "users:read": True,
         "users:update": True,
         "users:delete": True,
+        # Impostazioni
+        "settings:read": True,
+        "settings:write": True,
+        # Sistema
         "scheduler:status": True,
         "scheduler:write": True,
         "slack:read": True,
         "debug:read": True,
     },
     "user": {
+        # Permessi base per collaboratori
+        "dashboard:read": True,
         "gradimento:write": True,
+        "task:read": True,
+        "task:write": True,
+        "calendar:read": True,
+        "calendar:write": True,
     },
 }
 
