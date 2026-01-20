@@ -67,6 +67,8 @@ else:
         DATABASE_URL,
         pool_pre_ping=True,  # Verifica che la connessione sia valida prima di usarla
         pool_recycle=3600,   # Ricicla connessioni dopo 1 ora
+        pool_size=1,         # Ridotto per evitare TooManyConnections
+        max_overflow=1,      # Solo 1 connessione extra
         connect_args=postgresql_connect_args
     )
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

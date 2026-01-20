@@ -34,15 +34,8 @@ if DATABASE_URL.startswith("postgresql+asyncpg://") and "sslmode" not in DATABAS
     DATABASE_URL = f"{DATABASE_URL}{separator}sslmode=prefer"
     print(f"🔒 SSL mode aggiunto all'URL per Render.com")
 
-# Connection pool size configurabile - default come prima (nessun parametro = default)
-DB_POOL_MIN_SIZE = int(os.environ.get("DB_POOL_MIN_SIZE", "0"))  # Default 0 (come Database() senza parametri)
-DB_POOL_MAX_SIZE = int(os.environ.get("DB_POOL_MAX_SIZE", "10"))  # Default 10 (come Database() senza parametri)
-
-# Se non configurato, usa default (come prima)
-if DB_POOL_MIN_SIZE == 0 and DB_POOL_MAX_SIZE == 10:
-    database = databases.Database(DATABASE_URL)
-else:
-    database = databases.Database(DATABASE_URL, min_size=DB_POOL_MIN_SIZE, max_size=DB_POOL_MAX_SIZE)
+# Pool MOLTO ridotto per evitare TooManyConnections
+database = databases.Database(DATABASE_URL, min_size=0, max_size=2)
 
 # Flag per tracciare se il database è stato inizializzato
 _db_initialized = False
