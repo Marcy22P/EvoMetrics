@@ -15,7 +15,7 @@ from jose import JWTError, jwt
 from contextlib import asynccontextmanager
 import httpx
 
-from database import database, init_database, close_database
+from database import database, init_database, close_database, ensure_database_initialized
 from models import ContrattoData, ContrattoResponse, UpdateStatusRequest
 
 # Carica variabili d'ambiente dalla root del progetto
