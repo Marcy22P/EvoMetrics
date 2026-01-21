@@ -156,15 +156,25 @@ async def send_pending_approval_email_internal(
     if UNIFIED_MODE:
         try:
             funcs = _get_email_functions()
-            if "send_pending_approval_email" in funcs:
-                result = await funcs["send_pending_approval_email"](
-                    user_email=user_email,
-                    user_name=user_name,
-                    is_google_user=is_google_user
-                )
-                return result.get("status") == "success" if isinstance(result, dict) else True
+            if not funcs:
+                print(f"⚠️ Email functions non disponibili - controllare email_sender.py")
+                return False
+            if "send_pending_approval_email" not in funcs:
+                print(f"⚠️ send_pending_approval_email non trovata in email_sender.py")
+                return False
+            result = await funcs["send_pending_approval_email"](
+                user_email=user_email,
+                user_name=user_name,
+                is_google_user=is_google_user
+            )
+            success = result.get("status") == "success" if isinstance(result, dict) else True
+            if not success:
+                print(f"⚠️ Email pending approval fallita: {result}")
+            return success
         except Exception as e:
+            import traceback
             print(f"⚠️ Errore invio email diretto: {e}")
+            traceback.print_exc()
             return False
     else:
         email_service_url = os.environ.get("EMAIL_SERVICE_URL")
@@ -191,15 +201,25 @@ async def send_approval_email_internal(
     if UNIFIED_MODE:
         try:
             funcs = _get_email_functions()
-            if "send_approval_email" in funcs:
-                result = await funcs["send_approval_email"](
-                    user_email=user_email,
-                    user_name=user_name,
-                    login_url=login_url
-                )
-                return result.get("status") == "success" if isinstance(result, dict) else True
+            if not funcs:
+                print(f"⚠️ Email functions non disponibili - controllare email_sender.py")
+                return False
+            if "send_approval_email" not in funcs:
+                print(f"⚠️ send_approval_email non trovata in email_sender.py")
+                return False
+            result = await funcs["send_approval_email"](
+                user_email=user_email,
+                user_name=user_name,
+                login_url=login_url
+            )
+            success = result.get("status") == "success" if isinstance(result, dict) else True
+            if not success:
+                print(f"⚠️ Email approvazione fallita: {result}")
+            return success
         except Exception as e:
+            import traceback
             print(f"⚠️ Errore invio email diretto: {e}")
+            traceback.print_exc()
             return False
     else:
         email_service_url = os.environ.get("EMAIL_SERVICE_URL")

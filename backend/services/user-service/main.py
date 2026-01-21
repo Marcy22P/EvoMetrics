@@ -406,6 +406,9 @@ async def load_user_permissions(user: Dict[str, Any]) -> Dict[str, Any]:
     if user["role"] == "superadmin":
         return {"permissions": {"__all__": True}, "has_all_access": True}
 
+    # Assicura che il database sia inizializzato
+    await ensure_database_initialized()
+    
     row = await database.fetch_one(
         "SELECT permissions FROM user_permissions WHERE user_id = :uid",
         {"uid": user["id"]},
