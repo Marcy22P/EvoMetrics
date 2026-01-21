@@ -214,6 +214,33 @@ async def get_admin_user(current_user: Dict[str, Any] = Depends(get_current_user
     return current_user
 
 
+async def check_permission(current_user: Dict[str, Any], permission: str) -> bool:
+    """Verifica se l'utente ha un permesso specifico"""
+    # Admin e superadmin hanno sempre tutti i permessi
+    if current_user["role"] in ("admin", "superadmin"):
+        return True
+    
+    # Carica i permessi dell'utente
+    perms_info = await load_user_permissions(current_user)
+    perms = perms_info.get("permissions", {})
+    
+    # Wildcard
+    if perms.get("__all__"):
+        return True
+    
+    return perms.get(permission, False)
+
+
+async def require_users_read(current_user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
+    """Verifica che l'utente abbia il permesso users:read"""
+    if not await check_permission(current_user, "users:read"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Permission denied: users:read required"
+        )
+    return current_user
+
+
 app = FastAPI(
     title="User Service",
     description="Microservizio per gestione utenti e permessi",
@@ -487,7 +514,7 @@ async def create_user(
 async def list_users(
     include_pending: bool = Query(True, description="Includi utenti pending"),
     only_active: bool = Query(False, description="Mostra solo utenti attivi"),
-    _: Dict[str, Any] = Depends(get_admin_user),
+    _: Dict[str, Any] = Depends(require_users_read),  # Usa permesso users:read invece di solo admin
 ):
     filters = []
     if not include_pending:
