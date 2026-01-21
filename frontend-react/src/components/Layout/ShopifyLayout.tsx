@@ -31,7 +31,7 @@ const PERMISSION_MAP = {
   
   // Gestione Clienti
   clienti: ['clienti:read'],
-  assessment: ['clienti:read', 'assessments:read'],
+  assessment: ['assessments:read'],  // Solo chi ha assessments:read vede Assessment
   preventivi: ['preventivi:read'],
   contratti: ['contratti:read'],
   sales: ['sales:read'],

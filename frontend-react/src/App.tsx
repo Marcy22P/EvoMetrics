@@ -29,6 +29,8 @@ import ProductivityDashboard from './pages/ProductivityDashboard'
 import WorkflowBuilder from './pages/WorkflowBuilder'
 import DrivePage from './pages/DrivePage'
 import Team from './pages/Team'
+import TeamCollaboratorsView from './pages/TeamCollaboratorsView'
+import TeamOverview from './pages/TeamOverview'
 import Calendar from './pages/Calendar'
 import CalendarCallback from './pages/CalendarCallback'
 // SettingsTasks ora è integrato in Settings.tsx
@@ -224,15 +226,15 @@ const AppRoutes: React.FC = () => {
 
         {/* GESTIONE TEAM */}
         <Route path="/team" element={
-            <RequirePermission perm="users:read">
-                <Team />
+            <RequirePermission perm="team:read">
+                <TeamOverview />
             </RequirePermission>
         } />
         
-        {/* Sub-routes handled by Team.tsx tabs */}
+        {/* Collaboratori - Vista per tutti */}
         <Route path="/team/collaboratori" element={
             <RequirePermission perm="users:read">
-                <Team />
+                <TeamCollaboratorsView />
             </RequirePermission>
         } />
 
