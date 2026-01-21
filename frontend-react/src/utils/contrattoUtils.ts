@@ -472,6 +472,11 @@ export const generateArticolo8NormeRinvio = (): string => {
 In caso di inadempimento di una delle Parti, si applicano le norme generali sulla risoluzione dei contratti previste dal Codice Civile, fatto salvo il diritto al risarcimento del danno eventualmente subito.`;
 };
 
+// Articolo 1 - Rapporto
+export const generateArticolo1Rapporto = (): string => {
+  return `Le parti si danno reciprocamente atto che viene tra loro stipulato un contratto di collaborazione di lavoro autonomo consistente nello svolgimento di un'attività temporanea con le modalità ed i termini di seguito convenuti.`;
+};
+
 // Articolo 9 - Foro competente
 export const generateArticolo9ForoCompetente = (): string => {
   return `Per le controversie che dovessero insorgere nell'interpretazione, esecuzione e validità del presente, sarà competente in via esclusiva il Foro di Brescia.`;

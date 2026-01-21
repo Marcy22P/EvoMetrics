@@ -60,12 +60,14 @@ const RecentTaskCard: React.FC<{ task: Task; onClick: () => void }> = ({ task, o
             {isDone && '✓ '}{task.title}
           </Text>
           {task.due_date && (
-            <InlineStack gap="100" blockAlign="center">
-              <Icon source={ClockIcon} tone={isOverdue ? "critical" : "subdued"} />
+            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <span style={{ width: '16px', height: '16px', display: 'inline-flex', flexShrink: 0 }}>
+                <Icon source={ClockIcon} tone={isOverdue ? "critical" : "subdued"} />
+              </span>
               <Text as="span" variant="bodySm" tone={isOverdue ? "critical" : "subdued"}>
                 {new Date(task.due_date).toLocaleDateString('it-IT', { day: 'numeric', month: 'short' })}
               </Text>
-            </InlineStack>
+            </div>
           )}
         </BlockStack>
         <Badge 
@@ -176,9 +178,9 @@ const TeamOverview: React.FC = () => {
           <InlineGrid columns={{ xs: 2, md: 5 }} gap="400">
             <Card>
               <BlockStack gap="200" align="center">
-                <Box background="bg-fill-secondary" padding="200" borderRadius="full">
+                <div style={{ background: 'var(--p-color-bg-fill-secondary)', padding: '8px', borderRadius: '50%', width: '40px', height: '40px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   <Icon source={ChartVerticalIcon} />
-                </Box>
+                </div>
                 <Text as="p" variant="headingXl" alignment="center">{stats.total}</Text>
                 <Text as="p" tone="subdued" alignment="center">Totale Task</Text>
               </BlockStack>
@@ -186,9 +188,9 @@ const TeamOverview: React.FC = () => {
 
             <Card>
               <BlockStack gap="200" align="center">
-                <Box background="bg-fill-success-secondary" padding="200" borderRadius="full">
+                <div style={{ background: 'var(--p-color-bg-fill-success-secondary)', padding: '8px', borderRadius: '50%', width: '40px', height: '40px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   <Icon source={CheckIcon} tone="success" />
-                </Box>
+                </div>
                 <Text as="p" variant="headingXl" alignment="center">{stats.completed}</Text>
                 <Text as="p" tone="subdued" alignment="center">Completate</Text>
               </BlockStack>
@@ -196,9 +198,9 @@ const TeamOverview: React.FC = () => {
 
             <Card>
               <BlockStack gap="200" align="center">
-                <Box background="bg-fill-info-secondary" padding="200" borderRadius="full">
+                <div style={{ background: 'var(--p-color-bg-fill-info-secondary)', padding: '8px', borderRadius: '50%', width: '40px', height: '40px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   <Icon source={ClockIcon} tone="info" />
-                </Box>
+                </div>
                 <Text as="p" variant="headingXl" alignment="center">{stats.inProgress}</Text>
                 <Text as="p" tone="subdued" alignment="center">In Corso</Text>
               </BlockStack>
@@ -206,9 +208,9 @@ const TeamOverview: React.FC = () => {
 
             <Card>
               <BlockStack gap="200" align="center">
-                <Box background="bg-fill-warning-secondary" padding="200" borderRadius="full">
+                <div style={{ background: 'var(--p-color-bg-fill-warning-secondary)', padding: '8px', borderRadius: '50%', width: '40px', height: '40px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   <Icon source={CalendarIcon} tone="warning" />
-                </Box>
+                </div>
                 <Text as="p" variant="headingXl" alignment="center">{stats.pending}</Text>
                 <Text as="p" tone="subdued" alignment="center">Da Fare</Text>
               </BlockStack>
@@ -216,9 +218,9 @@ const TeamOverview: React.FC = () => {
 
             <Card>
               <BlockStack gap="200" align="center">
-                <Box background="bg-fill-critical-secondary" padding="200" borderRadius="full">
+                <div style={{ background: 'var(--p-color-bg-fill-critical-secondary)', padding: '8px', borderRadius: '50%', width: '40px', height: '40px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   <Icon source={TargetIcon} tone="critical" />
-                </Box>
+                </div>
                 <Text as="p" variant="headingXl" alignment="center">{stats.overdue}</Text>
                 <Text as="p" tone="subdued" alignment="center">Scadute</Text>
               </BlockStack>
@@ -268,10 +270,12 @@ const TeamOverview: React.FC = () => {
                 </BlockStack>
               ) : (
                 <Box padding="400" background="bg-surface-success" borderRadius="200">
-                  <BlockStack gap="200" align="center">
-                    <Icon source={CheckIcon} tone="success" />
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
+                    <span style={{ width: '20px', height: '20px', display: 'inline-flex' }}>
+                      <Icon source={CheckIcon} tone="success" />
+                    </span>
                     <Text as="p" tone="success" alignment="center">Fantastico! Nessuna task in sospeso!</Text>
-                  </BlockStack>
+                  </div>
                 </Box>
               )}
             </BlockStack>

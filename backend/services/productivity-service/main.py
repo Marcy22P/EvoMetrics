@@ -768,6 +768,33 @@ async def get_tasks(
         
     return results
 
+
+@app.get("/api/tasks/{task_id}", response_model=Task)
+async def get_task(task_id: str):
+    """
+    Restituisce un singolo task per ID.
+    """
+    query = "SELECT * FROM tasks WHERE id = :id"
+    row = await database.fetch_one(query, {"id": task_id})
+    if not row:
+        raise HTTPException(status_code=404, detail="Task not found")
+    
+    item = dict(row)
+    
+    # Parse JSON fields
+    for field in ["dependencies", "metadata", "attachments"]:
+        if item.get(field) and isinstance(item[field], str):
+            try:
+                item[field] = json.loads(item[field])
+            except:
+                item[field] = [] if field in ["dependencies", "attachments"] else {}
+    
+    if item.get("description") is None:
+        item["description"] = ""
+    
+    return item
+
+
 @app.post("/api/tasks", response_model=Task)
 async def create_task(task: TaskCreate, background_tasks: BackgroundTasks):
     """

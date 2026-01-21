@@ -29,7 +29,6 @@ import TaskManager from './pages/TaskManager'
 import ProductivityDashboard from './pages/ProductivityDashboard'
 import WorkflowBuilder from './pages/WorkflowBuilder'
 import DrivePage from './pages/DrivePage'
-import Team from './pages/Team'
 import TeamCollaboratorsView from './pages/TeamCollaboratorsView'
 import TeamOverview from './pages/TeamOverview'
 import Calendar from './pages/Calendar'
@@ -228,7 +227,7 @@ const AppRoutes: React.FC = () => {
         {/* GESTIONE TEAM */}
         <Route path="/team" element={
             <RequirePermission perm="team:read">
-                <TeamOverview />
+                <ProductivityDashboard />
             </RequirePermission>
         } />
         
@@ -239,9 +238,10 @@ const AppRoutes: React.FC = () => {
             </RequirePermission>
         } />
 
+        {/* La mia produttività personale */}
         <Route path="/team/produttivita" element={
-            <RequirePermission perm="users:read">
-                <Team />
+            <RequirePermission perm="task:read">
+                <TeamOverview />
             </RequirePermission>
         } />
 

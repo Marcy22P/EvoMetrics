@@ -228,12 +228,41 @@ const AccountsManager: React.FC = () => {
     }
   };
 
+  // Permessi di default per collaboratori
+  const defaultCollaboratorPerms: Record<string, boolean> = {
+    'dashboard:read': true,
+    'clienti:read': true,
+    'sales:read': true,
+    'team:read': true,
+    'users:read': true,
+    'gradimento:write': true,
+    'gradimento:read': true,
+    'task:read': true,
+    'task:write': true,
+    'calendar:read': true,
+    'calendar:write': true,
+    'settings:read': true,
+  };
+
+  const applyCollaboratorDefaults = () => {
+    setUserPermissions(prev => ({
+      ...prev,
+      ...defaultCollaboratorPerms
+    }));
+    showToast('Permessi collaboratore applicati', 'success');
+  };
+
   // Permessi disponibili - organizzati per area
   const permissionGroups = [
     {
-      title: 'Accesso Base',
+      title: '⭐ Essenziali Collaboratore',
       perms: [
         { key: 'dashboard:read', label: 'Dashboard' },
+        { key: 'users:read', label: 'Vedi Collaboratori' },
+        { key: 'team:read', label: 'Visualizza Team' },
+        { key: 'calendar:read', label: 'Calendario (Lettura)' },
+        { key: 'calendar:write', label: 'Calendario (Scrittura)' },
+        { key: 'settings:read', label: 'Impostazioni Profilo' },
       ],
     },
     {
@@ -284,11 +313,9 @@ const AccountsManager: React.FC = () => {
       ],
     },
     {
-      title: 'Team',
+      title: 'Team & Utenti',
       perms: [
-        { key: 'team:read', label: 'Visualizza Team' },
         { key: 'team:write', label: 'Gestisci Team' },
-        { key: 'users:read', label: 'Vedi Collaboratori' },
         { key: 'users:write', label: 'Gestisci Collaboratori' },
       ],
     },
@@ -333,12 +360,12 @@ const AccountsManager: React.FC = () => {
 
   if (loading) {
     return (
-      <Box padding="800">
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '300px', width: '100%' }}>
         <BlockStack gap="400" align="center">
           <Spinner size="large" />
           <Text as="p" tone="subdued">Caricamento utenti...</Text>
         </BlockStack>
-      </Box>
+      </div>
     );
   }
 
@@ -619,6 +646,18 @@ const AccountsManager: React.FC = () => {
       >
         <Modal.Section>
           <BlockStack gap="500">
+            {/* Pulsante per applicare permessi default collaboratore */}
+            {selectedUser?.role === 'user' && (
+              <Banner tone="info">
+                <InlineStack align="space-between" blockAlign="center">
+                  <Text as="span">Applica permessi standard per collaboratori</Text>
+                  <Button onClick={applyCollaboratorDefaults}>
+                    Applica Default
+                  </Button>
+                </InlineStack>
+              </Banner>
+            )}
+            
             {permissionGroups.map((group, groupIndex) => (
               <Box 
                 key={group.title} 

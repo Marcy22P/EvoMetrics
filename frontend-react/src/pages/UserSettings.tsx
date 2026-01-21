@@ -236,10 +236,12 @@ const UserSettings: React.FC = () => {
         <Layout.Section variant="oneHalf">
           <Card>
             <BlockStack gap="400">
-              <InlineStack gap="200" blockAlign="center">
-                <Icon source={LockIcon} />
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{ width: '20px', height: '20px', display: 'inline-flex', flexShrink: 0 }}>
+                  <Icon source={LockIcon} />
+                </span>
                 <Text as="h2" variant="headingMd">Cambia Password</Text>
-              </InlineStack>
+              </div>
 
               <BlockStack gap="300">
                 <TextField
@@ -282,14 +284,18 @@ const UserSettings: React.FC = () => {
         <Layout.Section variant="oneHalf">
           <Card>
             <BlockStack gap="400">
-              <InlineStack gap="200" blockAlign="center">
-                <Icon source={CalendarIcon} />
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{ width: '20px', height: '20px', display: 'inline-flex', flexShrink: 0 }}>
+                  <Icon source={CalendarIcon} />
+                </span>
                 <Text as="h2" variant="headingMd">Google Calendar</Text>
-              </InlineStack>
+              </div>
 
               <Box padding="400" background={calendarConnected ? "bg-surface-success" : "bg-surface-secondary"} borderRadius="200">
-                <InlineStack gap="300" blockAlign="center">
-                  <Icon source={calendarConnected ? CheckIcon : XIcon} tone={calendarConnected ? "success" : "subdued"} />
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <span style={{ width: '20px', height: '20px', display: 'inline-flex', flexShrink: 0 }}>
+                    <Icon source={calendarConnected ? CheckIcon : XIcon} tone={calendarConnected ? "success" : "subdued"} />
+                  </span>
                   <BlockStack gap="050">
                     <Text as="span" fontWeight="semibold">
                       {calendarConnected ? 'Calendario Collegato' : 'Calendario Non Collegato'}
@@ -301,7 +307,7 @@ const UserSettings: React.FC = () => {
                       }
                     </Text>
                   </BlockStack>
-                </InlineStack>
+                </div>
               </Box>
 
               {calendarConnected ? (

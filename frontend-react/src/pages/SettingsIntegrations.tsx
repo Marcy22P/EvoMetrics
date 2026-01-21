@@ -148,12 +148,12 @@ const SettingsIntegrations: React.FC = () => {
 
   if (isLoading && !healthData) {
     return (
-      <Box padding="800">
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '300px', width: '100%' }}>
         <BlockStack gap="400" align="center">
           <Spinner size="large" />
           <Text as="p" tone="subdued">Verifica servizi in corso...</Text>
         </BlockStack>
-      </Box>
+      </div>
     );
   }
 

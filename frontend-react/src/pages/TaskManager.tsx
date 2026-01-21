@@ -168,14 +168,28 @@ const TaskManager: React.FC = () => {
   // Auto-open task from URL parameter
   useEffect(() => {
     const openTaskId = searchParams.get('open');
-    if (openTaskId && tasks.length > 0 && !loading) {
+    if (openTaskId && !loading) {
+      // Prima cerca nelle task già caricate
       const taskToOpen = tasks.find(t => t.id === openTaskId);
       if (taskToOpen) {
         setSelectedTask(taskToOpen);
         setIsDetailModalOpen(true);
-        // Rimuovi il parametro dall'URL dopo l'apertura
         searchParams.delete('open');
         setSearchParams(searchParams, { replace: true });
+      } else if (tasks.length > 0) {
+        // Task non trovata nelle filtrate, fetch diretta
+        productivityApi.getTask(openTaskId).then(task => {
+          if (task) {
+            setSelectedTask(task);
+            setIsDetailModalOpen(true);
+            searchParams.delete('open');
+            setSearchParams(searchParams, { replace: true });
+          }
+        }).catch(() => {
+          // Task non esistente, rimuovi parametro
+          searchParams.delete('open');
+          setSearchParams(searchParams, { replace: true });
+        });
       }
     }
   }, [tasks, loading, searchParams, setSearchParams]);
@@ -510,6 +524,7 @@ const TaskManager: React.FC = () => {
   });
 
   const isAdmin = hasPermission('admin');
+  const canViewWorkflows = hasPermission('workflow:read');
 
   return (
     <Page
@@ -518,11 +533,11 @@ const TaskManager: React.FC = () => {
             <Button icon={PlusIcon} variant="primary" onClick={() => setIsCreateModalOpen(true)}>Nuovo Task</Button>
         }
       secondaryActions={[
-        {
+        ...(canViewWorkflows ? [{
                 content: 'Avvia Workflow',
                 icon: ExportIcon,
                 onAction: handleOpenWorkflowModal
-            },
+            }] : []),
             ...(isAdmin ? [{
                 content: 'Gestisci Stati',
                 icon: SettingsIcon,

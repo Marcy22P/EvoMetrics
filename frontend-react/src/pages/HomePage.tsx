@@ -91,60 +91,73 @@ const TaskCard: React.FC<{ task: Task; onClick: () => void }> = ({ task, onClick
       }}
       onClick={onClick}
     >
-      <BlockStack gap="200">
-        <InlineStack align="space-between" blockAlign="center">
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <Text as="span" variant="bodyMd" fontWeight="semibold">{task.title}</Text>
           <Badge tone={getPriorityTone(task.priority)} size="small">
             {task.priority === 'high' ? 'Alta' : task.priority === 'medium' ? 'Media' : 'Bassa'}
           </Badge>
-        </InlineStack>
+        </div>
         {task.project_name && (
           <Text as="span" variant="bodySm" tone="subdued">{task.project_name}</Text>
         )}
         {task.due_date && (
-          <InlineStack gap="100" blockAlign="center">
-            <Icon source={ClockIcon} tone={isOverdue ? "critical" : "subdued"} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+            <span style={{ width: '16px', height: '16px', display: 'inline-flex' }}>
+              <Icon source={ClockIcon} tone={isOverdue ? "critical" : "subdued"} />
+            </span>
             <Text as="span" variant="bodySm" tone={isOverdue ? "critical" : "subdued"}>
               {new Date(task.due_date).toLocaleDateString('it-IT', { day: 'numeric', month: 'short' })}
             </Text>
-          </InlineStack>
+          </div>
         )}
-      </BlockStack>
+      </div>
     </div>
   );
 };
 
 // Componente Evento Calendario
-const EventCard: React.FC<{ event: CalendarEvent }> = ({ event }) => {
+const EventCard: React.FC<{ event: CalendarEvent; onClick: () => void }> = ({ event, onClick }) => {
   const eventDate = new Date(event.start);
   const isToday = eventDate.toDateString() === new Date().toDateString();
 
   return (
-    <Box padding="300" background={isToday ? "bg-surface-success" : "bg-surface"} borderRadius="200">
-      <InlineStack gap="300" blockAlign="center">
-        <Box 
-          background={isToday ? "bg-fill-success" : "bg-fill-secondary"}
-          padding="200" 
-          borderRadius="100"
-          minWidth="50px"
+    <div 
+      onClick={onClick}
+      style={{ 
+        padding: '12px', 
+        background: isToday ? 'var(--p-color-bg-surface-success)' : 'var(--p-color-bg-surface)',
+        borderRadius: '8px',
+        cursor: 'pointer'
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+        <div 
+          style={{ 
+            background: isToday ? 'var(--p-color-bg-fill-success)' : 'var(--p-color-bg-fill-secondary)',
+            padding: '8px', 
+            borderRadius: '4px',
+            minWidth: '50px',
+            textAlign: 'center'
+          }}
         >
-          <BlockStack align="center">
-            <Text as="span" variant="headingSm" fontWeight="bold" alignment="center">
-              {eventDate.getDate()}
-            </Text>
-            <Text as="span" variant="bodySm" alignment="center">
-              {eventDate.toLocaleDateString('it-IT', { month: 'short' })}
-            </Text>
-          </BlockStack>
-        </Box>
-        <BlockStack gap="050">
+          <div style={{ fontWeight: 'bold', fontSize: '16px' }}>
+            {eventDate.getDate()}
+          </div>
+          <div style={{ fontSize: '12px' }}>
+            {eventDate.toLocaleDateString('it-IT', { month: 'short' })}
+          </div>
+        </div>
+        <div>
           <Text as="span" variant="bodyMd" fontWeight="medium">{event.title}</Text>
-          <Text as="span" variant="bodySm" tone="subdued">
-            {eventDate.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })}
-          </Text>
-        </BlockStack>
-      </InlineStack>
-    </Box>
+          <div>
+            <Text as="span" variant="bodySm" tone="subdued">
+              {eventDate.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })}
+            </Text>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 };
 
@@ -240,7 +253,7 @@ const CollaboratorDashboard: React.FC<{ data: DashboardData; user: any; navigate
               {urgentTasks.length > 0 ? (
                 <BlockStack gap="200">
                   {urgentTasks.map(task => (
-                    <TaskCard key={task.id} task={task} onClick={() => navigate('/task')} />
+                    <TaskCard key={task.id} task={task} onClick={() => navigate(`/task?open=${task.id}`)} />
                   ))}
                 </BlockStack>
               ) : (
@@ -271,7 +284,7 @@ const CollaboratorDashboard: React.FC<{ data: DashboardData; user: any; navigate
               {upcomingEvents.length > 0 ? (
                 <BlockStack gap="200">
                   {upcomingEvents.map(event => (
-                    <EventCard key={event.id} event={event} />
+                    <EventCard key={event.id} event={event} onClick={() => navigate('/calendario')} />
                   ))}
                 </BlockStack>
               ) : (
@@ -390,7 +403,7 @@ const AdminDashboard: React.FC<{ data: DashboardData; user: any; navigate: any }
                 <Button variant="plain" onClick={() => navigate('/task')}>Vedi tutte</Button>
               </InlineStack>
               {data.tasks.slice(0, 4).map(task => (
-                <TaskCard key={task.id} task={task} onClick={() => navigate('/task')} />
+                <TaskCard key={task.id} task={task} onClick={() => navigate(`/task?open=${task.id}`)} />
               ))}
               {data.tasks.length === 0 && (
                 <Text as="p" tone="subdued">Nessuna task attiva</Text>

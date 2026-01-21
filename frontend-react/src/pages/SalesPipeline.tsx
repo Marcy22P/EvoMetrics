@@ -31,9 +31,12 @@ import {
 } from '@shopify/polaris-icons';
 import { salesApi, type Lead, type PipelineStage, type LeadCreate } from '../services/salesApi';
 import { PipelineSettingsModal } from '../components/sales/PipelineSettingsModal';
+import { useAuth } from '../hooks/useAuth';
 import toast from 'react-hot-toast';
 
 const SalesPipeline: React.FC = () => {
+  const { hasPermission } = useAuth();
+  const canEdit = hasPermission('sales:write');
   const [leads, setLeads] = useState<Lead[]>([]);
   const [stages, setStages] = useState<PipelineStage[]>([]);
   const [loading, setLoading] = useState(true);
@@ -280,12 +283,12 @@ const SalesPipeline: React.FC = () => {
 
     return (
       <div 
-        draggable
-        onDragStart={(e) => handleDragStart(e, lead.id)}
-        onDragEnd={handleDragEnd}
+        draggable={canEdit}
+        onDragStart={canEdit ? (e) => handleDragStart(e, lead.id) : undefined}
+        onDragEnd={canEdit ? handleDragEnd : undefined}
         onClick={() => handleOpenModal(lead)}
         style={{ 
-          cursor: 'grab',
+          cursor: canEdit ? 'grab' : 'pointer',
           opacity: draggingLeadId === lead.id ? 0.5 : 1,
           transition: 'opacity 0.15s ease'
         }}
@@ -324,29 +327,31 @@ const SalesPipeline: React.FC = () => {
               </InlineStack>
             )}
             
-            {/* Pulsanti Navigazione Stage */}
-            <Box paddingBlockStart="100">
-              <InlineStack align="end" gap="200">
-                <div onClick={(e) => e.stopPropagation()}>
-                  <Button 
-                    icon={ArrowLeftIcon} 
-                    size="slim"
-                    variant="tertiary"
-                    disabled={!prevStage}
-                    onClick={() => prevStage && handleMoveStage(lead, prevStage.key)}
-                  />
-                </div>
-                <div onClick={(e) => e.stopPropagation()}>
-                  <Button 
-                    icon={ArrowRightIcon} 
-                    size="slim"
-                    variant="tertiary"
-                    disabled={!nextStage}
-                    onClick={() => nextStage && handleMoveStage(lead, nextStage.key)}
-                  />
-                </div>
-              </InlineStack>
-            </Box>
+            {/* Pulsanti Navigazione Stage - solo se ha permessi */}
+            {canEdit && (
+              <Box paddingBlockStart="100">
+                <InlineStack align="end" gap="200">
+                  <div onClick={(e) => e.stopPropagation()}>
+                    <Button 
+                      icon={ArrowLeftIcon} 
+                      size="slim"
+                      variant="tertiary"
+                      disabled={!prevStage}
+                      onClick={() => prevStage && handleMoveStage(lead, prevStage.key)}
+                    />
+                  </div>
+                  <div onClick={(e) => e.stopPropagation()}>
+                    <Button 
+                      icon={ArrowRightIcon} 
+                      size="slim"
+                      variant="tertiary"
+                      disabled={!nextStage}
+                      onClick={() => nextStage && handleMoveStage(lead, nextStage.key)}
+                    />
+                  </div>
+                </InlineStack>
+              </Box>
+            )}
           </BlockStack>
         </Card>
       </div>
@@ -567,14 +572,14 @@ const SalesPipeline: React.FC = () => {
     <Page 
       title="Sales Pipeline" 
       fullWidth
-      primaryAction={{
+      primaryAction={canEdit ? {
         content: 'Nuovo Lead',
         icon: PlusIcon,
         onAction: () => setShowCreateModal(true)
-      }}
+      } : undefined}
       secondaryActions={[
         { content: 'Ricarica', onAction: fetchLeads },
-        { content: 'Configura Pipeline', icon: SettingsIcon, onAction: () => setShowSettings(true) }
+        ...(canEdit ? [{ content: 'Configura Pipeline', icon: SettingsIcon, onAction: () => setShowSettings(true) }] : [])
       ]}
     >
       <Tabs tabs={tabs} selected={selectedTab} onSelect={setSelectedTab}>
@@ -588,38 +593,40 @@ const SalesPipeline: React.FC = () => {
         open={showModal}
         onClose={() => setShowModal(false)}
         title={`Lead: ${selectedLead?.azienda || selectedLead?.email}`}
-        primaryAction={{ content: 'Salva Modifiche', onAction: handleSaveLead }}
-        secondaryActions={[{ content: 'Elimina Lead', destructive: true, onAction: handleDeleteLead }]}
+        primaryAction={canEdit ? { content: 'Salva Modifiche', onAction: handleSaveLead } : undefined}
+        secondaryActions={canEdit ? [{ content: 'Elimina Lead', destructive: true, onAction: handleDeleteLead }] : undefined}
       >
         <Modal.Section>
           <BlockStack gap="400">
-            {/* Cambio Stage Rapido */}
-            <Box padding="300" background="bg-surface-secondary" borderRadius="200">
-              <BlockStack gap="200">
-                <Text variant="headingXs" as="h4">Sposta in Stage</Text>
-                <InlineStack gap="200" wrap>
-                  {stages.map((s, idx) => {
-                    const currentIdx = stages.findIndex(st => st.key === editStage);
-                    const isCurrentStage = s.key === editStage;
-                    const isPrev = idx === currentIdx - 1;
-                    const isNext = idx === currentIdx + 1;
-                    
-                    return (
-                      <Button
-                        key={s.key}
-                        size="slim"
-                        variant={isCurrentStage ? 'primary' : 'secondary'}
-                        icon={isPrev ? ArrowLeftIcon : isNext ? ArrowRightIcon : undefined}
-                        onClick={() => setEditStage(s.key)}
-                        disabled={isCurrentStage}
-                      >
-                        {s.label}
-                      </Button>
-                    );
-                  })}
-                </InlineStack>
-              </BlockStack>
-            </Box>
+            {/* Cambio Stage Rapido - solo se può modificare */}
+            {canEdit && (
+              <Box padding="300" background="bg-surface-secondary" borderRadius="200">
+                <BlockStack gap="200">
+                  <Text variant="headingXs" as="h4">Sposta in Stage</Text>
+                  <InlineStack gap="200" wrap>
+                    {stages.map((s, idx) => {
+                      const currentIdx = stages.findIndex(st => st.key === editStage);
+                      const isCurrentStage = s.key === editStage;
+                      const isPrev = idx === currentIdx - 1;
+                      const isNext = idx === currentIdx + 1;
+                      
+                      return (
+                        <Button
+                          key={s.key}
+                          size="slim"
+                          variant={isCurrentStage ? 'primary' : 'secondary'}
+                          icon={isPrev ? ArrowLeftIcon : isNext ? ArrowRightIcon : undefined}
+                          onClick={() => setEditStage(s.key)}
+                          disabled={isCurrentStage}
+                        >
+                          {s.label}
+                        </Button>
+                      );
+                    })}
+                  </InlineStack>
+                </BlockStack>
+              </Box>
+            )}
 
             <TextField 
               label="Nome Azienda" 
@@ -627,20 +634,21 @@ const SalesPipeline: React.FC = () => {
               onChange={setEditAzienda} 
               autoComplete="off" 
               placeholder="Nome dell'azienda..."
+              disabled={!canEdit}
             />
 
             <InlineStack gap="400">
               <div style={{ flex: 1 }}>
-                <TextField label="Nome" value={editFirstName} onChange={setEditFirstName} autoComplete="off" />
+                <TextField label="Nome" value={editFirstName} onChange={setEditFirstName} autoComplete="off" disabled={!canEdit} />
               </div>
               <div style={{ flex: 1 }}>
-                <TextField label="Cognome" value={editLastName} onChange={setEditLastName} autoComplete="off" />
+                <TextField label="Cognome" value={editLastName} onChange={setEditLastName} autoComplete="off" disabled={!canEdit} />
               </div>
             </InlineStack>
             
             <TextField label="Email" value={selectedLead?.email || ''} disabled autoComplete="off" helpText="L'email non può essere modificata" />
-            <TextField label="Telefono" value={editPhone} onChange={setEditPhone} autoComplete="off" />
-            <TextField label="Note Interne" value={editNotes} onChange={setEditNotes} multiline={4} autoComplete="off" placeholder="Aggiungi note sul lead..." />
+            <TextField label="Telefono" value={editPhone} onChange={setEditPhone} autoComplete="off" disabled={!canEdit} />
+            <TextField label="Note Interne" value={editNotes} onChange={setEditNotes} multiline={4} autoComplete="off" placeholder="Aggiungi note sul lead..." disabled={!canEdit} />
             
             {selectedLead?.clickfunnels_data && Object.keys(selectedLead.clickfunnels_data).length > 0 && (
               <Box padding="300" background="bg-surface-secondary" borderRadius="200">

@@ -132,26 +132,36 @@ export const ContrattoPreview: React.FC<ContrattoPreviewProps> = ({ data }) => {
             <p className="contratto-number">N. {data.numero}</p>
           </div>
 
-          <div className="info-section">
-            <div className="company-info">
-              <h2>EVOLUZIONE IMPRESE S.R.L.</h2>
-              <p>P.IVA: 04636340988</p>
-              <p>Email: info@evoluzioneimprese.com</p>
-            </div>
-            <div className="client-info">
-              <p><strong>DATA:</strong> {formatDateItalian(new Date())}</p>
-              <p><strong>CLIENTE:</strong> {data.datiCommittente.ragioneSociale || 'Non specificato'}</p>
-            </div>
-          </div>
-
-          {/* Esempio Articolo - Gli altri seguono lo stesso pattern */}
+          {/* PARTI STIPULANTI */}
           <div className="articolo">
             <div className="articolo-title">TRA</div>
             <div className="articolo-content">
-              Azienda: {data.datiCommittente.ragioneSociale || '...'} <br/>
-              E Evoluzione Imprese S.r.l. <br/>
-              <br/>
+              <strong>Azienda:</strong> {data.datiCommittente.ragioneSociale || '...'}<br/>
+              con sede a {data.datiCommittente.citta || '...'} in {data.datiCommittente.via || '...'} {data.datiCommittente.numero || ''} {data.datiCommittente.cap || ''}<br/>
+              E-mail: {data.datiCommittente.email || '...'}<br/>
+              PEC: {data.datiCommittente.pec || '...'}<br/>
+              C.F./P.IVA: {data.datiCommittente.cfPiva || '...'}<br/>
+              Nella persona del legale rappresentante <strong>{data.datiCommittente.legaleRappresentante || '...'}</strong>, proprietario dell'impresa {data.datiCommittente.ragioneSociale || '...'}<br/>
+              di seguito indicato come <strong>"Committente"</strong>
+              <br/><br/>
+              <strong>E</strong>
+              <br/><br/>
+              <strong>Azienda:</strong> Evoluzione Imprese S.r.l.<br/>
+              Sede: Via Lamarmora 161, Brescia<br/>
+              E-mail: info@evoluzioneimprese.it<br/>
+              PEC: evoluzioneimpresesr@legalmail.com<br/>
+              P.IVA: IT04636340988<br/>
+              Nella persona del legale rappresentante <strong>Zanibelli Filippo</strong>, di seguito indicato come <strong>"Evoluzione Imprese"</strong>
+              <br/><br/>
               <strong>SI CONVIENE E SI STIPULA QUANTO SEGUE</strong>
+            </div>
+          </div>
+
+          {/* ART. 1 - RAPPORTO */}
+          <div className="articolo">
+            <div className="articolo-title">ART. 1 - RAPPORTO</div>
+            <div className="articolo-content">
+              Le parti si danno reciprocamente atto che viene tra loro stipulato un contratto di collaborazione di lavoro autonomo consistente nello svolgimento di un'attività temporanea con le modalità ed i termini di seguito convenuti.
             </div>
           </div>
 
@@ -223,19 +233,55 @@ export const ContrattoPreview: React.FC<ContrattoPreviewProps> = ({ data }) => {
             </div>
           )}
 
-          {data.articolo9ForoCompetente && (
-            <div className="articolo">
-              <div className="articolo-title">ART. 9 - FORO COMPETENTE</div>
-              <div className="articolo-content">{data.articolo9ForoCompetente}</div>
+          {/* ART. 9 - FORO COMPETENTE con clausole e firme */}
+          <div className="articolo">
+            <div className="articolo-title">ART. 9 - FORO COMPETENTE</div>
+            <div className="articolo-content">
+              Per le controversie che dovessero insorgere nell'interpretazione, esecuzione e validità del presente, sarà competente in via esclusiva il Foro di Brescia.
+              <br/><br/>
+              <strong>Data:</strong> {formatDateItalian(new Date())}
             </div>
-          )}
+          </div>
           
           <div className="signature-section">
             <div className="signature-box">
-              <p>Il Committente</p>
+              <p><strong>Il Committente</strong></p>
+              <br/><br/><br/>
+              <p style={{borderTop: '1px solid #000', paddingTop: '5px'}}>_________________________</p>
             </div>
             <div className="signature-box">
-              <p>Evoluzione Imprese</p>
+              <p><strong>Evoluzione Imprese</strong></p>
+              <br/><br/><br/>
+              <p style={{borderTop: '1px solid #000', paddingTop: '5px'}}>_________________________</p>
+            </div>
+          </div>
+
+          {/* Clausole Art. 1341 e 1342 c.c. */}
+          <div className="articolo" style={{marginTop: '40px', pageBreakBefore: 'always'}}>
+            <div className="articolo-content" style={{fontSize: '9pt'}}>
+              Ai sensi e per gli effetti degli articoli 1341 e 1342 del codice civile si accettano espressamente i punti:<br/>
+              3) Modalità di esecuzione della prestazione professionale<br/>
+              4) Durata del contratto<br/>
+              5) Compenso e modalità di pagamento<br/>
+              6) Proprietà e riservatezza dei risultati<br/>
+              7) Responsabilità<br/>
+              8) Norme di rinvio<br/>
+              9) Foro competente<br/><br/>
+              La lettera di incarico redatta in duplice originale è stata sottoscritta dal cliente anche per ricevuta.
+            </div>
+          </div>
+
+          {/* Firme finali per accettazione clausole */}
+          <div className="signature-section" style={{marginTop: '30px'}}>
+            <div className="signature-box">
+              <p><strong>Il Committente</strong></p>
+              <br/><br/><br/>
+              <p style={{borderTop: '1px solid #000', paddingTop: '5px'}}>_________________________</p>
+            </div>
+            <div className="signature-box">
+              <p><strong>Evoluzione Imprese</strong></p>
+              <br/><br/><br/>
+              <p style={{borderTop: '1px solid #000', paddingTop: '5px'}}>_________________________</p>
             </div>
           </div>
         </div>

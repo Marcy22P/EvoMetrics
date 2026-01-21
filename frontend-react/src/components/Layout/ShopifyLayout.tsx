@@ -225,6 +225,14 @@ const ShopifyLayout: React.FC = () => {
 
     // Sezione TEAM
     const teamSubItems = [];
+    // La mia produttività personale - sempre visibile per chi può vedere task
+    if (canAccess('produttivita')) {
+      teamSubItems.push({
+        label: 'La Mia Produttività',
+        url: '/team/produttivita',
+        onClick: () => navigate('/team/produttivita'),
+      });
+    }
     if (canAccess('collaboratori')) {
       teamSubItems.push({
         label: 'Collaboratori',
@@ -237,13 +245,6 @@ const ShopifyLayout: React.FC = () => {
         label: 'Form Risposte',
         url: '/team/gradimento-risposte',
         onClick: () => navigate('/team/gradimento-risposte'),
-      });
-    }
-    if (canAccess('produttivita')) {
-      teamSubItems.push({
-        label: 'Produttività',
-        url: '/produttivita',
-        onClick: () => navigate('/produttivita'),
       });
     }
     if (canAccess('benessere')) {
@@ -351,14 +352,12 @@ const ShopifyLayout: React.FC = () => {
     // Sezione IMPOSTAZIONI
     const impostazioniSubItems = [];
     
-    // Profilo personale - sempre visibile per tutti
-    if (canAccess('impostazioni')) {
-      impostazioniSubItems.push({
-        label: 'Il Mio Profilo',
-        url: '/impostazioni/profile',
-        onClick: () => navigate('/impostazioni/profile'),
-      });
-    }
+    // Profilo personale - SEMPRE visibile per tutti gli utenti autenticati
+    impostazioniSubItems.push({
+      label: 'Il Mio Profilo',
+      url: '/impostazioni/profile',
+      onClick: () => navigate('/impostazioni/profile'),
+    });
     
     // Gestione Account - solo admin
     if (canAccess('accounts')) {
@@ -383,17 +382,15 @@ const ShopifyLayout: React.FC = () => {
       });
     }
 
-    const impostazioniItems = [];
-    if (canAccess('impostazioni') && impostazioniSubItems.length > 0) {
-      impostazioniItems.push({
-        label: 'Impostazioni',
-        icon: SettingsIcon,
-        url: '/impostazioni/accounts',
-        onClick: () => navigate('/impostazioni/accounts'),
-        selected: location.pathname.startsWith('/impostazioni'),
-        subNavigationItems: impostazioniSubItems
-      });
-    }
+    // Impostazioni sempre visibili perché almeno "Il Mio Profilo" è sempre presente
+    const impostazioniItems = [{
+      label: 'Impostazioni',
+      icon: SettingsIcon,
+      url: '/impostazioni/profile',
+      onClick: () => navigate('/impostazioni/profile'),
+      selected: location.pathname.startsWith('/impostazioni'),
+      subNavigationItems: impostazioniSubItems
+    }];
 
     return (
       <Navigation location={location.pathname}>

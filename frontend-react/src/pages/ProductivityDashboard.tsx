@@ -28,6 +28,7 @@ import {
   ChartVerticalIcon
 } from '@shopify/polaris-icons';
 import { productivityApi, type Task, type TaskStatus } from '../services/productivityApi';
+import { useAuth } from '../hooks/useAuth';
 import { usersApi, type User } from '../services/usersApi';
 import { clientiApi, type Cliente } from '../services/clientiApi';
 import { 
@@ -476,8 +477,9 @@ export const ProductivityDashboardContent: React.FC<{
     error: string | null,
     selectedUserFilter: string,
     setSelectedUserFilter: (val: string) => void,
-    setError: (val: string | null) => void
-}> = ({ tasks, users, statuses, clients, loading, error, selectedUserFilter, setSelectedUserFilter, setError }) => {
+    setError: (val: string | null) => void,
+    isAdmin?: boolean
+}> = ({ tasks, users, statuses, clients, loading, error, selectedUserFilter, setSelectedUserFilter, setError, isAdmin = true }) => {
     
     const filteredTasks = useMemo(() => {
         if (!selectedUserFilter) return tasks;
@@ -515,11 +517,9 @@ export const ProductivityDashboardContent: React.FC<{
 
     if (loading) {
         return (
-            <Box padding="800">
-                <InlineStack align="center">
-                    <Spinner size="large" />
-                </InlineStack>
-            </Box>
+            <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '300px', width: '100%' }}>
+                <Spinner size="large" />
+            </div>
         );
     }
 
@@ -531,24 +531,26 @@ export const ProductivityDashboardContent: React.FC<{
                 </Banner>
             )}
 
-            {/* Filtro Utente */}
-            <InlineStack align="end">
-                <div style={{ width: '280px' }}>
-                    <Select
-                        label="Filtra per collaboratore"
-                        labelHidden
-                        options={[
-                            { label: 'Tutti i collaboratori', value: '' }, 
-                            ...filteredUsers.map(u => ({ 
-                                label: u.username, 
-                                value: String(u.id) 
-                            }))
-                        ]}
-                        value={selectedUserFilter}
-                        onChange={setSelectedUserFilter}
-                    />
-                </div>
-            </InlineStack>
+            {/* Filtro Utente - solo per admin */}
+            {isAdmin && (
+                <InlineStack align="end">
+                    <div style={{ width: '280px' }}>
+                        <Select
+                            label="Filtra per collaboratore"
+                            labelHidden
+                            options={[
+                                { label: 'Tutti i collaboratori', value: '' }, 
+                                ...filteredUsers.map(u => ({ 
+                                    label: u.username, 
+                                    value: String(u.id) 
+                                }))
+                            ]}
+                            value={selectedUserFilter}
+                            onChange={setSelectedUserFilter}
+                        />
+                    </div>
+                </InlineStack>
+            )}
 
             {/* KPI Cards */}
             <KPICards tasks={filteredTasks} />
@@ -579,13 +581,24 @@ export const ProductivityDashboardContent: React.FC<{
 };
 
 const ProductivityDashboard: React.FC = () => {
+    const { user: currentUser, hasPermission } = useAuth();
+    const isAdmin = currentUser?.role === 'admin' || currentUser?.role === 'superadmin' || hasPermission('team:write');
+    
     const [tasks, setTasks] = useState<Task[]>([]);
     const [users, setUsers] = useState<User[]>([]);
     const [clients, setClients] = useState<Cliente[]>([]);
     const [statuses, setStatuses] = useState<TaskStatus[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    // Se non è admin, forza filtro su se stesso
     const [selectedUserFilter, setSelectedUserFilter] = useState<string>('');
+    
+    useEffect(() => {
+        // Se non è admin, forza il filtro sul proprio ID
+        if (!isAdmin && currentUser?.id) {
+            setSelectedUserFilter(String(currentUser.id));
+        }
+    }, [isAdmin, currentUser?.id]);
     
     useEffect(() => {
         const fetchData = async () => {
@@ -629,6 +642,7 @@ const ProductivityDashboard: React.FC = () => {
                 selectedUserFilter={selectedUserFilter}
                 setSelectedUserFilter={setSelectedUserFilter}
                 setError={setError}
+                isAdmin={isAdmin}
             />
         </Page>
     );

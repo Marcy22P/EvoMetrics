@@ -281,7 +281,7 @@ async def get_dashboard_summary(request: Request, _: str = Depends(verify_token)
     
     try:
         # Esegue query COUNT(*) parallele (il DB engine le gestisce efficientemente)
-        assessments_count = await database.fetch_val("SELECT COUNT(*) FROM assessments")
+        assessments_count = await database.fetch_val("SELECT COUNT(*) FROM assessment")
         preventivi_count = await database.fetch_val("SELECT COUNT(*) FROM preventivi")
         contratti_count = await database.fetch_val("SELECT COUNT(*) FROM contratti")
         pagamenti_count = await database.fetch_val("SELECT COUNT(*) FROM pagamenti")

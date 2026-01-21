@@ -222,6 +222,18 @@ class ProductivityApiService {
     return await response.json();
   }
 
+  async getTask(taskId: string): Promise<Task> {
+    const headers = await this.getAuthHeaders();
+    const response = await fetch(`${API_BASE_URL}/api/tasks/${taskId}`, {
+      method: 'GET',
+      headers,
+    });
+    if (!response.ok) {
+      throw new Error(`Task non trovata: ${response.status}`);
+    }
+    return await response.json();
+  }
+
   async createTask(task: TaskCreate): Promise<Task> {
     const headers = await this.getAuthHeaders();
     const response = await fetch(`${API_BASE_URL}/api/tasks`, {

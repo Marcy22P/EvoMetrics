@@ -94,18 +94,22 @@ const CollaboratorCard: React.FC<{ user: User }> = ({ user }) => {
           )}
 
           {user.google_email && (
-            <InlineStack gap="200" blockAlign="center">
-              <Icon source={EmailIcon} tone="subdued" />
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span style={{ width: '16px', height: '16px', display: 'inline-flex', flexShrink: 0 }}>
+                <Icon source={EmailIcon} tone="subdued" />
+              </span>
               <Text as="span" variant="bodySm" tone="subdued">{user.google_email}</Text>
-            </InlineStack>
+            </div>
           )}
 
-          <InlineStack gap="200" blockAlign="center">
-            <Icon source={CalendarIcon} tone="subdued" />
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{ width: '16px', height: '16px', display: 'inline-flex', flexShrink: 0 }}>
+              <Icon source={CalendarIcon} tone="subdued" />
+            </span>
             <Text as="span" variant="bodySm" tone="subdued">
               Iscritto da {user.created_at ? new Date(user.created_at).toLocaleDateString('it-IT', { month: 'long', year: 'numeric' }) : 'N/D'}
             </Text>
-          </InlineStack>
+          </div>
         </BlockStack>
 
         {/* Badge Ruolo e Stato */}

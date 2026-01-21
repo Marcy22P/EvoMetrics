@@ -54,11 +54,9 @@ const GradimentoList: React.FC = () => {
   if (isLoading) {
     return (
       <Page title="Risposte Weekly Review">
-        <Box padding="400">
-            <InlineStack align="center">
-                <Spinner size="large" />
-            </InlineStack>
-        </Box>
+        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '300px', width: '100%' }}>
+          <Spinner size="large" />
+        </div>
       </Page>
     );
   }
