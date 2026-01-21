@@ -220,20 +220,32 @@ async def check_permission(current_user: Dict[str, Any], permission: str) -> boo
     if current_user["role"] in ("admin", "superadmin"):
         return True
     
-    # Carica i permessi dell'utente
-    perms_info = await load_user_permissions(current_user)
-    perms = perms_info.get("permissions", {})
-    
-    # Wildcard
-    if perms.get("__all__"):
-        return True
-    
-    return perms.get(permission, False)
+    try:
+        # Carica i permessi dell'utente
+        perms_info = await load_user_permissions(current_user)
+        perms = perms_info.get("permissions", {})
+        
+        # Wildcard
+        if perms.get("__all__"):
+            return True
+        
+        has_perm = perms.get(permission, False)
+        if not has_perm:
+            print(f"🔒 User {current_user.get('id')} ({current_user.get('username')}) manca permesso: {permission}")
+            print(f"   Permessi disponibili: {list(perms.keys())[:10]}...")
+        return has_perm
+    except Exception as e:
+        print(f"❌ Errore check_permission per user {current_user.get('id')}: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
 
 
 async def require_users_read(current_user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
     """Verifica che l'utente abbia il permesso users:read"""
-    if not await check_permission(current_user, "users:read"):
+    has_perm = await check_permission(current_user, "users:read")
+    if not has_perm:
+        print(f"⛔ 403 per user {current_user.get('id')} su /api/users - users:read mancante")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Permission denied: users:read required"
@@ -791,6 +803,95 @@ async def update_user_password(
         "user_id": user_id,
         "message": "Password aggiornata con successo. L'utente ora può accedere sia con username/password che con Google OAuth."
     }
+
+
+@app.post("/api/users/{user_id}/change-password")
+async def change_own_password(
+    user_id: int,
+    payload: Dict[str, Any] = Body(...),
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    """
+    Permette a un utente di cambiare la propria password.
+    Richiede la password attuale per conferma.
+    """
+    # Verifica che l'utente stia modificando la propria password
+    if current_user["id"] != user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Puoi cambiare solo la tua password"
+        )
+    
+    current_password = payload.get("current_password")
+    new_password = payload.get("new_password")
+    
+    if not current_password or not new_password:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Password attuale e nuova password sono obbligatorie"
+        )
+    
+    if len(new_password) < 8:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="La nuova password deve essere almeno 8 caratteri"
+        )
+    
+    # Verifica password attuale
+    user_row = await database.fetch_one(
+        "SELECT password_hash FROM users WHERE id = :id",
+        {"id": user_id}
+    )
+    
+    if not user_row or not user_row["password_hash"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Non puoi cambiare password - account collegato solo a Google"
+        )
+    
+    if not pwd_context.verify(current_password, user_row["password_hash"]):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Password attuale non corretta"
+        )
+    
+    # Aggiorna password
+    new_hash = get_password_hash(new_password)
+    now = datetime.utcnow()
+    await database.execute(
+        "UPDATE users SET password_hash = :ph, updated_at = :u WHERE id = :id",
+        {"ph": new_hash, "u": now, "id": user_id}
+    )
+    
+    return {"status": "success", "message": "Password cambiata con successo"}
+
+
+@app.post("/api/users/{user_id}/disconnect-calendar")
+async def disconnect_calendar(
+    user_id: int,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    """
+    Permette a un utente di disconnettere il proprio Google Calendar.
+    """
+    # Verifica che l'utente stia modificando il proprio calendario
+    if current_user["id"] != user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Puoi disconnettere solo il tuo calendario"
+        )
+    
+    now = datetime.utcnow()
+    await database.execute(
+        """UPDATE users SET 
+            google_refresh_token = NULL,
+            is_google_calendar_connected = false,
+            updated_at = :u
+        WHERE id = :id""",
+        {"u": now, "id": user_id}
+    )
+    
+    return {"status": "success", "message": "Google Calendar disconnesso"}
 
 
 # Google OAuth Configuration

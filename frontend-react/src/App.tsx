@@ -19,6 +19,7 @@ import GradimentoList from './pages/GradimentoList' // Private List (Punto 6)
 import { AuthProvider, useAuth } from './hooks/useAuth'
 // AccountsManager ora è in Settings.tsx come AccountsManagerPolaris
 import ProfileForm from './pages/ProfileForm'
+import UserSettings from './pages/UserSettings'
 import ShopifyIntegration from './pages/ShopifyIntegration' // Ex Clienti
 import AnagraficaClienti from './pages/AnagraficaClienti' // Unified Registry (Punto 3)
 import ClienteDetail from './pages/ClienteDetail'
@@ -256,19 +257,19 @@ const AppRoutes: React.FC = () => {
         
         {/* CALENDARIO */}
         <Route path="/calendario" element={
-            <RequirePermission perm="users:read">
+            <RequirePermission perm="calendar:read">
                 <Calendar />
             </RequirePermission>
         } />
         <Route path="/calendario/callback" element={
-            <RequirePermission perm="users:read">
+            <RequirePermission perm="calendar:read">
                 <CalendarCallback />
             </RequirePermission>
         } />
 
         {/* IMPOSTAZIONI - Con sub-routes */}
         <Route path="/impostazioni" element={<Navigate to="/impostazioni/profile" replace />} />
-        <Route path="/impostazioni/profile" element={<ProfileForm />} />
+        <Route path="/impostazioni/profile" element={<UserSettings />} />
         <Route path="/impostazioni/accounts" element={
           <RequirePermission perm="users:write">
             <Settings tab="accounts" />

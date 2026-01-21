@@ -262,7 +262,7 @@ const TeamOverview: React.FC = () => {
                     <RecentTaskCard 
                       key={task.id} 
                       task={task} 
-                      onClick={() => navigate('/task')} 
+                      onClick={() => navigate(`/task?open=${task.id}`)} 
                     />
                   ))}
                 </BlockStack>
@@ -289,7 +289,7 @@ const TeamOverview: React.FC = () => {
                     <RecentTaskCard 
                       key={task.id} 
                       task={task} 
-                      onClick={() => navigate('/task')} 
+                      onClick={() => navigate(`/task?open=${task.id}`)} 
                     />
                   ))}
                 </BlockStack>

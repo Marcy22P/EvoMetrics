@@ -46,8 +46,10 @@ import { isPast, isToday, format } from 'date-fns';
 import { it } from 'date-fns/locale';
 import { inferTaskCategory, getTaskIcon, TASK_ICONS_OPTIONS } from '../utils/taskUtils';
 import { useTasksConfiguration } from '../contexts/TasksConfigurationContext';
+import { useSearchParams } from 'react-router-dom';
 
 const TaskManager: React.FC = () => {
+  const [searchParams, setSearchParams] = useSearchParams();
   const { categories } = useTasksConfiguration();
   const { user, hasPermission } = useAuth();
   
@@ -162,6 +164,21 @@ const TaskManager: React.FC = () => {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  // Auto-open task from URL parameter
+  useEffect(() => {
+    const openTaskId = searchParams.get('open');
+    if (openTaskId && tasks.length > 0 && !loading) {
+      const taskToOpen = tasks.find(t => t.id === openTaskId);
+      if (taskToOpen) {
+        setSelectedTask(taskToOpen);
+        setIsDetailModalOpen(true);
+        // Rimuovi il parametro dall'URL dopo l'apertura
+        searchParams.delete('open');
+        setSearchParams(searchParams, { replace: true });
+      }
+    }
+  }, [tasks, loading, searchParams, setSearchParams]);
 
   // Workflow Handlers
   const handleOpenWorkflowModal = async () => {
