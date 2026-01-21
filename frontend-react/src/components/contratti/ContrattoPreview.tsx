@@ -3,7 +3,7 @@ import { LegacyCard, Button, InlineStack, Box } from '@shopify/polaris';
 import { PrintIcon, ExternalIcon } from '@shopify/polaris-icons';
 import { toast } from '../../utils/toast';
 import type { ContrattoData } from '../../types/contratto';
-import { formatDateItalian } from '../../utils/contrattoUtils';
+// formatDateItalian rimosso - data lasciata vuota per firma manuale
 import { clientiApi } from '../../services/clientiApi';
 
 interface ContrattoPreviewProps {
@@ -233,32 +233,33 @@ export const ContrattoPreview: React.FC<ContrattoPreviewProps> = ({ data }) => {
             </div>
           )}
 
-          {/* ART. 9 - FORO COMPETENTE con clausole e firme */}
+          {/* ART. 9 - FORO COMPETENTE completo */}
           <div className="articolo">
             <div className="articolo-title">ART. 9 - FORO COMPETENTE</div>
             <div className="articolo-content">
               Per le controversie che dovessero insorgere nell'interpretazione, esecuzione e validità del presente, sarà competente in via esclusiva il Foro di Brescia.
               <br/><br/>
-              <strong>Data:</strong> {formatDateItalian(new Date())}
+              <strong>Data:</strong> ____________________
             </div>
           </div>
           
+          {/* Prima firma */}
           <div className="signature-section">
             <div className="signature-box">
-              <p><strong>Il Committente</strong></p>
+              <p>Il Committente</p>
               <br/><br/><br/>
-              <p style={{borderTop: '1px solid #000', paddingTop: '5px'}}>_________________________</p>
+              <p>_________________________</p>
             </div>
             <div className="signature-box">
-              <p><strong>Evoluzione Imprese</strong></p>
+              <p>Evoluzione Imprese</p>
               <br/><br/><br/>
-              <p style={{borderTop: '1px solid #000', paddingTop: '5px'}}>_________________________</p>
+              <p>_________________________</p>
             </div>
           </div>
 
           {/* Clausole Art. 1341 e 1342 c.c. */}
-          <div className="articolo" style={{marginTop: '40px', pageBreakBefore: 'always'}}>
-            <div className="articolo-content" style={{fontSize: '9pt'}}>
+          <div className="articolo" style={{marginTop: '30px'}}>
+            <div className="articolo-content">
               Ai sensi e per gli effetti degli articoli 1341 e 1342 del codice civile si accettano espressamente i punti:<br/>
               3) Modalità di esecuzione della prestazione professionale<br/>
               4) Durata del contratto<br/>
@@ -274,14 +275,14 @@ export const ContrattoPreview: React.FC<ContrattoPreviewProps> = ({ data }) => {
           {/* Firme finali per accettazione clausole */}
           <div className="signature-section" style={{marginTop: '30px'}}>
             <div className="signature-box">
-              <p><strong>Il Committente</strong></p>
+              <p>Il Committente</p>
               <br/><br/><br/>
-              <p style={{borderTop: '1px solid #000', paddingTop: '5px'}}>_________________________</p>
+              <p>_________________________</p>
             </div>
             <div className="signature-box">
-              <p><strong>Evoluzione Imprese</strong></p>
+              <p>Evoluzione Imprese</p>
               <br/><br/><br/>
-              <p style={{borderTop: '1px solid #000', paddingTop: '5px'}}>_________________________</p>
+              <p>_________________________</p>
             </div>
           </div>
         </div>
