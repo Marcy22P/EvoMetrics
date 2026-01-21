@@ -271,6 +271,14 @@ async def get_dashboard_summary(request: Request, _: str = Depends(verify_token)
     if not database:
         raise HTTPException(status_code=503, detail="Database not configured")
     
+    # Connessione lazy al database
+    if not database.is_connected:
+        try:
+            await database.connect()
+        except Exception as e:
+            print(f"Dashboard summary DB connection error: {e}")
+            raise HTTPException(status_code=503, detail="Database connection failed")
+    
     try:
         # Esegue query COUNT(*) parallele (il DB engine le gestisce efficientemente)
         assessments_count = await database.fetch_val("SELECT COUNT(*) FROM assessments")
