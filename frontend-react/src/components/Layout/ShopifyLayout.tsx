@@ -381,6 +381,14 @@ const ShopifyLayout: React.FC = () => {
         onClick: () => navigate('/impostazioni/integrations'),
       });
     }
+    // Permessi Drive - solo admin
+    if (canAccess('accounts')) {
+      impostazioniSubItems.push({
+        label: 'Permessi Drive',
+        url: '/impostazioni/drive',
+        onClick: () => navigate('/impostazioni/drive'),
+      });
+    }
 
     // Impostazioni sempre visibili perché almeno "Il Mio Profilo" è sempre presente
     const impostazioniItems = [{

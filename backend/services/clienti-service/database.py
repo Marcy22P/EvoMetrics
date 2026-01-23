@@ -84,6 +84,19 @@ cliente_assignees_table = Table(
     Column("assigned_by", String(50), nullable=True),  # Chi ha fatto l'assegnazione
 )
 
+# Tabella permessi cartelle Drive (per cartelle speciali: Procedure, Contratti, Preventivi)
+drive_folder_permissions_table = Table(
+    "drive_folder_permissions",
+    metadata,
+    Column("id", String(50), primary_key=True),
+    Column("user_id", String(50), nullable=False),  # ID dell'utente
+    Column("folder_type", String(50), nullable=False),  # "procedure", "contratti", "preventivi"
+    Column("can_read", Boolean, nullable=False, default=False),
+    Column("can_write", Boolean, nullable=False, default=False),
+    Column("granted_at", DateTime, nullable=False),
+    Column("granted_by", String(50), nullable=True),  # Admin che ha concesso il permesso
+)
+
 
 async def init_database():
     """Initialize database connection and ensure tables exist"""
@@ -112,6 +125,27 @@ async def init_database():
         print("✅ Tabella cliente_assignees verificata/creata")
     except Exception as e:
         print(f"⚠️ Errore creazione tabella cliente_assignees: {e}")
+    
+    # Crea tabella drive_folder_permissions se non esiste
+    try:
+        await database.execute("""
+            CREATE TABLE IF NOT EXISTS drive_folder_permissions (
+                id VARCHAR(50) PRIMARY KEY,
+                user_id VARCHAR(50) NOT NULL,
+                folder_type VARCHAR(50) NOT NULL,
+                can_read BOOLEAN NOT NULL DEFAULT FALSE,
+                can_write BOOLEAN NOT NULL DEFAULT FALSE,
+                granted_at TIMESTAMP NOT NULL,
+                granted_by VARCHAR(50),
+                UNIQUE(user_id, folder_type)
+            )
+        """)
+        await database.execute("""
+            CREATE INDEX IF NOT EXISTS idx_drive_folder_permissions_user_id ON drive_folder_permissions(user_id)
+        """)
+        print("✅ Tabella drive_folder_permissions verificata/creata")
+    except Exception as e:
+        print(f"⚠️ Errore creazione tabella drive_folder_permissions: {e}")
 
 
 async def close_database():

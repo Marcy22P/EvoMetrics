@@ -11,10 +11,11 @@ import { useNavigate } from 'react-router-dom';
 import AccountsManager from './AccountsManagerPolaris';
 import SettingsTasks from './SettingsTasks';
 import SettingsIntegrations from './SettingsIntegrations';
+import DrivePermissions from '../components/settings/DrivePermissions';
 import { useAuth } from '../hooks/useAuth';
 
 interface SettingsProps {
-  tab: 'accounts' | 'tasks' | 'integrations';
+  tab: 'accounts' | 'tasks' | 'integrations' | 'drive';
 }
 
 const Settings: React.FC<SettingsProps> = ({ tab }) => {
@@ -49,6 +50,7 @@ const Settings: React.FC<SettingsProps> = ({ tab }) => {
       case 'accounts': return 'Gestione Account';
       case 'tasks': return 'Categorie Task';
       case 'integrations': return 'Integrazioni';
+      case 'drive': return 'Permessi Drive';
       default: return 'Impostazioni';
     }
   };
@@ -61,6 +63,8 @@ const Settings: React.FC<SettingsProps> = ({ tab }) => {
         return <SettingsTasks embedded />;
       case 'integrations':
         return <SettingsIntegrations />;
+      case 'drive':
+        return <DrivePermissions />;
       default:
         return null;
     }

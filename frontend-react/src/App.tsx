@@ -285,6 +285,11 @@ const AppRoutes: React.FC = () => {
             <Settings tab="integrations" />
           </RequirePermission>
         } />
+        <Route path="/impostazioni/drive" element={
+          <RequirePermission perm="admin">
+            <Settings tab="drive" />
+          </RequirePermission>
+        } />
         
         {/* Redirect vecchie route */}
         <Route path="/accounts_manager" element={<Navigate to="/impostazioni/accounts" replace />} />

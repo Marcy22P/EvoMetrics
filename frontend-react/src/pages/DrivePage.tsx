@@ -72,6 +72,10 @@ const GlobalDriveBrowser: React.FC = () => {
                 if (!query) {
                     setCurrentFolderId(data.current_folder_id);
                 }
+                // Mostra messaggio se presente (es. struttura non inizializzata)
+                if (data.message) {
+                    setErrorMsg(data.message);
+                }
             } else {
                 setErrorMsg("Errore caricamento file");
             }
@@ -277,7 +281,7 @@ const GlobalDriveBrowser: React.FC = () => {
                                 <Button icon={ArrowLeftIcon} onClick={handleBackClick}>Indietro</Button>
                             )}
                             <Text as="h2" variant="headingMd">
-                                {breadcrumbs.length > 0 ? breadcrumbs[breadcrumbs.length - 1].name : 'Il tuo Drive (Root & Condivisi)'}
+                                {breadcrumbs.length > 0 ? breadcrumbs[breadcrumbs.length - 1].name : 'WebApp Drive'}
                             </Text>
                         </InlineStack>
                         
@@ -326,7 +330,7 @@ const GlobalDriveBrowser: React.FC = () => {
 
                     {isRoot && (
                         <Banner tone="info">
-                            <p>Sei nella vista principale. Per caricare file o creare cartelle, <strong>entra prima in una cartella condivisa</strong>.</p>
+                            <p>Sei nella cartella principale <strong>WebApp</strong>. Le cartelle visibili dipendono dai tuoi permessi. Per caricare file o creare cartelle, entra prima in una sottocartella.</p>
                         </Banner>
                     )}
 

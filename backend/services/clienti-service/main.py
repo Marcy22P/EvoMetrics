@@ -32,7 +32,7 @@ except ImportError:
     drive_service = None
     drive_structure = None
 
-from database import database, init_database, close_database, clienti_table, magic_links_table, cliente_assignees_table
+from database import database, init_database, close_database, clienti_table, magic_links_table, cliente_assignees_table, drive_folder_permissions_table
 from models import (
     ClienteData,
     ClienteResponse,
@@ -235,6 +235,64 @@ async def check_clienti_delete(current_user: Dict[str, Any] = Depends(get_curren
             detail="Permission required: clienti:delete"
         )
     return current_user
+
+
+# ============================================
+# DRIVE FOLDER PERMISSIONS HELPERS
+# ============================================
+
+async def get_user_drive_folder_permissions(user_id: str) -> Dict[str, Dict[str, bool]]:
+    """Ottiene i permessi Drive dell'utente per tutte le cartelle speciali"""
+    permissions = {
+        "procedure": {"can_read": False, "can_write": False},
+        "contratti": {"can_read": False, "can_write": False},
+        "preventivi": {"can_read": False, "can_write": False},
+    }
+    
+    try:
+        rows = await database.fetch_all(
+            "SELECT folder_type, can_read, can_write FROM drive_folder_permissions WHERE user_id = :user_id",
+            {"user_id": str(user_id)}
+        )
+        for row in rows:
+            folder_type = row["folder_type"]
+            if folder_type in permissions:
+                permissions[folder_type] = {
+                    "can_read": row["can_read"],
+                    "can_write": row["can_write"]
+                }
+    except Exception as e:
+        print(f"⚠️ Errore caricamento permessi Drive: {e}")
+    
+    return permissions
+
+
+async def get_user_assigned_cliente_ids(user_id: str) -> List[str]:
+    """Ottiene la lista di ID clienti assegnati all'utente"""
+    try:
+        rows = await database.fetch_all(
+            "SELECT cliente_id FROM cliente_assignees WHERE user_id = :user_id",
+            {"user_id": str(user_id)}
+        )
+        return [row["cliente_id"] for row in rows]
+    except Exception as e:
+        print(f"⚠️ Errore caricamento clienti assegnati: {e}")
+        return []
+
+
+async def get_webapp_folder_id() -> Optional[str]:
+    """Ottiene l'ID della cartella WebApp (la root per tutti gli utenti)"""
+    if not drive_structure:
+        return None
+    
+    # Prova a recuperare dalla cache o cercala
+    webapp_id = drive_structure._webapp_folder_id
+    if not webapp_id:
+        webapp_id = drive_service.search_folder("WebApp") if drive_service and drive_service.is_ready() else None
+        if webapp_id:
+            drive_structure._webapp_folder_id = webapp_id
+    
+    return webapp_id
 
 
 @asynccontextmanager
@@ -1205,15 +1263,103 @@ async def get_drive_status(current_user: Dict[str, Any] = Depends(get_current_us
 async def list_global_drive_files(
     folder_id: Optional[str] = None,
     q: Optional[str] = None,
-    current_user: Dict[str, Any] = Depends(check_clienti_read) # Fallback al check classico, ma con permessi DB fixati
+    current_user: Dict[str, Any] = Depends(check_clienti_read)
 ):
-    """Lista file Drive globali (admin view)"""
+    """
+    Lista file Drive con accesso filtrato.
+    - La root per tutti gli utenti è la cartella WebApp (non tutto il Drive)
+    - Gli admin vedono tutto dentro WebApp
+    - Gli utenti normali vedono:
+      - Cartelle clienti solo se assegnati
+      - Cartelle Procedure/Contratti/Preventivi solo se hanno permesso
+    """
     try:
         if not drive_service or not drive_service.is_ready():
             raise HTTPException(status_code=503, detail="Drive non connesso")
         
-        files = drive_service.list_files(folder_id, query_term=q)
-        return {"files": files, "current_folder_id": folder_id, "parents": []}
+        user_id = str(current_user["id"])
+        user_role = current_user.get("role", "user")
+        is_admin = user_role in ["admin", "superadmin"]
+        
+        # Se non c'è folder_id, usa WebApp come root
+        effective_folder_id = folder_id
+        if not effective_folder_id:
+            webapp_id = await get_webapp_folder_id()
+            if webapp_id:
+                effective_folder_id = webapp_id
+            else:
+                # Se WebApp non esiste ancora, restituisci lista vuota con messaggio
+                return {
+                    "files": [], 
+                    "current_folder_id": None, 
+                    "parents": [],
+                    "message": "Struttura WebApp non inizializzata. Contatta l'amministratore."
+                }
+        
+        # Ottieni i file dalla cartella
+        files = drive_service.list_files(effective_folder_id, query_term=q)
+        
+        # Se l'utente è admin, restituisci tutto
+        if is_admin:
+            return {"files": files, "current_folder_id": effective_folder_id, "parents": []}
+        
+        # Altrimenti, filtra in base ai permessi
+        # Ottieni ID delle cartelle speciali
+        clienti_folder_id = drive_structure.get_clienti_folder_id() if drive_structure else None
+        procedure_folder_id = drive_structure.get_procedure_folder_id() if drive_structure else None
+        contratti_folder_id = drive_structure.get_contratti_folder_id() if drive_structure else None
+        preventivi_folder_id = drive_structure.get_preventivi_folder_id() if drive_structure else None
+        
+        # Ottieni permessi cartelle speciali e clienti assegnati
+        folder_perms = await get_user_drive_folder_permissions(user_id)
+        assigned_cliente_ids = await get_user_assigned_cliente_ids(user_id)
+        
+        # Ottieni nomi dei clienti assegnati per matching
+        assigned_cliente_names = []
+        if assigned_cliente_ids:
+            # Usa IN con parametri dinamici
+            placeholders = ", ".join([f":id_{i}" for i in range(len(assigned_cliente_ids))])
+            params = {f"id_{i}": cid for i, cid in enumerate(assigned_cliente_ids)}
+            cliente_rows = await database.fetch_all(
+                f"SELECT nome_azienda FROM clienti WHERE id IN ({placeholders})",
+                params
+            )
+            assigned_cliente_names = [row["nome_azienda"] for row in cliente_rows]
+        
+        filtered_files = []
+        for f in files:
+            file_id = f["id"]
+            file_name = f.get("name", "")
+            is_folder = f.get("mimeType") == "application/vnd.google-apps.folder"
+            
+            # Se siamo nella root WebApp, filtra le cartelle speciali
+            if effective_folder_id == await get_webapp_folder_id():
+                if file_id == procedure_folder_id:
+                    if folder_perms["procedure"]["can_read"]:
+                        filtered_files.append(f)
+                elif file_id == contratti_folder_id:
+                    if folder_perms["contratti"]["can_read"]:
+                        filtered_files.append(f)
+                elif file_id == preventivi_folder_id:
+                    if folder_perms["preventivi"]["can_read"]:
+                        filtered_files.append(f)
+                elif file_id == clienti_folder_id:
+                    # La cartella Clienti è sempre visibile (ma filtrata dentro)
+                    filtered_files.append(f)
+                else:
+                    # Altri file/cartelle nella root WebApp: permetti
+                    filtered_files.append(f)
+            
+            # Se siamo nella cartella Clienti, filtra per clienti assegnati
+            elif effective_folder_id == clienti_folder_id and is_folder:
+                # Mostra solo cartelle dei clienti assegnati
+                if file_name in assigned_cliente_names:
+                    filtered_files.append(f)
+            else:
+                # In altre cartelle, permetti tutto (già dentro una cartella autorizzata)
+                filtered_files.append(f)
+        
+        return {"files": filtered_files, "current_folder_id": effective_folder_id, "parents": []}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Errore listing Drive: {str(e)}")
 
@@ -1948,6 +2094,165 @@ async def share_procedure(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Errore condivisione procedura: {str(e)}")
+
+
+# ============================================
+# DRIVE FOLDER PERMISSIONS MANAGEMENT (Admin)
+# ============================================
+
+@app.get("/api/drive/permissions")
+async def get_all_drive_permissions(
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """
+    Ottiene tutti i permessi Drive di tutti gli utenti (Admin only).
+    Per utenti normali, restituisce solo i propri permessi.
+    """
+    user_role = current_user.get("role", "user")
+    is_admin = user_role in ["admin", "superadmin"]
+    
+    if is_admin:
+        # Admin: ottieni tutti i permessi
+        rows = await database.fetch_all(
+            "SELECT * FROM drive_folder_permissions ORDER BY user_id, folder_type"
+        )
+    else:
+        # Utente normale: solo i propri permessi
+        rows = await database.fetch_all(
+            "SELECT * FROM drive_folder_permissions WHERE user_id = :user_id",
+            {"user_id": str(current_user["id"])}
+        )
+    
+    permissions = {}
+    for row in rows:
+        user_id = row["user_id"]
+        if user_id not in permissions:
+            permissions[user_id] = {}
+        permissions[user_id][row["folder_type"]] = {
+            "can_read": row["can_read"],
+            "can_write": row["can_write"],
+            "granted_at": row["granted_at"].isoformat() if row["granted_at"] else None,
+            "granted_by": row["granted_by"]
+        }
+    
+    return {"permissions": permissions}
+
+
+@app.get("/api/drive/permissions/{user_id}")
+async def get_user_drive_permissions(
+    user_id: str,
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """Ottiene i permessi Drive di un utente specifico"""
+    user_role = current_user.get("role", "user")
+    is_admin = user_role in ["admin", "superadmin"]
+    
+    # Solo admin può vedere permessi di altri utenti
+    if not is_admin and str(current_user["id"]) != user_id:
+        raise HTTPException(status_code=403, detail="Non autorizzato")
+    
+    permissions = await get_user_drive_folder_permissions(user_id)
+    return {"user_id": user_id, "permissions": permissions}
+
+
+@app.post("/api/drive/permissions/{user_id}")
+async def set_user_drive_permissions(
+    user_id: str,
+    request: Request,
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """
+    Imposta i permessi Drive per un utente (Admin only).
+    Body: {"folder_type": "procedure|contratti|preventivi", "can_read": bool, "can_write": bool}
+    """
+    user_role = current_user.get("role", "user")
+    if user_role not in ["admin", "superadmin"]:
+        raise HTTPException(status_code=403, detail="Solo gli admin possono modificare i permessi")
+    
+    try:
+        body = await request.json()
+        folder_type = body.get("folder_type")
+        can_read = body.get("can_read", False)
+        can_write = body.get("can_write", False)
+        
+        if folder_type not in ["procedure", "contratti", "preventivi"]:
+            raise HTTPException(status_code=400, detail="folder_type deve essere: procedure, contratti, preventivi")
+        
+        # Upsert: inserisci o aggiorna
+        existing = await database.fetch_one(
+            "SELECT id FROM drive_folder_permissions WHERE user_id = :user_id AND folder_type = :folder_type",
+            {"user_id": user_id, "folder_type": folder_type}
+        )
+        
+        if existing:
+            await database.execute(
+                """
+                UPDATE drive_folder_permissions 
+                SET can_read = :can_read, can_write = :can_write, 
+                    granted_at = :granted_at, granted_by = :granted_by
+                WHERE user_id = :user_id AND folder_type = :folder_type
+                """,
+                {
+                    "user_id": user_id,
+                    "folder_type": folder_type,
+                    "can_read": can_read,
+                    "can_write": can_write,
+                    "granted_at": datetime.utcnow(),
+                    "granted_by": str(current_user["id"])
+                }
+            )
+        else:
+            await database.execute(
+                """
+                INSERT INTO drive_folder_permissions (id, user_id, folder_type, can_read, can_write, granted_at, granted_by)
+                VALUES (:id, :user_id, :folder_type, :can_read, :can_write, :granted_at, :granted_by)
+                """,
+                {
+                    "id": str(uuid.uuid4()),
+                    "user_id": user_id,
+                    "folder_type": folder_type,
+                    "can_read": can_read,
+                    "can_write": can_write,
+                    "granted_at": datetime.utcnow(),
+                    "granted_by": str(current_user["id"])
+                }
+            )
+        
+        return {
+            "status": "success",
+            "message": f"Permessi {folder_type} aggiornati per utente {user_id}",
+            "permissions": {
+                "folder_type": folder_type,
+                "can_read": can_read,
+                "can_write": can_write
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Errore aggiornamento permessi: {str(e)}")
+
+
+@app.delete("/api/drive/permissions/{user_id}/{folder_type}")
+async def delete_user_drive_permission(
+    user_id: str,
+    folder_type: str,
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """Rimuove un permesso Drive specifico (Admin only)"""
+    user_role = current_user.get("role", "user")
+    if user_role not in ["admin", "superadmin"]:
+        raise HTTPException(status_code=403, detail="Solo gli admin possono modificare i permessi")
+    
+    if folder_type not in ["procedure", "contratti", "preventivi"]:
+        raise HTTPException(status_code=400, detail="folder_type deve essere: procedure, contratti, preventivi")
+    
+    await database.execute(
+        "DELETE FROM drive_folder_permissions WHERE user_id = :user_id AND folder_type = :folder_type",
+        {"user_id": user_id, "folder_type": folder_type}
+    )
+    
+    return {"status": "success", "message": f"Permesso {folder_type} rimosso per utente {user_id}"}
 
 
 if __name__ == "__main__":
