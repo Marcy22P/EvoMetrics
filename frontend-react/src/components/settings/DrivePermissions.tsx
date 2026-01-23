@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import {
     Card, Text, BlockStack, InlineStack, Box, Button, Banner,
-    IndexTable, Badge, Checkbox, Modal, Spinner, Select
+    IndexTable, Badge, Checkbox, Modal, Spinner, Select, Icon
 } from '@shopify/polaris';
-// Icons not needed - using emoji instead
+import { PersonIcon } from '@shopify/polaris-icons';
 import { getServiceUrl } from '../../utils/apiConfig';
 
 interface FolderPermission {
@@ -271,9 +271,9 @@ const DrivePermissions: React.FC = () => {
                             {rows.map((row, index) => (
                                 <IndexTable.Row id={row.userId} key={row.userId} position={index}>
                                     <IndexTable.Cell>
-                                        <InlineStack gap="200" align="center">
-                                            <div style={{ minWidth: '20px' }}>
-                                                <span style={{ color: '#5C6AC4' }}>👤</span>
+                                        <InlineStack gap="200" blockAlign="center" wrap={false}>
+                                            <div style={{ minWidth: '20px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                                <Icon source={PersonIcon} tone="base" />
                                             </div>
                                             <Text as="span" variant="bodyMd" fontWeight="semibold">
                                                 {row.username}
