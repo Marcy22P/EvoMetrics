@@ -141,22 +141,22 @@ const CollaboratorCard: React.FC<{
           )}
 
           {user.google_email && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <span style={{ width: '16px', height: '16px', display: 'inline-flex', flexShrink: 0 }}>
+            <InlineStack gap="200" blockAlign="center" wrap={false}>
+              <div style={{ minWidth: '20px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 <Icon source={EmailIcon} tone="subdued" />
-              </span>
+              </div>
               <Text as="span" variant="bodySm" tone="subdued">{user.google_email}</Text>
-            </div>
+            </InlineStack>
           )}
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span style={{ width: '16px', height: '16px', display: 'inline-flex', flexShrink: 0 }}>
+          <InlineStack gap="200" blockAlign="center" wrap={false}>
+            <div style={{ minWidth: '20px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <Icon source={CalendarIcon} tone="subdued" />
-            </span>
+            </div>
             <Text as="span" variant="bodySm" tone="subdued">
               Iscritto da {user.created_at ? new Date(user.created_at).toLocaleDateString('it-IT', { month: 'long', year: 'numeric' }) : 'N/D'}
             </Text>
-          </div>
+          </InlineStack>
         </BlockStack>
 
         {/* Badge Ruolo e Stato */}

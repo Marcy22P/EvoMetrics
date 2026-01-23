@@ -22,6 +22,40 @@ from calendar_sync import sync_task_to_calendar
 app = FastAPI(title="Productivity Service")
 
 
+async def find_user_by_job_title(job_title: str) -> Optional[str]:
+    """
+    Trova un utente attivo con il job_title specificato.
+    Restituisce l'ID dell'utente se trovato, altrimenti None.
+    
+    Se ci sono più utenti con lo stesso ruolo, ne sceglie uno a caso.
+    """
+    if not job_title:
+        return None
+    
+    try:
+        # Query utenti attivi con questo job_title
+        query = """
+            SELECT id FROM users 
+            WHERE job_title = :job_title 
+            AND is_active = true 
+            AND pending_approval = false
+            LIMIT 1
+        """
+        row = await database.fetch_one(query, {"job_title": job_title})
+        
+        if row:
+            user_id = str(row["id"])
+            print(f"🎯 Auto-assegnazione: trovato utente {user_id} per ruolo '{job_title}'")
+            return user_id
+        else:
+            print(f"⚠️ Nessun utente trovato con ruolo '{job_title}'")
+            return None
+            
+    except Exception as e:
+        print(f"❌ Errore ricerca utente per ruolo '{job_title}': {e}")
+        return None
+
+
 def calculate_efficiency_score(task: Dict[str, Any]) -> int:
     """
     Calcola il punteggio di efficienza di una task.
@@ -319,13 +353,21 @@ async def instantiate_workflow_logic(template_id: str, entity_id: str, start_dat
             if result:
                 drive_results[action_type] = result
 
+        # Auto-assegnazione in base al ruolo
+        role_required = t_def.get("role_required")
+        assignee_id = None
+        
+        if role_required:
+            # Cerca un utente con questo job_title e assegna automaticamente
+            assignee_id = await find_user_by_job_title(role_required)
+        
         # Query Inserimento Task
         insert_query = """
         INSERT INTO tasks (
-            id, title, description, status, role_required, project_id, entity_type,
+            id, title, description, status, assignee_id, role_required, project_id, entity_type,
             estimated_minutes, due_date, icon, dependencies, metadata, created_at, updated_at
         ) VALUES (
-            :id, :title, :description, 'todo', :role_required, :project_id, :entity_type,
+            :id, :title, :description, 'todo', :assignee_id, :role_required, :project_id, :entity_type,
             :estimated_minutes, :due_date, :icon, :dependencies, :metadata, :created_at, :created_at
         )
         """
@@ -335,11 +377,17 @@ async def instantiate_workflow_logic(template_id: str, entity_id: str, start_dat
         if drive_results:
             metadata["drive_results"] = drive_results
         
+        # Se abbiamo auto-assegnato, aggiungiamo info ai metadata
+        if assignee_id:
+            metadata["auto_assigned"] = True
+            metadata["auto_assigned_by_role"] = role_required
+        
         await database.execute(insert_query, {
             "id": task_id,
             "title": t_def["title"],
             "description": f"Generato da workflow: {template['name']}",
-            "role_required": t_def.get("role_required"),
+            "assignee_id": assignee_id,
+            "role_required": role_required,
             "project_id": entity_id,  # Può essere client_id o lead_id
             "entity_type": entity_type,  # 'client' o 'lead'
             "estimated_minutes": t_def.get("estimated_minutes", 0),
