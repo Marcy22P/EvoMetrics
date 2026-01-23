@@ -269,7 +269,13 @@ const TaskManager: React.FC = () => {
               project_id: projectId || undefined,
               entity_type: projectId ? newTaskEntityType : undefined,
               priority: newTaskPriority,
-              due_date: newTaskDueDate?.toISOString(),
+              // Usa data a mezzogiorno UTC per evitare shift di timezone
+              due_date: newTaskDueDate ? new Date(Date.UTC(
+                  newTaskDueDate.getFullYear(),
+                  newTaskDueDate.getMonth(),
+                  newTaskDueDate.getDate(),
+                  12, 0, 0 // Mezzogiorno UTC evita problemi timezone
+              )).toISOString() : undefined,
               category_id: newTaskCategoryId || undefined,
               icon: newTaskIcon || undefined,
               item_type: newTaskItemType,
