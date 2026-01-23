@@ -976,6 +976,31 @@ async def create_task(task: TaskCreate, background_tasks: BackgroundTasks):
     
     # Calcola efficiency_score
     result["efficiency_score"] = calculate_efficiency_score(result)
+    
+    # === CALENDAR SYNC ON CREATE ===
+    # Sincronizza sul calendario se:
+    # - c'è un assegnatario
+    # - è un evento OPPURE ha una due_date
+    item_type = result.get("item_type", "task")
+    if result.get("assignee_id") and (item_type == "event" or result.get("due_date")):
+        async def sync_on_create():
+            try:
+                evt_id = await sync_task_to_calendar(
+                    result["assignee_id"], 
+                    result, 
+                    "create",
+                    google_event_id=None
+                )
+                if evt_id:
+                    await database.execute(
+                        "UPDATE tasks SET google_event_id = :gid WHERE id = :tid", 
+                        {"gid": evt_id, "tid": task_id}
+                    )
+                    print(f"✅ Task {task_id} sincronizzata su calendario con event_id {evt_id}")
+            except Exception as e:
+                print(f"⚠️ Errore sync calendario per task {task_id}: {e}")
+        
+        background_tasks.add_task(sync_on_create)
         
     return result
 
@@ -1062,25 +1087,92 @@ async def update_task(task_id: str, task_update: TaskUpdate, background_tasks: B
     # Calcola efficiency_score
     result["efficiency_score"] = calculate_efficiency_score(result)
         
-    # Sync Calendar (VC_OS) - solo se è un evento o se c'è un assignee
-    if result.get("assignee_id"):
-        item_type = result.get("item_type", "task")
+    # === CALENDAR SYNC ON UPDATE ===
+    item_type = result.get("item_type", "task")
+    old_assignee = current_task.get("assignee_id")
+    new_assignee = result.get("assignee_id")
+    old_event_id = current_task.get("google_event_id")
+    
+    # Controlla se deve sincronizzare (evento o task con due_date)
+    should_sync = item_type == "event" or result.get("due_date")
+    
+    if should_sync:
+        # Caso 1: Assegnatario cambiato
+        if old_assignee and new_assignee and str(old_assignee) != str(new_assignee):
+            async def sync_reassignment():
+                try:
+                    # Elimina dal calendario del vecchio assegnatario
+                    if old_event_id:
+                        await sync_task_to_calendar(
+                            old_assignee, 
+                            current_task, 
+                            "delete", 
+                            google_event_id=old_event_id
+                        )
+                        print(f"🗑️ Evento {old_event_id} rimosso dal calendario dell'utente {old_assignee}")
+                    
+                    # Crea sul calendario del nuovo assegnatario
+                    new_evt_id = await sync_task_to_calendar(
+                        new_assignee, 
+                        result, 
+                        "create",
+                        google_event_id=None
+                    )
+                    if new_evt_id:
+                        await database.execute(
+                            "UPDATE tasks SET google_event_id = :gid WHERE id = :tid", 
+                            {"gid": new_evt_id, "tid": task_id}
+                        )
+                        print(f"✅ Task {task_id} sincronizzata su calendario utente {new_assignee}")
+                except Exception as e:
+                    print(f"⚠️ Errore sync riassegnazione task {task_id}: {e}")
+            
+            background_tasks.add_task(sync_reassignment)
         
-        async def sync_and_save():
-            current_event_id = result.get("google_event_id")
-            # Per gli eventi, sincronizza sempre; per le task, solo se hanno due_date
-            if item_type == "event" or result.get("due_date"):
-                evt_id = await sync_task_to_calendar(
-                    result["assignee_id"], 
-                    result, 
-                    "update", 
-                    google_event_id=current_event_id
-                )
-                if evt_id and evt_id != current_event_id:
-                    await database.execute("UPDATE tasks SET google_event_id = :gid WHERE id = :tid", 
-                        {"gid": evt_id, "tid": task_id})
+        # Caso 2: Stesso assegnatario o nuovo assegnatario (senza vecchio)
+        elif new_assignee:
+            async def sync_and_save():
+                try:
+                    current_event_id = result.get("google_event_id")
+                    # Se non c'è event_id, è una create (primo sync)
+                    action = "update" if current_event_id else "create"
+                    
+                    evt_id = await sync_task_to_calendar(
+                        new_assignee, 
+                        result, 
+                        action, 
+                        google_event_id=current_event_id
+                    )
+                    if evt_id and evt_id != current_event_id:
+                        await database.execute(
+                            "UPDATE tasks SET google_event_id = :gid WHERE id = :tid", 
+                            {"gid": evt_id, "tid": task_id}
+                        )
+                        print(f"✅ Task {task_id} sincronizzata (action={action})")
+                except Exception as e:
+                    print(f"⚠️ Errore sync task {task_id}: {e}")
+            
+            background_tasks.add_task(sync_and_save)
         
-        background_tasks.add_task(sync_and_save)
+        # Caso 3: Assegnatario rimosso - elimina evento
+        elif old_assignee and not new_assignee and old_event_id:
+            async def sync_removal():
+                try:
+                    await sync_task_to_calendar(
+                        old_assignee, 
+                        current_task, 
+                        "delete", 
+                        google_event_id=old_event_id
+                    )
+                    await database.execute(
+                        "UPDATE tasks SET google_event_id = NULL WHERE id = :tid", 
+                        {"tid": task_id}
+                    )
+                    print(f"🗑️ Evento rimosso per task {task_id}")
+                except Exception as e:
+                    print(f"⚠️ Errore rimozione evento task {task_id}: {e}")
+            
+            background_tasks.add_task(sync_removal)
 
     return result
 
