@@ -13,14 +13,37 @@ import {
   Divider,
   Icon,
   Spinner,
-  EmptyState
+  EmptyState,
+  Modal,
+  Select,
+  Button,
+  Banner
 } from '@shopify/polaris';
 import {
   SearchIcon,
   EmailIcon,
-  CalendarIcon
+  CalendarIcon,
+  EditIcon
 } from '@shopify/polaris-icons';
 import { usersApi, type User } from '../services/usersApi';
+import { useAuth } from '../hooks/useAuth';
+
+// Lista ruoli disponibili (matching con Workflow Builder)
+const AVAILABLE_JOB_ROLES = [
+  'Project Manager',
+  'Social Media Manager',
+  'Copywriter',
+  'Video Editor',
+  'Media Buyer',
+  'SEO Specialist',
+  'Shopify Expert',
+  'Fotografo',
+  'Content Creator',
+  'Developer',
+  'Sales Development Representative',
+  'Account Manager',
+  'Graphic Designer',
+];
 
 // Colori per job titles
 const JOB_COLORS: Record<string, string> = {
@@ -34,10 +57,18 @@ const JOB_COLORS: Record<string, string> = {
   'Fotografo': '#f97316',
   'Developer': '#3b82f6',
   'Admin': '#8b5cf6',
+  'Content Creator': '#0ea5e9',
+  'Sales Development Representative': '#22c55e',
+  'Account Manager': '#a855f7',
+  'Graphic Designer': '#f43f5e',
 };
 
 // Card Collaboratore
-const CollaboratorCard: React.FC<{ user: User }> = ({ user }) => {
+const CollaboratorCard: React.FC<{ 
+  user: User; 
+  isAdmin: boolean;
+  onEditClick: (user: User) => void;
+}> = ({ user, isAdmin, onEditClick }) => {
   const initials = user.nome && user.cognome 
     ? `${user.nome[0]}${user.cognome[0]}`.toUpperCase()
     : user.username.substring(0, 2).toUpperCase();
@@ -52,33 +83,43 @@ const CollaboratorCard: React.FC<{ user: User }> = ({ user }) => {
     <Card>
       <BlockStack gap="400">
         {/* Header con Avatar */}
-        <InlineStack gap="400" blockAlign="center">
-          <div style={{ 
-            width: 56, 
-            height: 56, 
-            borderRadius: '50%', 
-            background: `linear-gradient(135deg, ${jobColor}20, ${jobColor}40)`,
-            border: `2px solid ${jobColor}`,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            fontSize: '18px',
-            fontWeight: 'bold',
-            color: jobColor
-          }}>
-            {initials}
-          </div>
-          <BlockStack gap="050">
-            <Text as="span" variant="headingMd" fontWeight="bold">{fullName}</Text>
-            <Text as="span" variant="bodySm" tone="subdued">@{user.username}</Text>
-          </BlockStack>
+        <InlineStack gap="400" blockAlign="center" align="space-between">
+          <InlineStack gap="400" blockAlign="center">
+            <div style={{ 
+              width: 56, 
+              height: 56, 
+              borderRadius: '50%', 
+              background: `linear-gradient(135deg, ${jobColor}20, ${jobColor}40)`,
+              border: `2px solid ${jobColor}`,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: '18px',
+              fontWeight: 'bold',
+              color: jobColor
+            }}>
+              {initials}
+            </div>
+            <BlockStack gap="050">
+              <Text as="span" variant="headingMd" fontWeight="bold">{fullName}</Text>
+              <Text as="span" variant="bodySm" tone="subdued">@{user.username}</Text>
+            </BlockStack>
+          </InlineStack>
+          {isAdmin && (
+            <Button 
+              icon={EditIcon} 
+              variant="plain" 
+              onClick={() => onEditClick(user)}
+              accessibilityLabel="Modifica ruolo"
+            />
+          )}
         </InlineStack>
 
         <Divider />
 
         {/* Info */}
         <BlockStack gap="200">
-          {user.job_title && (
+          {user.job_title ? (
             <InlineStack gap="200" blockAlign="center">
               <div style={{
                 padding: '4px 12px',
@@ -91,6 +132,12 @@ const CollaboratorCard: React.FC<{ user: User }> = ({ user }) => {
                 </Text>
               </div>
             </InlineStack>
+          ) : isAdmin ? (
+            <Button variant="plain" onClick={() => onEditClick(user)}>
+              + Assegna ruolo
+            </Button>
+          ) : (
+            <Text as="span" variant="bodySm" tone="subdued">Ruolo non assegnato</Text>
           )}
 
           {user.google_email && (
@@ -127,9 +174,19 @@ const CollaboratorCard: React.FC<{ user: User }> = ({ user }) => {
 };
 
 const TeamCollaboratorsView: React.FC = () => {
+  const { user: currentUser } = useAuth();
+  const isAdmin = currentUser?.role === 'admin' || currentUser?.role === 'superadmin';
+  
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  
+  // Modal per assegnare ruolo
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [selectedUser, setSelectedUser] = useState<User | null>(null);
+  const [selectedJobTitle, setSelectedJobTitle] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   const loadUsers = useCallback(async () => {
     setLoading(true);
@@ -147,6 +204,37 @@ const TeamCollaboratorsView: React.FC = () => {
   useEffect(() => {
     loadUsers();
   }, [loadUsers]);
+  
+  const handleEditClick = (user: User) => {
+    setSelectedUser(user);
+    setSelectedJobTitle(user.job_title || '');
+    setIsModalOpen(true);
+  };
+  
+  const handleSaveJobTitle = async () => {
+    if (!selectedUser) return;
+    
+    setSaving(true);
+    try {
+      await usersApi.updateUser(selectedUser.id, { job_title: selectedJobTitle || undefined });
+      setSuccessMessage(`Ruolo aggiornato per ${selectedUser.nome || selectedUser.username}`);
+      setIsModalOpen(false);
+      loadUsers();
+      
+      // Nascondi messaggio dopo 3 secondi
+      setTimeout(() => setSuccessMessage(null), 3000);
+    } catch (e: any) {
+      console.error('Errore salvataggio ruolo:', e);
+    } finally {
+      setSaving(false);
+    }
+  };
+  
+  // Opzioni per il select del ruolo
+  const jobTitleOptions = [
+    { label: 'Nessun ruolo assegnato', value: '' },
+    ...AVAILABLE_JOB_ROLES.map(role => ({ label: role, value: role }))
+  ];
 
   const filteredUsers = useMemo(() => {
     if (!searchQuery) return users;
@@ -200,6 +288,15 @@ const TeamCollaboratorsView: React.FC = () => {
       subtitle={`${stats.total} collaboratori attivi`}
     >
       <Layout>
+        {/* Success Banner */}
+        {successMessage && (
+          <Layout.Section>
+            <Banner tone="success" onDismiss={() => setSuccessMessage(null)}>
+              <p>{successMessage}</p>
+            </Banner>
+          </Layout.Section>
+        )}
+        
         {/* Stats */}
         <Layout.Section>
           <InlineGrid columns={{ xs: 2, md: 4 }} gap="400">
@@ -252,7 +349,12 @@ const TeamCollaboratorsView: React.FC = () => {
           {filteredUsers.length > 0 ? (
             <InlineGrid columns={{ xs: 1, sm: 2, md: 3, lg: 4 }} gap="400">
               {filteredUsers.map(user => (
-                <CollaboratorCard key={user.id} user={user} />
+                <CollaboratorCard 
+                  key={user.id} 
+                  user={user} 
+                  isAdmin={isAdmin}
+                  onEditClick={handleEditClick}
+                />
               ))}
             </InlineGrid>
           ) : (
@@ -272,6 +374,37 @@ const TeamCollaboratorsView: React.FC = () => {
           )}
         </Layout.Section>
       </Layout>
+      
+      {/* Modal Assegna Ruolo */}
+      <Modal
+        open={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        title={`Assegna Ruolo a ${selectedUser?.nome || selectedUser?.username || ''}`}
+        primaryAction={{
+          content: 'Salva',
+          onAction: handleSaveJobTitle,
+          loading: saving
+        }}
+        secondaryActions={[{
+          content: 'Annulla',
+          onAction: () => setIsModalOpen(false)
+        }]}
+      >
+        <Modal.Section>
+          <BlockStack gap="400">
+            <Text as="p" tone="subdued">
+              Seleziona il ruolo lavorativo per questo collaboratore. Il ruolo determina 
+              quali task vengono suggerite automaticamente quando si crea un workflow.
+            </Text>
+            <Select
+              label="Ruolo Lavorativo"
+              options={jobTitleOptions}
+              value={selectedJobTitle}
+              onChange={setSelectedJobTitle}
+            />
+          </BlockStack>
+        </Modal.Section>
+      </Modal>
     </Page>
   );
 };

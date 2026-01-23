@@ -73,8 +73,10 @@ const DrivePermissions: React.FC = () => {
             });
             if (usersRes.ok) {
                 const usersData = await usersRes.json();
+                // La risposta è direttamente un array, non { users: [...] }
+                const allUsers = Array.isArray(usersData) ? usersData : (usersData.users || []);
                 // Filtra solo utenti non-admin (gli admin hanno già tutti i permessi)
-                const nonAdminUsers = (usersData.users || []).filter(
+                const nonAdminUsers = allUsers.filter(
                     (u: User) => u.role !== 'admin' && u.role !== 'superadmin'
                 );
                 setUsers(nonAdminUsers);
