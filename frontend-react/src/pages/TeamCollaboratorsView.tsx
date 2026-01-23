@@ -21,8 +21,6 @@ import {
 } from '@shopify/polaris';
 import {
   SearchIcon,
-  EmailIcon,
-  CalendarIcon,
   EditIcon
 } from '@shopify/polaris-icons';
 import { usersApi, type User } from '../services/usersApi';
@@ -63,7 +61,7 @@ const JOB_COLORS: Record<string, string> = {
   'Graphic Designer': '#f43f5e',
 };
 
-// Card Collaboratore
+// Card Collaboratore - Design pulito
 const CollaboratorCard: React.FC<{ 
   user: User; 
   isAdmin: boolean;
@@ -81,92 +79,95 @@ const CollaboratorCard: React.FC<{
 
   return (
     <Card>
-      <BlockStack gap="400">
-        {/* Header con Avatar */}
-        <InlineStack gap="400" blockAlign="center" align="space-between">
-          <InlineStack gap="400" blockAlign="center">
+      <BlockStack gap="300">
+        {/* Avatar centrato */}
+        <Box paddingBlockStart="200">
+          <BlockStack gap="200" align="center">
             <div style={{ 
-              width: 56, 
-              height: 56, 
+              width: 64, 
+              height: 64, 
               borderRadius: '50%', 
               background: `linear-gradient(135deg, ${jobColor}20, ${jobColor}40)`,
-              border: `2px solid ${jobColor}`,
+              border: `3px solid ${jobColor}`,
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              fontSize: '18px',
+              fontSize: '20px',
               fontWeight: 'bold',
-              color: jobColor
+              color: jobColor,
+              margin: '0 auto'
             }}>
               {initials}
             </div>
-            <BlockStack gap="050">
-              <Text as="span" variant="headingMd" fontWeight="bold">{fullName}</Text>
-              <Text as="span" variant="bodySm" tone="subdued">@{user.username}</Text>
-            </BlockStack>
+            <Text as="p" variant="headingMd" fontWeight="bold" alignment="center">{fullName}</Text>
+            <Text as="p" variant="bodySm" tone="subdued" alignment="center">@{user.username}</Text>
+          </BlockStack>
+        </Box>
+
+        {/* Ruolo Lavorativo */}
+        {user.job_title ? (
+          <Box paddingInline="400">
+            <div style={{
+              padding: '6px 16px',
+              borderRadius: '20px',
+              background: `${jobColor}12`,
+              border: `1px solid ${jobColor}25`,
+              textAlign: 'center'
+            }}>
+              <Text as="span" variant="bodySm" fontWeight="semibold">
+                <span style={{ color: jobColor }}>{user.job_title}</span>
+              </Text>
+            </div>
+          </Box>
+        ) : (
+          <Box paddingInline="400">
+            <div style={{
+              padding: '6px 16px',
+              borderRadius: '20px',
+              background: '#f1f5f9',
+              border: '1px dashed #cbd5e1',
+              textAlign: 'center'
+            }}>
+              <Text as="span" variant="bodySm" tone="subdued">Ruolo non assegnato</Text>
+            </div>
+          </Box>
+        )}
+
+        <Divider />
+
+        {/* Info compatte */}
+        <Box paddingInline="100">
+          <BlockStack gap="150">
+            {user.google_email && (
+              <Text as="p" variant="bodySm" tone="subdued" alignment="center" truncate>
+                {user.google_email}
+              </Text>
+            )}
+            <Text as="p" variant="bodySm" tone="subdued" alignment="center">
+              Membro da {user.created_at ? new Date(user.created_at).toLocaleDateString('it-IT', { month: 'short', year: 'numeric' }) : 'N/D'}
+            </Text>
+          </BlockStack>
+        </Box>
+
+        {/* Footer con Badge e Azione */}
+        <InlineStack gap="200" align="space-between" blockAlign="center">
+          <InlineStack gap="100">
+            <Badge tone={user.role === 'admin' || user.role === 'superadmin' ? 'info' : undefined}>
+              {user.role === 'superadmin' ? 'Super Admin' : user.role === 'admin' ? 'Admin' : 'Collaboratore'}
+            </Badge>
+            <Badge tone={user.is_active ? 'success' : 'critical'}>
+              {user.is_active ? 'Attivo' : 'Inattivo'}
+            </Badge>
           </InlineStack>
           {isAdmin && (
             <Button 
               icon={EditIcon} 
-              variant="plain" 
+              variant="tertiary"
+              size="micro"
               onClick={() => onEditClick(user)}
               accessibilityLabel="Modifica ruolo"
             />
           )}
-        </InlineStack>
-
-        <Divider />
-
-        {/* Info */}
-        <BlockStack gap="200">
-          {user.job_title ? (
-            <InlineStack gap="200" blockAlign="center">
-              <div style={{
-                padding: '4px 12px',
-                borderRadius: '16px',
-                background: `${jobColor}15`,
-                border: `1px solid ${jobColor}30`,
-              }}>
-                <Text as="span" variant="bodySm" fontWeight="medium" >
-                  <span style={{ color: jobColor }}>{user.job_title}</span>
-                </Text>
-              </div>
-            </InlineStack>
-          ) : isAdmin ? (
-            <Button variant="plain" onClick={() => onEditClick(user)}>
-              + Assegna ruolo
-            </Button>
-          ) : (
-            <Text as="span" variant="bodySm" tone="subdued">Ruolo non assegnato</Text>
-          )}
-
-          {user.google_email && (
-            <InlineStack gap="200" blockAlign="center" wrap={false}>
-              <div style={{ minWidth: '20px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <Icon source={EmailIcon} tone="subdued" />
-              </div>
-              <Text as="span" variant="bodySm" tone="subdued">{user.google_email}</Text>
-            </InlineStack>
-          )}
-
-          <InlineStack gap="200" blockAlign="center" wrap={false}>
-            <div style={{ minWidth: '20px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <Icon source={CalendarIcon} tone="subdued" />
-            </div>
-            <Text as="span" variant="bodySm" tone="subdued">
-              Iscritto da {user.created_at ? new Date(user.created_at).toLocaleDateString('it-IT', { month: 'long', year: 'numeric' }) : 'N/D'}
-            </Text>
-          </InlineStack>
-        </BlockStack>
-
-        {/* Badge Ruolo e Stato */}
-        <InlineStack gap="200">
-          <Badge tone={user.role === 'admin' || user.role === 'superadmin' ? 'info' : undefined}>
-            {user.role === 'superadmin' ? 'Super Admin' : user.role === 'admin' ? 'Admin' : 'Collaboratore'}
-          </Badge>
-          <Badge tone={user.is_active ? 'success' : 'critical'}>
-            {user.is_active ? 'Attivo' : 'Inattivo'}
-          </Badge>
         </InlineStack>
       </BlockStack>
     </Card>
