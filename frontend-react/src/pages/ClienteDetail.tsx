@@ -16,6 +16,7 @@ import {
 } from '@shopify/polaris';
 import { SaveIcon, DeleteIcon } from '@shopify/polaris-icons';
 import { clientiApi, type Cliente, type DettagliCliente, type Task } from '../services/clientiApi';
+import { pagamentiApi } from '../services/pagamentiApi';
 import { useAuth } from '../hooks/useAuth';
 
 // Import Components
@@ -23,11 +24,13 @@ import ClienteHeader from '../components/clienti/ClienteHeader';
 import ClienteReferente from '../components/clienti/ClienteReferente';
 import ClienteCanali from '../components/clienti/ClienteCanali';
 import ClienteBrand from '../components/clienti/ClienteBrand';
+import ClienteTasksFromManager from '../components/clienti/ClienteTasksFromManager';
 import ClienteStats from '../components/clienti/ClienteStats';
 import ClienteRecordings from '../components/clienti/ClienteRecordings';
 import ClienteTasks from '../components/clienti/ClienteTasks';
 import ClienteDealHistory from '../components/clienti/ClienteDealHistory';
 import ClienteDrive from '../components/clienti/ClienteDrive';
+import ClienteAssignees from '../components/clienti/ClienteAssignees';
 
 const ClienteDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -42,7 +45,9 @@ const ClienteDetail: React.FC = () => {
   const canDeleteCliente = hasPermission('clienti:delete');
   
   const [cliente, setCliente] = useState<Cliente | null>(null);
-  const [documents, setDocuments] = useState<{ preventivi: any[], contratti: any[] }>({ preventivi: [], contratti: [] });
+  const [documents, setDocuments] = useState<{ preventivi: any[], contratti: any[], contratti_suggeriti?: any[] }>({ preventivi: [], contratti: [], contratti_suggeriti: [] });
+  const [incassatoTotale, setIncassatoTotale] = useState(0);
+  const [incassatoPerContratto, setIncassatoPerContratto] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -89,12 +94,37 @@ const ClienteDetail: React.FC = () => {
 
       setCliente(data);
       setDocuments(docs);
+
+      // Carica pagamenti per ogni contratto collegato per calcolare l'incassato
+      if (docs.contratti && docs.contratti.length > 0 && canViewFinance) {
+        let totaleIncassato = 0;
+        const incassatoMap: Record<string, number> = {};
+        
+        await Promise.all(docs.contratti.map(async (contratto: any) => {
+          try {
+            const pagamenti = await pagamentiApi.getPagamentiByContratto(contratto.id);
+            // Somma solo i pagamenti con status "pagato"
+            const incassatoContratto = pagamenti
+              .filter((p: any) => p.status === 'pagato')
+              .reduce((sum: number, p: any) => sum + (Number(p.importo) || 0), 0);
+            
+            incassatoMap[contratto.id] = incassatoContratto;
+            totaleIncassato += incassatoContratto;
+          } catch (err) {
+            console.warn(`Errore caricamento pagamenti per contratto ${contratto.id}:`, err);
+            incassatoMap[contratto.id] = 0;
+          }
+        }));
+        
+        setIncassatoTotale(totaleIncassato);
+        setIncassatoPerContratto(incassatoMap);
+      }
     } catch (err: any) {
       setError(err.message || 'Errore nel caricamento del cliente');
     } finally {
       setLoading(false);
     }
-  }, [id]);
+  }, [id, canViewFinance]);
 
   useEffect(() => {
       loadCliente();
@@ -135,23 +165,14 @@ const ClienteDetail: React.FC = () => {
     updateDettagli('brand_manual', { ...cliente.dettagli.brand_manual, [field]: value });
   };
 
-  const handleAddCanale = () => {
+  const handleAddCanale = (canale: any) => {
     if (!cliente?.dettagli) return;
-    const newCanale = { id: Date.now().toString(), url_sito: '', nome_utente: '' };
-    updateDettagli('canali', [...(cliente.dettagli.canali || []), newCanale]);
+    updateDettagli('canali', [...(cliente.dettagli.canali || []), canale]);
   };
 
   const handleRemoveCanale = (canaleId: string) => {
     if (!cliente?.dettagli?.canali) return;
     updateDettagli('canali', cliente.dettagli.canali.filter(c => c.id !== canaleId));
-  };
-
-  const handleChangeCanale = (canaleId: string, field: string, value: string) => {
-    if (!cliente?.dettagli?.canali) return;
-    const newCanali = cliente.dettagli.canali.map(c => 
-      c.id === canaleId ? { ...c, [field]: value } : c
-    );
-    updateDettagli('canali', newCanali);
   };
 
   const handleStatsChange = (type: 'inizio' | 'attuale', field: string, value: any) => {
@@ -162,10 +183,9 @@ const ClienteDetail: React.FC = () => {
     updateDettagli(key, { ...currentStats, [field]: value });
   };
 
-  const handleAddRecording = () => {
+  const handleAddRecording = (rec: any) => {
     if (!cliente?.dettagli) return;
-    const newRec = { id: Date.now().toString(), data: new Date().toISOString().split('T')[0] };
-    updateDettagli('registrazioni', [...(cliente.dettagli.registrazioni || []), newRec]);
+    updateDettagli('registrazioni', [...(cliente.dettagli.registrazioni || []), rec]);
   };
 
   const handleChangeRecording = (recId: string, field: string, value: string) => {
@@ -174,6 +194,11 @@ const ClienteDetail: React.FC = () => {
       r.id === recId ? { ...r, [field]: value } : r
     );
     updateDettagli('registrazioni', newRecs);
+  };
+
+  const handleRemoveRecording = (recId: string) => {
+    if (!cliente?.dettagli?.registrazioni) return;
+    updateDettagli('registrazioni', cliente.dettagli.registrazioni.filter(r => r.id !== recId));
   };
 
   // Task Handlers
@@ -197,23 +222,16 @@ const ClienteDetail: React.FC = () => {
   };
 
 
-  // Preparazione dati per la tabella Deal History
-  const dealsHistory = [
-      ...documents.preventivi.map(p => ({
-          id: p.id,
-          data: p.data,
-          tipo: 'Preventivo' as const,
-          numero: p.numero,
-          valore: p.totale || 0
-      })),
-      ...documents.contratti.map(c => ({
-          id: c.id,
-          data: c.data,
-          tipo: 'Contratto' as const,
-          numero: c.numero,
-          valore: c.totale || 0
-      }))
-  ].sort((a, b) => new Date(b.data).getTime() - new Date(a.data).getTime());
+  // Preparazione dati per la tabella Deal History - SOLO CONTRATTI per LTV
+  const dealsHistory = documents.contratti.map(c => ({
+      id: c.id,
+      data: c.data,
+      tipo: 'Contratto' as const,
+      numero: c.numero,
+      valore: Number(c.totale) || 0,
+      dataScadenza: c.dataScadenza || c.durata?.dataScadenza || undefined,
+      incassatoContratto: incassatoPerContratto[c.id] || 0
+  })).sort((a, b) => new Date(b.data).getTime() - new Date(a.data).getTime());
 
   if (loading) return <SkeletonPage primaryAction />;
   if (error || !cliente) return <Banner tone="critical">{error || 'Cliente non trovato'}</Banner>;
@@ -286,15 +304,23 @@ const ClienteDetail: React.FC = () => {
           </LegacyCard>
         </Layout.Section>
 
+          {/* COLLABORATORI ASSEGNATI - Solo admin vede */}
+          {(hasPermission('admin') || hasPermission('users:write')) && (
+            <Layout.Section variant="oneThird">
+              <ClienteAssignees clienteId={cliente.id} />
+            </Layout.Section>
+          )}
+
           {/* MAIN GRID */}
         <Layout.Section>
                     <BlockStack gap="400">
                 <ClienteReferente 
                     referente={cliente.dettagli?.referente || emptyDettagli.referente!} 
-                    documents={canViewDocuments ? documents : { preventivi: [], contratti: [] }}
+                    documents={canViewDocuments ? documents : { preventivi: [], contratti: [], contratti_suggeriti: [] }}
                     onChange={handleReferenteChange}
                     clienteId={cliente.id}
                     showDocuments={canViewDocuments}
+                    onDocumentLinked={loadCliente}
                 />
                 
                 <ClienteDrive 
@@ -307,12 +333,12 @@ const ClienteDetail: React.FC = () => {
                     canali={cliente.dettagli?.canali || []}
                     onAdd={handleAddCanale}
                     onRemove={handleRemoveCanale}
-                    onChange={handleChangeCanale}
                 />
 
                 <ClienteBrand
                     brand={cliente.dettagli?.brand_manual || {}}
                     onChange={handleBrandChange}
+                    clienteId={cliente.id}
                 />
 
                 {/* Stats finanziari - solo se ha permessi finanza */}
@@ -331,6 +357,8 @@ const ClienteDetail: React.FC = () => {
                     registrazioni={cliente.dettagli?.registrazioni || []}
                     onAdd={handleAddRecording}
                     onChange={handleChangeRecording}
+                    onRemove={handleRemoveRecording}
+                    clienteId={cliente.id}
                 />
 
                 <ClienteTasks 
@@ -340,9 +368,14 @@ const ClienteDetail: React.FC = () => {
                     onRemove={handleRemoveTask}
                 />
 
+                {/* Task dal Task Manager (productivity-service) */}
+                <ClienteTasksFromManager 
+                    clienteId={cliente.id}
+                />
+
                 {/* Storico documenti - solo se ha permessi preventivi o contratti */}
                 {canViewDocuments && (
-                  <ClienteDealHistory deals={dealsHistory} />
+                  <ClienteDealHistory deals={dealsHistory} incassato={incassatoTotale} />
                 )}
 
                 <LegacyCard title="Note Rapide" sectioned>

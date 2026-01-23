@@ -32,7 +32,7 @@ except ImportError:
     drive_service = None
     drive_structure = None
 
-from database import database, init_database, close_database, clienti_table, magic_links_table
+from database import database, init_database, close_database, clienti_table, magic_links_table, cliente_assignees_table
 from models import (
     ClienteData,
     ClienteResponse,
@@ -358,10 +358,26 @@ def serialize_cliente(row: Dict[str, Any]) -> Dict[str, Any]:
 async def get_clienti(
     current_user: Dict[str, Any] = Depends(check_clienti_read)
 ):
-    """Lista tutti i clienti"""
+    """Lista tutti i clienti - filtrati per assegnazione se non admin"""
     try:
-        query = clienti_table.select().order_by(clienti_table.c.created_at.desc())
-        clienti = await database.fetch_all(query)
+        user_perms = await load_user_permissions(current_user)
+        is_admin = user_perms.get("__all__") or current_user.get("role") in ["admin", "superadmin"]
+        
+        if is_admin:
+            # Admin vede tutti i clienti
+            query = clienti_table.select().order_by(clienti_table.c.created_at.desc())
+            clienti = await database.fetch_all(query)
+        else:
+            # Utente normale vede solo i clienti assegnati a lui
+            user_id = str(current_user["id"])
+            query = """
+                SELECT c.* FROM clienti c
+                INNER JOIN cliente_assignees ca ON c.id = ca.cliente_id
+                WHERE ca.user_id = :user_id
+                ORDER BY c.created_at DESC
+            """
+            clienti = await database.fetch_all(query, {"user_id": user_id})
+        
         result = [serialize_cliente(dict(cliente)) for cliente in clienti]
         return result
     except Exception as e:
@@ -484,6 +500,203 @@ async def update_cliente(
             .values(**values)
         )
         return {"id": cliente_id, "status": "updated"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Errore: {str(e)}")
+
+
+# =============================================================================
+# ENDPOINT ASSEGNAZIONE CLIENTI
+# =============================================================================
+
+@app.get("/api/clienti/{cliente_id}/assignees")
+async def get_cliente_assignees(
+    cliente_id: str,
+    current_user: Dict[str, Any] = Depends(check_clienti_read)
+):
+    """Ottieni lista utenti assegnati a un cliente"""
+    try:
+        # Verifica esistenza cliente
+        cliente = await database.fetch_one(
+            clienti_table.select().where(clienti_table.c.id == cliente_id)
+        )
+        if not cliente:
+            raise HTTPException(status_code=404, detail="Cliente non trovato")
+        
+        # Ottieni assegnazioni
+        query = """
+            SELECT ca.*, u.username, u.nome, u.cognome, u.role
+            FROM cliente_assignees ca
+            LEFT JOIN users u ON ca.user_id = CAST(u.id AS VARCHAR)
+            WHERE ca.cliente_id = :cliente_id
+            ORDER BY ca.assigned_at DESC
+        """
+        assignees = await database.fetch_all(query, {"cliente_id": cliente_id})
+        
+        return {
+            "cliente_id": cliente_id,
+            "assignees": [
+                {
+                    "id": a["id"],
+                    "user_id": a["user_id"],
+                    "username": a["username"],
+                    "nome": a["nome"],
+                    "cognome": a["cognome"],
+                    "role": a["role"],
+                    "assigned_at": a["assigned_at"].isoformat() if a["assigned_at"] else None,
+                    "assigned_by": a["assigned_by"]
+                }
+                for a in assignees
+            ]
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Errore: {str(e)}")
+
+
+@app.post("/api/clienti/{cliente_id}/assignees")
+async def assign_user_to_cliente(
+    cliente_id: str,
+    user_ids: List[str],
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """Assegna uno o più utenti a un cliente (solo admin)"""
+    try:
+        # Verifica permessi admin
+        user_perms = await load_user_permissions(current_user)
+        is_admin = user_perms.get("__all__") or current_user.get("role") in ["admin", "superadmin"]
+        if not is_admin:
+            raise HTTPException(status_code=403, detail="Solo gli admin possono assegnare clienti")
+        
+        # Verifica esistenza cliente
+        cliente = await database.fetch_one(
+            clienti_table.select().where(clienti_table.c.id == cliente_id)
+        )
+        if not cliente:
+            raise HTTPException(status_code=404, detail="Cliente non trovato")
+        
+        assigned_by = str(current_user["id"])
+        now = datetime.now()
+        added = []
+        
+        for user_id in user_ids:
+            # Verifica che l'utente esista
+            user = await database.fetch_one(
+                "SELECT id FROM users WHERE id = :uid",
+                {"uid": int(user_id) if user_id.isdigit() else user_id}
+            )
+            if not user:
+                continue
+            
+            # Verifica se già assegnato
+            existing = await database.fetch_one(
+                "SELECT id FROM cliente_assignees WHERE cliente_id = :cid AND user_id = :uid",
+                {"cid": cliente_id, "uid": str(user_id)}
+            )
+            if existing:
+                continue
+            
+            # Aggiungi assegnazione
+            assignment_id = str(uuid.uuid4())
+            await database.execute(
+                cliente_assignees_table.insert().values(
+                    id=assignment_id,
+                    cliente_id=cliente_id,
+                    user_id=str(user_id),
+                    assigned_at=now,
+                    assigned_by=assigned_by
+                )
+            )
+            added.append(str(user_id))
+        
+        return {"status": "ok", "added": added, "cliente_id": cliente_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Errore: {str(e)}")
+
+
+@app.delete("/api/clienti/{cliente_id}/assignees/{user_id}")
+async def remove_user_from_cliente(
+    cliente_id: str,
+    user_id: str,
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """Rimuovi un utente da un cliente (solo admin)"""
+    try:
+        # Verifica permessi admin
+        user_perms = await load_user_permissions(current_user)
+        is_admin = user_perms.get("__all__") or current_user.get("role") in ["admin", "superadmin"]
+        if not is_admin:
+            raise HTTPException(status_code=403, detail="Solo gli admin possono rimuovere assegnazioni")
+        
+        # Rimuovi assegnazione
+        await database.execute(
+            "DELETE FROM cliente_assignees WHERE cliente_id = :cid AND user_id = :uid",
+            {"cid": cliente_id, "uid": str(user_id)}
+        )
+        
+        return {"status": "ok", "removed": user_id, "cliente_id": cliente_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Errore: {str(e)}")
+
+
+@app.put("/api/clienti/{cliente_id}/assignees")
+async def set_cliente_assignees(
+    cliente_id: str,
+    user_ids: List[str],
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """Imposta la lista completa degli utenti assegnati a un cliente (solo admin)"""
+    try:
+        # Verifica permessi admin
+        user_perms = await load_user_permissions(current_user)
+        is_admin = user_perms.get("__all__") or current_user.get("role") in ["admin", "superadmin"]
+        if not is_admin:
+            raise HTTPException(status_code=403, detail="Solo gli admin possono gestire assegnazioni")
+        
+        # Verifica esistenza cliente
+        cliente = await database.fetch_one(
+            clienti_table.select().where(clienti_table.c.id == cliente_id)
+        )
+        if not cliente:
+            raise HTTPException(status_code=404, detail="Cliente non trovato")
+        
+        # Rimuovi tutte le assegnazioni esistenti
+        await database.execute(
+            "DELETE FROM cliente_assignees WHERE cliente_id = :cid",
+            {"cid": cliente_id}
+        )
+        
+        # Aggiungi le nuove assegnazioni
+        assigned_by = str(current_user["id"])
+        now = datetime.now()
+        
+        for user_id in user_ids:
+            # Verifica che l'utente esista
+            user = await database.fetch_one(
+                "SELECT id FROM users WHERE id = :uid",
+                {"uid": int(user_id) if user_id.isdigit() else user_id}
+            )
+            if not user:
+                continue
+            
+            assignment_id = str(uuid.uuid4())
+            await database.execute(
+                cliente_assignees_table.insert().values(
+                    id=assignment_id,
+                    cliente_id=cliente_id,
+                    user_id=str(user_id),
+                    assigned_at=now,
+                    assigned_by=assigned_by
+                )
+            )
+        
+        return {"status": "ok", "assignees": user_ids, "cliente_id": cliente_id}
     except HTTPException:
         raise
     except Exception as e:
@@ -696,9 +909,24 @@ async def import_cliente(
                 try: dati_committente = json.loads(dati_committente)
                 except: dati_committente = {}
             
-            ragione_sociale = dati_committente.get("ragioneSociale") or dati_committente.get("ragione_sociale") or ""
+            # Estrai ragione sociale - prova più chiavi
+            ragione_sociale = (
+                dati_committente.get("ragioneSociale") or 
+                dati_committente.get("ragione_sociale") or 
+                dati_committente.get("nome_azienda") or
+                contratto.get("nome_cliente") or
+                ""
+            )
             if not ragione_sociale:
                 raise HTTPException(status_code=400, detail="Contratto senza ragione sociale")
+            
+            # Estrai email - prova più chiavi
+            email = (
+                dati_committente.get("email") or 
+                dati_committente.get("e-mail") or
+                dati_committente.get("mail") or
+                ""
+            )
             
             servizi_contratto = contratto.get("servizi", [])
             if isinstance(servizi_contratto, str):
@@ -716,10 +944,11 @@ async def import_cliente(
                     id=cliente_id,
                     nome_azienda=ragione_sociale,
                     contatti=json.dumps({
-                        "email": dati_committente.get("email", ""),
+                        "email": email,
                         "telefono": dati_committente.get("telefono", ""),
                         "pec": dati_committente.get("pec", ""),
-                        "cfPiva": dati_committente.get("cfPiva", "")
+                        "cfPiva": dati_committente.get("cfPiva", ""),
+                        "indirizzo": f"{dati_committente.get('via', '')} {dati_committente.get('numero', '')}, {dati_committente.get('citta', '')} {dati_committente.get('cap', '')}".strip(', ')
                     }),
                     servizi_attivi=json.dumps(servizi_attivi),
                     integrazioni=json.dumps({}),
@@ -730,6 +959,21 @@ async def import_cliente(
                     updated_at=now
                 )
             )
+            
+            # ⭐ IMPORTANTE: Collega il contratto al cliente appena creato
+            try:
+                CONTRATTI_URL = os.environ.get("CONTRATTI_SERVICE_URL") or os.environ.get("BASE_URL")
+                if CONTRATTI_URL:
+                    async with httpx.AsyncClient(timeout=10.0) as client:
+                        headers = {"Authorization": f"Bearer {token}"} if token else {}
+                        await client.put(
+                            f"{CONTRATTI_URL}/api/contratti/{source_id}/link-cliente",
+                            json={"cliente_id": cliente_id},
+                            headers=headers
+                        )
+                        print(f"✅ Contratto {source_id} collegato automaticamente al cliente {cliente_id}")
+            except Exception as link_err:
+                print(f"⚠️ Errore nel collegamento automatico del contratto: {link_err}")
         
         return {"id": cliente_id, "status": "imported", "source_type": source_type}
     except HTTPException:
@@ -797,21 +1041,51 @@ async def get_cliente_documents(
         except Exception as e:
             print(f"Error fetching preventivi for cliente {cliente_id}: {e}")
 
-        # Fetch contratti
-        contratti_match = []
+        # Fetch contratti - SEPARATI in collegati e suggeriti
+        contratti_collegati = []  # Contratti effettivamente collegati (cliente_id match)
+        contratti_suggeriti = []  # Contratti suggeriti per nome/email (per collegamento)
+        
         try:
             contratti = await get_contratti_internal(token)
-            print(f"🔍 Trovati {len(contratti)} contratti totali per matching con cliente {cliente_id}")
-            print(f"🔍 Nome azienda cliente: '{nome_azienda}', Email: '{email_contatto}'")
+            print(f"🔍 Trovati {len(contratti)} contratti totali")
             
             for c in contratti:
+                # Calcolo valore contratto
+                valore = 0
+                compenso = c.get("compenso") or {}
+                if isinstance(compenso, str):
+                    try: compenso = json.loads(compenso)
+                    except: compenso = {}
+                
+                if compenso:
+                    sito = compenso.get("sitoWeb", {})
+                    mkt = compenso.get("marketing", {})
+                    valore += float(sito.get("importoTotale", 0) or 0)
+                    valore += float(mkt.get("importoMensile", 0) or 0) * 12
+                
+                # Estrai durata/scadenza
+                durata = c.get("durata") or {}
+                if isinstance(durata, str):
+                    try: durata = json.loads(durata)
+                    except: durata = {}
+                
+                contratto_data = {
+                    "id": c.get("id"),
+                    "numero": c.get("numero"),
+                    "data": c.get("created_at"),
+                    "totale": valore,
+                    "type": "contratto",
+                    "dataScadenza": durata.get("dataScadenza"),
+                    "dataDecorrenza": durata.get("dataDecorrenza")
+                }
+                
                 # Controlla se il contratto è già collegato a questo cliente
                 c_cliente_id = c.get("cliente_id")
                 if c_cliente_id == cliente_id:
-                    # Contratto già collegato, includilo sempre
-                    match = True
+                    contratti_collegati.append(contratto_data)
+                    print(f"✅ Contratto #{c.get('numero')} è COLLEGATO al cliente")
                 else:
-                    # Cerca match per nome o email
+                    # Cerca match per nome o email per suggerimento
                     c_cliente = (c.get("nome_cliente") or "").lower()
                     c_dati = c.get("dati_committente") or {}
                     if isinstance(c_dati, str):
@@ -822,7 +1096,6 @@ async def get_cliente_documents(
                     c_email = (c_dati.get("email") or "").lower()
                     
                     match = False
-                    # Match più flessibile: cerca anche parziali
                     if nome_azienda:
                         nome_azienda_lower = nome_azienda.lower()
                         if (nome_azienda_lower in c_cliente or c_cliente in nome_azienda_lower or
@@ -830,32 +1103,14 @@ async def get_cliente_documents(
                             match = True
                     if email_contatto and email_contatto == c_email:
                         match = True
-                
-                if match:
-                    # Calcolo valore contratto se possibile
-                    valore = 0
-                    compenso = c.get("compenso") or {}
-                    if isinstance(compenso, str):
-                         try: compenso = json.loads(compenso)
-                         except: compenso = {}
                     
-                    if compenso:
-                        sito = compenso.get("sitoWeb", {})
-                        mkt = compenso.get("marketing", {})
-                        valore += float(sito.get("importoTotale", 0) or 0)
-                        # Stima annuale marketing
-                        valore += float(mkt.get("importoMensile", 0) or 0) * 12
-
-                    contratti_match.append({
-                        "id": c.get("id"),
-                        "numero": c.get("numero"),
-                        "data": c.get("created_at"),
-                        "totale": valore,
-                        "type": "contratto"
-                    })
-                    print(f"✅ Match contratto #{c.get('numero')} (ID: {c.get('id')})")
+                    # Solo se non è già collegato a un ALTRO cliente
+                    if match and not c_cliente_id:
+                        contratto_data["suggested"] = True  # Flag per UI
+                        contratti_suggeriti.append(contratto_data)
+                        print(f"💡 Contratto #{c.get('numero')} SUGGERITO (match nome/email)")
             
-            print(f"📊 Totale contratti matchati: {len(contratti_match)}")
+            print(f"📊 Contratti collegati: {len(contratti_collegati)}, Suggeriti: {len(contratti_suggeriti)}")
         except Exception as e:
             print(f"❌ Error fetching contratti for cliente {cliente_id}: {e}")
             import traceback
@@ -863,7 +1118,8 @@ async def get_cliente_documents(
 
         return {
             "preventivi": preventivi_match,
-            "contratti": contratti_match
+            "contratti": contratti_collegati,  # Solo collegati
+            "contratti_suggeriti": contratti_suggeriti  # Per il "Cerca nel DB"
         }
 
     except HTTPException:

@@ -73,11 +73,45 @@ magic_links_table = Table(
     Column("used_at", DateTime, nullable=True)
 )
 
+# Tabella assegnazione clienti a utenti (molti-a-molti)
+cliente_assignees_table = Table(
+    "cliente_assignees",
+    metadata,
+    Column("id", String(50), primary_key=True),
+    Column("cliente_id", String(50), ForeignKey("clienti.id"), nullable=False),
+    Column("user_id", String(50), nullable=False),  # ID dell'utente assegnato
+    Column("assigned_at", DateTime, nullable=False),
+    Column("assigned_by", String(50), nullable=True),  # Chi ha fatto l'assegnazione
+)
+
 
 async def init_database():
-    """Initialize database connection"""
+    """Initialize database connection and ensure tables exist"""
     await database.connect()
     print("✅ Database connesso (Clienti Service)")
+    
+    # Crea tabella cliente_assignees se non esiste
+    try:
+        await database.execute("""
+            CREATE TABLE IF NOT EXISTS cliente_assignees (
+                id VARCHAR(50) PRIMARY KEY,
+                cliente_id VARCHAR(50) NOT NULL REFERENCES clienti(id) ON DELETE CASCADE,
+                user_id VARCHAR(50) NOT NULL,
+                assigned_at TIMESTAMP NOT NULL,
+                assigned_by VARCHAR(50),
+                UNIQUE(cliente_id, user_id)
+            )
+        """)
+        # Crea indice per query veloci
+        await database.execute("""
+            CREATE INDEX IF NOT EXISTS idx_cliente_assignees_user_id ON cliente_assignees(user_id)
+        """)
+        await database.execute("""
+            CREATE INDEX IF NOT EXISTS idx_cliente_assignees_cliente_id ON cliente_assignees(cliente_id)
+        """)
+        print("✅ Tabella cliente_assignees verificata/creata")
+    except Exception as e:
+        print(f"⚠️ Errore creazione tabella cliente_assignees: {e}")
 
 
 async def close_database():

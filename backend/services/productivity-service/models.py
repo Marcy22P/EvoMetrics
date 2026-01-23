@@ -20,9 +20,16 @@ class TaskBase(BaseModel):
     entity_type: Optional[str] = "client"  # 'client' o 'lead' per distinguere il tipo di entità
     priority: Optional[str] = "medium"
     estimated_minutes: int = 0
+    actual_minutes: Optional[int] = None  # Tempo effettivo impiegato (obbligatorio al completamento)
     due_date: Optional[datetime] = None
     icon: Optional[str] = None
     category_id: Optional[str] = None
+    # Nuovo: tipo item (task o evento)
+    item_type: Optional[str] = "task"  # 'task' o 'event'
+    # Campi specifici per eventi (Google Calendar)
+    event_start_time: Optional[datetime] = None
+    event_end_time: Optional[datetime] = None
+    event_participants: Optional[List[str]] = []  # Lista di email partecipanti
     dependencies: Union[List[str], List[Dict[str, Any]]] = []
     metadata: Dict[str, Any] = {}
     attachments: List[Attachment] = []
@@ -40,9 +47,16 @@ class TaskUpdate(BaseModel):
     entity_type: Optional[str] = None  # 'client' o 'lead'
     priority: Optional[str] = None
     estimated_minutes: Optional[int] = None
+    actual_minutes: Optional[int] = None  # Tempo effettivo impiegato
     due_date: Optional[datetime] = None
     icon: Optional[str] = None
     category_id: Optional[str] = None
+    # Tipo item
+    item_type: Optional[str] = None  # 'task' o 'event'
+    # Campi specifici per eventi
+    event_start_time: Optional[datetime] = None
+    event_end_time: Optional[datetime] = None
+    event_participants: Optional[List[str]] = None
     dependencies: Optional[Union[List[str], List[Dict[str, Any]]]] = None
     metadata: Optional[Dict[str, Any]] = None
     attachments: Optional[List[Attachment]] = None
@@ -53,6 +67,7 @@ class Task(TaskBase):
     updated_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
     google_event_id: Optional[str] = None
+    efficiency_score: Optional[int] = None  # Punteggio efficienza calcolato
 
 class WorkflowTemplate(BaseModel):
     id: str

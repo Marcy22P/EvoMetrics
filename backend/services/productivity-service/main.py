@@ -21,6 +21,50 @@ from calendar_sync import sync_task_to_calendar
 
 app = FastAPI(title="Productivity Service")
 
+
+def calculate_efficiency_score(task: Dict[str, Any]) -> int:
+    """
+    Calcola il punteggio di efficienza di una task.
+    
+    - Task completata ("done"): 100 punti
+    - Task non iniziata ("todo"): 0 punti  
+    - Task in corso ("in_progress", "review"): 80 - (giorni_ritardo × 10), minimo 0
+    - Dopo 8 giorni di ritardo, una task in corso vale 0 punti
+    """
+    status = task.get("status", "todo")
+    due_date = task.get("due_date")
+    
+    # Task completata = 100 punti
+    if status == "done":
+        return 100
+    
+    # Task non iniziata = 0 punti
+    if status == "todo":
+        return 0
+    
+    # Task in corso (in_progress, review, ecc.)
+    if not due_date:
+        # Senza scadenza, assumiamo punteggio base
+        return 80
+    
+    # Calcola giorni di ritardo
+    if isinstance(due_date, str):
+        due_dt = datetime.fromisoformat(due_date.replace('Z', '+00:00'))
+        if due_dt.tzinfo:
+            due_dt = due_dt.replace(tzinfo=None)
+    else:
+        due_dt = due_date
+        if due_dt.tzinfo:
+            due_dt = due_dt.replace(tzinfo=None)
+    
+    now = datetime.now()
+    delta = now - due_dt
+    days_overdue = max(0, delta.days)
+    
+    # Formula: 80 - (giorni_ritardo × 10), minimo 0
+    score = 80 - (days_overdue * 10)
+    return max(0, score)
+
 # CORS Configuration
 app.add_middleware(
     CORSMiddleware,
@@ -764,6 +808,18 @@ async def get_tasks(
         if item.get("description") is None:
             item["description"] = ""
 
+        # 6. Gestione JSON per event_participants
+        if isinstance(item.get("event_participants"), str):
+            try:
+                item["event_participants"] = json.loads(item["event_participants"])
+            except json.JSONDecodeError:
+                item["event_participants"] = []
+        elif item.get("event_participants") is None:
+            item["event_participants"] = []
+
+        # 7. Calcola efficiency_score
+        item["efficiency_score"] = calculate_efficiency_score(item)
+
         results.append(item)
         
     return results
@@ -782,15 +838,20 @@ async def get_task(task_id: str):
     item = dict(row)
     
     # Parse JSON fields
-    for field in ["dependencies", "metadata", "attachments"]:
+    for field in ["dependencies", "metadata", "attachments", "event_participants"]:
         if item.get(field) and isinstance(item[field], str):
             try:
                 item[field] = json.loads(item[field])
             except:
-                item[field] = [] if field in ["dependencies", "attachments"] else {}
+                item[field] = [] if field in ["dependencies", "attachments", "event_participants"] else {}
+        elif item.get(field) is None:
+            item[field] = [] if field in ["dependencies", "attachments", "event_participants"] else {}
     
     if item.get("description") is None:
         item["description"] = ""
+    
+    # Calcola efficiency_score
+    item["efficiency_score"] = calculate_efficiency_score(item)
     
     return item
 
@@ -798,7 +859,8 @@ async def get_task(task_id: str):
 @app.post("/api/tasks", response_model=Task)
 async def create_task(task: TaskCreate, background_tasks: BackgroundTasks):
     """
-    Crea un nuovo task.
+    Crea un nuovo task o evento.
+    Per item_type='event', è possibile specificare event_start_time, event_end_time e event_participants.
     """
     task_id = str(uuid.uuid4())
     now = datetime.now()
@@ -806,10 +868,14 @@ async def create_task(task: TaskCreate, background_tasks: BackgroundTasks):
     insert_query = """
     INSERT INTO tasks (
         id, title, description, status, assignee_id, role_required, project_id, entity_type,
-        priority, estimated_minutes, due_date, icon, category_id, dependencies, metadata, attachments, created_at, updated_at
+        priority, estimated_minutes, actual_minutes, efficiency_score, due_date, icon, category_id, item_type,
+        event_start_time, event_end_time, event_participants,
+        dependencies, metadata, attachments, created_at, updated_at
     ) VALUES (
         :id, :title, :description, :status, :assignee_id, :role_required, :project_id, :entity_type,
-        :priority, :estimated_minutes, :due_date, :icon, :category_id, :dependencies, :metadata, :attachments, :created_at, :updated_at
+        :priority, :estimated_minutes, :actual_minutes, :efficiency_score, :due_date, :icon, :category_id, :item_type,
+        :event_start_time, :event_end_time, :event_participants,
+        :dependencies, :metadata, :attachments, :created_at, :updated_at
     )
     """
     
@@ -818,17 +884,33 @@ async def create_task(task: TaskCreate, background_tasks: BackgroundTasks):
     values["created_at"] = now
     values["updated_at"] = now
     
+    # Default per actual_minutes e efficiency_score
+    if values.get("actual_minutes") is None:
+        values["actual_minutes"] = None
+    if values.get("efficiency_score") is None:
+        values["efficiency_score"] = 100  # Default: 100 punti per task nuove
+    
     # Default entity_type a 'client' se non specificato
     if "entity_type" not in values or values["entity_type"] is None:
         values["entity_type"] = "client"
     
+    # Default item_type a 'task' se non specificato
+    if "item_type" not in values or values["item_type"] is None:
+        values["item_type"] = "task"
+    
     # Normalize due_date to naive UTC if present
     if values.get("due_date") is not None and values["due_date"].tzinfo is not None:
         values["due_date"] = values["due_date"].astimezone(timezone.utc).replace(tzinfo=None)
+    
+    # Normalize event times if present
+    for time_field in ["event_start_time", "event_end_time"]:
+        if values.get(time_field) is not None and values[time_field].tzinfo is not None:
+            values[time_field] = values[time_field].astimezone(timezone.utc).replace(tzinfo=None)
         
     values["dependencies"] = json.dumps(values.get("dependencies", []))
     values["metadata"] = json.dumps(values.get("metadata", {}))
     values["attachments"] = json.dumps(values.get("attachments", []))
+    values["event_participants"] = json.dumps(values.get("event_participants", []))
     
     await database.execute(insert_query, values)
     
@@ -838,12 +920,14 @@ async def create_task(task: TaskCreate, background_tasks: BackgroundTasks):
     result = dict(row)
     
     # Parse JSON fields before returning to match Pydantic model
-    if isinstance(result.get("dependencies"), str):
-        result["dependencies"] = json.loads(result["dependencies"])
-    if isinstance(result.get("metadata"), str):
-        result["metadata"] = json.loads(result["metadata"])
-    if isinstance(result.get("attachments"), str):
-        result["attachments"] = json.loads(result["attachments"])
+    for json_field in ["dependencies", "metadata", "attachments", "event_participants"]:
+        if isinstance(result.get(json_field), str):
+            result[json_field] = json.loads(result[json_field])
+        elif result.get(json_field) is None:
+            result[json_field] = [] if json_field != "metadata" else {}
+    
+    # Calcola efficiency_score
+    result["efficiency_score"] = calculate_efficiency_score(result)
         
     return result
 
@@ -851,6 +935,8 @@ async def create_task(task: TaskCreate, background_tasks: BackgroundTasks):
 async def update_task(task_id: str, task_update: TaskUpdate, background_tasks: BackgroundTasks):
     """
     Aggiorna un task esistente (status, assignee, ecc.)
+    IMPORTANTE: Quando si completa una task (status='done'), è OBBLIGATORIO
+    specificare actual_minutes (tempo impiegato).
     """
     # 1. Check if task exists
     query = "SELECT * FROM tasks WHERE id = :id"
@@ -858,10 +944,24 @@ async def update_task(task_id: str, task_update: TaskUpdate, background_tasks: B
     if not task_row:
         raise HTTPException(status_code=404, detail="Task not found")
     
+    current_task = dict(task_row)
+    
     # 2. Build update query dynamically
     update_data = task_update.dict(exclude_unset=True)
     if not update_data:
         raise HTTPException(status_code=400, detail="No fields to update")
+    
+    # ⚠️ VALIDAZIONE: Se si sta completando la task, actual_minutes è OBBLIGATORIO
+    if "status" in update_data and update_data["status"] == "done":
+        # Verifica se actual_minutes viene passato ora o esisteva già
+        new_actual_minutes = update_data.get("actual_minutes")
+        existing_actual_minutes = current_task.get("actual_minutes")
+        
+        if new_actual_minutes is None and existing_actual_minutes is None:
+            raise HTTPException(
+                status_code=400, 
+                detail="Per completare la task è obbligatorio specificare il tempo impiegato (actual_minutes)"
+            )
         
     update_data["updated_at"] = datetime.now()
 
@@ -870,6 +970,12 @@ async def update_task(task_id: str, task_update: TaskUpdate, background_tasks: B
          # Check if it has tzinfo before converting
          if getattr(update_data["due_date"], "tzinfo", None) is not None:
              update_data["due_date"] = update_data["due_date"].astimezone(timezone.utc).replace(tzinfo=None)
+    
+    # Normalize event times if present
+    for time_field in ["event_start_time", "event_end_time"]:
+        if time_field in update_data and update_data[time_field] is not None:
+            if getattr(update_data[time_field], "tzinfo", None) is not None:
+                update_data[time_field] = update_data[time_field].astimezone(timezone.utc).replace(tzinfo=None)
     
     # Handle completion timestamp
     if "status" in update_data:
@@ -881,6 +987,10 @@ async def update_task(task_id: str, task_update: TaskUpdate, background_tasks: B
     # Handle JSON fields serialization if present
     if "attachments" in update_data:
         update_data["attachments"] = json.dumps(update_data["attachments"])
+    
+    # Handle event_participants JSON serialization
+    if "event_participants" in update_data:
+        update_data["event_participants"] = json.dumps(update_data["event_participants"] or [])
         
     set_clause = ", ".join([f"{key} = :{key}" for key in update_data.keys()])
     update_query = f"UPDATE tasks SET {set_clause} WHERE id = :id"
@@ -895,21 +1005,32 @@ async def update_task(task_id: str, task_update: TaskUpdate, background_tasks: B
     result = dict(updated_row)
     
     # Parse JSON fields before returning to match Pydantic model
-    if isinstance(result.get("dependencies"), str):
-        result["dependencies"] = json.loads(result["dependencies"])
-    if isinstance(result.get("metadata"), str):
-        result["metadata"] = json.loads(result["metadata"])
-    if isinstance(result.get("attachments"), str):
-        result["attachments"] = json.loads(result["attachments"])
+    for json_field in ["dependencies", "metadata", "attachments", "event_participants"]:
+        if isinstance(result.get(json_field), str):
+            result[json_field] = json.loads(result[json_field])
+        elif result.get(json_field) is None:
+            result[json_field] = [] if json_field != "metadata" else {}
+    
+    # Calcola efficiency_score
+    result["efficiency_score"] = calculate_efficiency_score(result)
         
-    # Sync Calendar (VC_OS)
+    # Sync Calendar (VC_OS) - solo se è un evento o se c'è un assignee
     if result.get("assignee_id"):
+        item_type = result.get("item_type", "task")
+        
         async def sync_and_save():
             current_event_id = result.get("google_event_id")
-            evt_id = await sync_task_to_calendar(result["assignee_id"], result, "update", google_event_id=current_event_id)
-            if evt_id and evt_id != current_event_id:
-                await database.execute("UPDATE tasks SET google_event_id = :gid WHERE id = :tid", 
-                    {"gid": evt_id, "tid": task_id})
+            # Per gli eventi, sincronizza sempre; per le task, solo se hanno due_date
+            if item_type == "event" or result.get("due_date"):
+                evt_id = await sync_task_to_calendar(
+                    result["assignee_id"], 
+                    result, 
+                    "update", 
+                    google_event_id=current_event_id
+                )
+                if evt_id and evt_id != current_event_id:
+                    await database.execute("UPDATE tasks SET google_event_id = :gid WHERE id = :tid", 
+                        {"gid": evt_id, "tid": task_id})
         
         background_tasks.add_task(sync_and_save)
 

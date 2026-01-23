@@ -257,8 +257,10 @@ const ClienteDrive: React.FC<ClienteDriveProps> = ({ clienteId, folderId: initia
                 {files.map((file, index) => (
                     <IndexTable.Row id={file.id} key={file.id} position={index} onClick={() => handleRowClick(file)}>
                         <IndexTable.Cell>
-                            <InlineStack gap="200" blockAlign="center">
-                                <Icon source={getFileIcon(file.mimeType)} tone="base" />
+                            <InlineStack gap="200" blockAlign="center" wrap={false}>
+                                <div style={{ minWidth: '20px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                    <Icon source={getFileIcon(file.mimeType)} tone="base" />
+                                </div>
                                 <Text as="span" variant="bodyMd" fontWeight="bold">
                                     {file.name}
                                 </Text>

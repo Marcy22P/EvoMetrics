@@ -35,7 +35,9 @@ import {
     SettingsIcon,
     AlertCircleIcon,
     FilterIcon,
-    TargetIcon
+    TargetIcon,
+    ClipboardIcon,
+    CalendarTimeIcon
 } from '@shopify/polaris-icons';
 import { productivityApi, type Task, type Attachment, type WorkflowTemplate, type TaskStatus } from '../services/productivityApi';
 import { clientiApi, type DriveFile, type Cliente } from '../services/clientiApi';
@@ -88,6 +90,18 @@ const TaskManager: React.FC = () => {
   const [newTaskDueDate, setNewTaskDueDate] = useState<Date | undefined>(undefined);
   const [newTaskCategoryId, setNewTaskCategoryId] = useState('');
   const [newTaskIcon, setNewTaskIcon] = useState('');
+  // Nuovi campi per tipo item
+  const [newTaskItemType, setNewTaskItemType] = useState<'task' | 'event'>('task');
+  const [newTaskEventStartTime, setNewTaskEventStartTime] = useState('');
+  const [newTaskEventEndTime, setNewTaskEventEndTime] = useState('');
+  const [newTaskEventParticipants, setNewTaskEventParticipants] = useState('');
+  // Modal per completamento task (tempo impiegato)
+  const [isCompleteModalOpen, setIsCompleteModalOpen] = useState(false);
+  const [taskToComplete, setTaskToComplete] = useState<Task | null>(null);
+  const [tasksToComplete, setTasksToComplete] = useState<Task[]>([]); // Per bulk completion
+  const [currentBulkIndex, setCurrentBulkIndex] = useState(0);
+  const [timeSpentHours, setTimeSpentHours] = useState('');
+  const [timeSpentMinutes, setTimeSpentMinutes] = useState('');
   
   // Workflow Form
   const [selectedTemplateId, setSelectedTemplateId] = useState('');
@@ -223,6 +237,31 @@ const TaskManager: React.FC = () => {
           // Determina project_id in base all'entity_type selezionato
           const projectId = newTaskEntityType === 'lead' ? newTaskLead : newTaskClient;
           
+          // Prepara campi per eventi
+          let eventStartTime: string | undefined;
+          let eventEndTime: string | undefined;
+          let eventParticipants: string[] | undefined;
+          
+          if (newTaskItemType === 'event') {
+              // Combina data e ora per eventi
+              if (newTaskDueDate && newTaskEventStartTime) {
+                  const startDate = new Date(newTaskDueDate);
+                  const [startHours, startMinutes] = newTaskEventStartTime.split(':').map(Number);
+                  startDate.setHours(startHours, startMinutes, 0, 0);
+                  eventStartTime = startDate.toISOString();
+              }
+              if (newTaskDueDate && newTaskEventEndTime) {
+                  const endDate = new Date(newTaskDueDate);
+                  const [endHours, endMinutes] = newTaskEventEndTime.split(':').map(Number);
+                  endDate.setHours(endHours, endMinutes, 0, 0);
+                  eventEndTime = endDate.toISOString();
+              }
+              // Parse partecipanti (separati da virgola)
+              if (newTaskEventParticipants.trim()) {
+                  eventParticipants = newTaskEventParticipants.split(',').map(e => e.trim()).filter(Boolean);
+              }
+          }
+          
           await productivityApi.createTask({
               title: newTaskTitle,
               description: newTaskDesc,
@@ -232,7 +271,11 @@ const TaskManager: React.FC = () => {
               priority: newTaskPriority,
               due_date: newTaskDueDate?.toISOString(),
               category_id: newTaskCategoryId || undefined,
-              icon: newTaskIcon || undefined
+              icon: newTaskIcon || undefined,
+              item_type: newTaskItemType,
+              event_start_time: eventStartTime,
+              event_end_time: eventEndTime,
+              event_participants: eventParticipants
           });
           setIsCreateModalOpen(false);
           resetForm();
@@ -274,6 +317,96 @@ const TaskManager: React.FC = () => {
       setNewTaskDueDate(undefined);
       setNewTaskCategoryId('');
       setNewTaskIcon('');
+      // Reset campi eventi
+      setNewTaskItemType('task');
+      setNewTaskEventStartTime('');
+      setNewTaskEventEndTime('');
+      setNewTaskEventParticipants('');
+  };
+
+  // Gestione completamento task con tempo impiegato obbligatorio
+  const handleRequestComplete = (task: Task) => {
+      setTaskToComplete(task);
+      setTasksToComplete([]);
+      setCurrentBulkIndex(0);
+      setTimeSpentHours('');
+      setTimeSpentMinutes('');
+      setIsCompleteModalOpen(true);
+  };
+
+  // Bulk completion - richiede tempo per ogni task
+  const handleBulkRequestComplete = (taskIds: string[]) => {
+      const tasksToMark = tasks.filter(t => taskIds.includes(t.id) && t.status !== 'done');
+      if (tasksToMark.length === 0) return;
+      
+      setTasksToComplete(tasksToMark);
+      setTaskToComplete(tasksToMark[0]);
+      setCurrentBulkIndex(0);
+      setTimeSpentHours('');
+      setTimeSpentMinutes('');
+      setIsCompleteModalOpen(true);
+  };
+
+  const handleConfirmComplete = async () => {
+      if (!taskToComplete) return;
+      
+      const hours = parseInt(timeSpentHours) || 0;
+      const minutes = parseInt(timeSpentMinutes) || 0;
+      const totalMinutes = (hours * 60) + minutes;
+      
+      if (totalMinutes <= 0) {
+          alert('Inserisci il tempo impiegato per completare la task');
+          return;
+      }
+      
+      try {
+          await productivityApi.updateTask(taskToComplete.id, {
+              status: 'done',
+              actual_minutes: totalMinutes
+          });
+          
+          // Se è bulk completion, passa alla prossima task
+          if (tasksToComplete.length > 0) {
+              const nextIndex = currentBulkIndex + 1;
+              if (nextIndex < tasksToComplete.length) {
+                  setCurrentBulkIndex(nextIndex);
+                  setTaskToComplete(tasksToComplete[nextIndex]);
+                  setTimeSpentHours('');
+                  setTimeSpentMinutes('');
+                  return; // Non chiudere il modal, mostra la prossima
+              }
+          }
+          
+          // Tutte completate o era singola
+          setIsCompleteModalOpen(false);
+          setTaskToComplete(null);
+          setTasksToComplete([]);
+          setCurrentBulkIndex(0);
+          clearSelection();
+          loadData();
+      } catch (e: any) {
+          alert(e.message);
+      }
+  };
+
+  const handleSkipBulkTask = () => {
+      // Salta questa task e passa alla prossima
+      if (tasksToComplete.length > 0) {
+          const nextIndex = currentBulkIndex + 1;
+          if (nextIndex < tasksToComplete.length) {
+              setCurrentBulkIndex(nextIndex);
+              setTaskToComplete(tasksToComplete[nextIndex]);
+              setTimeSpentHours('');
+              setTimeSpentMinutes('');
+              return;
+          }
+      }
+      // Finite tutte
+      setIsCompleteModalOpen(false);
+      setTaskToComplete(null);
+      setTasksToComplete([]);
+      clearSelection();
+      loadData();
   };
 
   // Status Manager
@@ -364,6 +497,12 @@ const TaskManager: React.FC = () => {
   };
 
   const handleBulkStatus = async (statusId: string) => {
+      // Se si sta completando, richiedi tempo per ogni task
+      if (statusId === 'done') {
+          handleBulkRequestComplete(selectedResources);
+          return;
+      }
+      
       await productivityApi.bulkUpdateTasks(selectedResources, { status: statusId });
       setTasks(prev => prev.map(t => selectedResources.includes(t.id) ? { ...t, status: statusId } : t));
       clearSelection();
@@ -518,7 +657,23 @@ const TaskManager: React.FC = () => {
           )}
               </InlineStack>
         </IndexTable.Cell>
-          <IndexTable.Cell>{getDueDateElement(task.due_date, task.status)}</IndexTable.Cell>
+          <IndexTable.Cell>
+              {task.status === 'done' && task.completed_at 
+                  ? format(new Date(task.completed_at), 'dd MMM', { locale: it })
+                  : getDueDateElement(task.due_date, task.status)
+              }
+          </IndexTable.Cell>
+          {selectedTab === 2 && (
+              <IndexTable.Cell>
+                  {task.actual_minutes ? (
+                      <Text as="span" tone="success">
+                          {Math.floor(task.actual_minutes / 60)}h {task.actual_minutes % 60}m
+                      </Text>
+                  ) : (
+                      <Text as="span" tone="subdued">-</Text>
+                  )}
+              </IndexTable.Cell>
+          )}
       </IndexTable.Row>
     );
   });
@@ -590,7 +745,8 @@ const TaskManager: React.FC = () => {
                             { title: 'Task' },
                 { title: 'Stato' },
                             { title: 'Assegnato a' },
-                { title: 'Scadenza' },
+                { title: selectedTab === 2 ? 'Completata' : 'Scadenza' },
+                ...(selectedTab === 2 ? [{ title: 'Tempo' }] : []),
                         ]}
                         promotedBulkActions={[
                             { content: 'Elimina', onAction: handleBulkDelete },
@@ -619,6 +775,27 @@ const TaskManager: React.FC = () => {
         >
             <Modal.Section>
                 <BlockStack gap="400">
+                    {/* Tipo: Task o Evento */}
+                    <BlockStack gap="200">
+                        <Text as="span" variant="bodyMd" fontWeight="medium">Tipo</Text>
+                        <InlineStack gap="200">
+                            <Button
+                                icon={ClipboardIcon}
+                                pressed={newTaskItemType === 'task'}
+                                onClick={() => setNewTaskItemType('task')}
+                            >
+                                Task
+                            </Button>
+                            <Button
+                                icon={CalendarTimeIcon}
+                                pressed={newTaskItemType === 'event'}
+                                onClick={() => setNewTaskItemType('event')}
+                            >
+                                Evento (Call/Meeting)
+                            </Button>
+                        </InlineStack>
+                    </BlockStack>
+                    
                     <TextField label="Titolo" value={newTaskTitle} onChange={setNewTaskTitle} autoComplete="off" />
                     <TextField label="Descrizione" value={newTaskDesc} onChange={setNewTaskDesc} multiline={3} autoComplete="off" />
                     <Select 
@@ -692,7 +869,7 @@ const TaskManager: React.FC = () => {
                         active={isDatePickerOpen}
                         activator={
                             <TextField
-                                label="Scadenza"
+                                label={newTaskItemType === 'event' ? "Data Evento" : "Scadenza"}
                                 value={newTaskDueDate ? newTaskDueDate.toLocaleDateString() : ''}
                                 onFocus={() => setIsDatePickerOpen(true)}
                                 autoComplete="off"
@@ -711,6 +888,40 @@ const TaskManager: React.FC = () => {
                             />
                         </Box>
                     </Popover>
+                    
+                    {/* Campi specifici per Eventi */}
+                    {newTaskItemType === 'event' && (
+                        <>
+                            <InlineStack gap="400" align="start">
+                                <div style={{flex: 1}}>
+                                    <TextField
+                                        label="Ora Inizio"
+                                        type="time"
+                                        value={newTaskEventStartTime}
+                                        onChange={setNewTaskEventStartTime}
+                                        autoComplete="off"
+                                    />
+                                </div>
+                                <div style={{flex: 1}}>
+                                    <TextField
+                                        label="Ora Fine"
+                                        type="time"
+                                        value={newTaskEventEndTime}
+                                        onChange={setNewTaskEventEndTime}
+                                        autoComplete="off"
+                                    />
+                                </div>
+                            </InlineStack>
+                            <TextField
+                                label="Partecipanti (email separate da virgola)"
+                                value={newTaskEventParticipants}
+                                onChange={setNewTaskEventParticipants}
+                                autoComplete="off"
+                                placeholder="es: mario@email.com, luigi@email.com"
+                                helpText="Verrà creato automaticamente un link Google Meet"
+                            />
+                        </>
+                    )}
                 </BlockStack>
             </Modal.Section>
         </Modal>
@@ -853,7 +1064,14 @@ const TaskManager: React.FC = () => {
                                     labelHidden
                                     options={statuses.map(s => ({label: s.label, value: s.id}))}
                                     value={selectedTask.status}
-                                    onChange={(v) => handleUpdateTask(selectedTask.id, { status: v })}
+                                    onChange={(v) => {
+                                        // Se si cambia a "done", richiedi tempo impiegato
+                                        if (v === 'done' && selectedTask.status !== 'done') {
+                                            handleRequestComplete(selectedTask);
+                                        } else {
+                                            handleUpdateTask(selectedTask.id, { status: v });
+                                        }
+                                    }}
                                 />
                                 <Select
                                     label="Priorità"
@@ -901,6 +1119,36 @@ const TaskManager: React.FC = () => {
                                 </InlineStack>
                             </BlockStack>
                         </Card>
+
+                        {/* Tempo Impiegato - solo per task completate */}
+                        {selectedTask.status === 'done' && (
+                            <Card>
+                                <BlockStack gap="200">
+                                    <Text as="h3" variant="headingSm">Tempo Impiegato</Text>
+                                    <InlineStack gap="400" blockAlign="center">
+                                        {selectedTask.actual_minutes ? (
+                                            <>
+                                                <Badge tone="success" size="large">
+                                                    {`${Math.floor(selectedTask.actual_minutes / 60)}h ${selectedTask.actual_minutes % 60}m`}
+                                                </Badge>
+                                                {selectedTask.estimated_minutes && selectedTask.estimated_minutes > 0 && (
+                                                    <Text as="span" tone="subdued">
+                                                        (stimato: {Math.floor(selectedTask.estimated_minutes / 60)}h {selectedTask.estimated_minutes % 60}m)
+                                                    </Text>
+                                                )}
+                                            </>
+                                        ) : (
+                                            <Text as="span" tone="subdued">Non registrato</Text>
+                                        )}
+                                    </InlineStack>
+                                    {selectedTask.completed_at && (
+                                        <Text as="p" tone="subdued" variant="bodySm">
+                                            Completata il {format(new Date(selectedTask.completed_at), 'dd MMM yyyy, HH:mm', { locale: it })}
+                                        </Text>
+                                    )}
+                                </BlockStack>
+                            </Card>
+                        )}
 
                         {/* Attachments */}
                         <Card>
@@ -963,6 +1211,92 @@ const TaskManager: React.FC = () => {
                 </BlockStack>
         </Modal.Section>
       </Modal>
+
+        {/* COMPLETE TASK - TEMPO IMPIEGATO */}
+        <Modal
+            open={isCompleteModalOpen}
+            onClose={() => {
+                setIsCompleteModalOpen(false);
+                setTaskToComplete(null);
+                setTasksToComplete([]);
+            }}
+            title={tasksToComplete.length > 0 
+                ? `Completa Task (${currentBulkIndex + 1}/${tasksToComplete.length})` 
+                : "Completa Task"
+            }
+            primaryAction={{
+                content: 'Completa',
+                onAction: handleConfirmComplete
+            }}
+            secondaryActions={tasksToComplete.length > 1 ? [
+                {
+                    content: 'Salta',
+                    onAction: handleSkipBulkTask
+                },
+                {
+                    content: 'Annulla tutto',
+                    onAction: () => {
+                        setIsCompleteModalOpen(false);
+                        setTaskToComplete(null);
+                        setTasksToComplete([]);
+                    }
+                }
+            ] : [{
+                content: 'Annulla',
+                onAction: () => {
+                    setIsCompleteModalOpen(false);
+                    setTaskToComplete(null);
+                }
+            }]}
+        >
+            <Modal.Section>
+                <BlockStack gap="400">
+                    <Banner tone="info">
+                        Per completare questa task, indica quanto tempo hai impiegato.
+                    </Banner>
+                    {taskToComplete && (
+                        <Text as="p" fontWeight="semibold">{taskToComplete.title}</Text>
+                    )}
+                    <InlineStack gap="400" align="start">
+                        <div style={{flex: 1}}>
+                            <TextField
+                                label="Ore"
+                                value={timeSpentHours}
+                                onChange={(val) => {
+                                    // Accetta solo numeri
+                                    if (val === '' || /^\d+$/.test(val)) {
+                                        setTimeSpentHours(val);
+                                    }
+                                }}
+                                autoComplete="off"
+                                inputMode="numeric"
+                                helpText="es. 2"
+                            />
+                        </div>
+                        <div style={{flex: 1}}>
+                            <TextField
+                                label="Minuti"
+                                value={timeSpentMinutes}
+                                onChange={(val) => {
+                                    // Accetta solo numeri 0-59
+                                    if (val === '' || (/^\d+$/.test(val) && parseInt(val) <= 59)) {
+                                        setTimeSpentMinutes(val);
+                                    }
+                                }}
+                                autoComplete="off"
+                                inputMode="numeric"
+                                helpText="es. 30"
+                            />
+                        </div>
+                    </InlineStack>
+                    {taskToComplete?.estimated_minutes && taskToComplete.estimated_minutes > 0 && (
+                        <Text as="p" tone="subdued">
+                            Tempo stimato: {Math.floor(taskToComplete.estimated_minutes / 60)}h {taskToComplete.estimated_minutes % 60}m
+                        </Text>
+                    )}
+                </BlockStack>
+            </Modal.Section>
+        </Modal>
     </Page>
   );
 };

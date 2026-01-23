@@ -21,15 +21,25 @@ export interface Task {
   entity_type?: 'client' | 'lead'; // Tipo di entità collegata (default: client)
   priority: 'low' | 'medium' | 'high' | 'urgent';
   estimated_minutes: number;
+  actual_minutes?: number; // Tempo effettivo impiegato (obbligatorio al completamento)
   due_date?: string;
   icon?: string;
   category_id?: string;
+  // Tipo item: task o evento
+  item_type?: 'task' | 'event';
+  // Campi specifici per eventi
+  event_start_time?: string;
+  event_end_time?: string;
+  event_participants?: string[]; // Email dei partecipanti
+  // Date di sistema
   created_at: string;
   updated_at: string;
   completed_at?: string;
   dependencies: string[]; // ID dei task bloccanti
   metadata?: Record<string, any>;
   attachments?: Attachment[];
+  // Punteggio efficienza (calcolato dal backend)
+  efficiency_score?: number;
 }
 
 export interface TaskCreate {
@@ -40,9 +50,16 @@ export interface TaskCreate {
   assignee_id?: string;
   role_required?: string;
   priority?: string;
+  estimated_minutes?: number;
   due_date?: string;
   icon?: string;
   category_id?: string;
+  // Tipo item: task o evento
+  item_type?: 'task' | 'event';
+  // Campi specifici per eventi
+  event_start_time?: string;
+  event_end_time?: string;
+  event_participants?: string[];
   attachments?: Attachment[];
 }
 
@@ -52,9 +69,17 @@ export interface TaskUpdate {
     status?: string;
     assignee_id?: string;
     priority?: string;
+    estimated_minutes?: number;
+    actual_minutes?: number; // Tempo effettivo impiegato
     due_date?: string;
     icon?: string;
     category_id?: string;
+    // Tipo item
+    item_type?: 'task' | 'event';
+    // Campi specifici per eventi
+    event_start_time?: string;
+    event_end_time?: string;
+    event_participants?: string[];
     attachments?: Attachment[];
 }
 

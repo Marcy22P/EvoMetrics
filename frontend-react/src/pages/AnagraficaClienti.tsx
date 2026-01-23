@@ -32,6 +32,7 @@ import type { Cliente } from '../services/clientiApi';
 const AnagraficaClienti: React.FC = () => {
   const { hasPermission } = useAuth();
   const navigate = useNavigate();
+  const isAdmin = hasPermission('admin') || hasPermission('users:write');
 
   // Stati
   const [clienti, setClienti] = useState<Cliente[]>([]);
@@ -195,7 +196,7 @@ const AnagraficaClienti: React.FC = () => {
     ),
   );
 
-  const emptyStateMarkup = (
+  const emptyStateMarkup = isAdmin ? (
     <EmptyState
       heading="Gestisci i tuoi clienti"
       action={{content: 'Importa Clienti', onAction: handleOpenImportModal, icon: ImportIcon}}
@@ -204,6 +205,13 @@ const AnagraficaClienti: React.FC = () => {
     >
       <p>Importa clienti esistenti da Preventivi o Contratti, oppure creane di nuovi.</p>
     </EmptyState>
+  ) : (
+    <EmptyState
+      heading="Nessun cliente assegnato"
+      image="https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png"
+    >
+      <p>Non hai ancora clienti assegnati. Contatta un amministratore per essere assegnato ai clienti che devi gestire.</p>
+    </EmptyState>
   );
 
   if (!hasPermission('clienti:read')) return <Page title="Accesso Negato"><Text as="p" tone="critical">Non hai i permessi per visualizzare questa pagina.</Text></Page>;
@@ -211,10 +219,10 @@ const AnagraficaClienti: React.FC = () => {
   return (
     <Page
       title="Clienti"
-      primaryAction={{content: 'Importa Clienti', onAction: handleOpenImportModal, icon: ImportIcon}}
-      secondaryActions={[
+      primaryAction={isAdmin ? {content: 'Importa Clienti', onAction: handleOpenImportModal, icon: ImportIcon} : undefined}
+      secondaryActions={isAdmin ? [
           {content: 'Nuovo Cliente', onAction: () => setIsCreateModalOpen(true), icon: PlusIcon}
-      ]}
+      ] : []}
     >
       <Layout>
         <Layout.Section>

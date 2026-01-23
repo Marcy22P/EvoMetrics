@@ -1302,9 +1302,14 @@ class SyncTaskRequest(BaseModel):
     task_id: str
     title: str
     description: Optional[str]
-    due_date: Optional[str] # ISO format
+    due_date: Optional[str] = None  # ISO format
     google_event_id: Optional[str] = None
-    action: str = "create" # create, update, delete
+    action: str = "create"  # create, update, delete
+    # Nuovi campi per eventi
+    item_type: Optional[str] = "task"  # 'task' o 'event'
+    event_start_time: Optional[str] = None  # ISO format - inizio evento
+    event_end_time: Optional[str] = None  # ISO format - fine evento
+    event_participants: Optional[List[str]] = []  # Lista email partecipanti
 
 @app.post("/api/internal/calendar/sync-task")
 async def internal_sync_task(req: SyncTaskRequest):
@@ -1337,20 +1342,15 @@ async def internal_sync_task(req: SyncTaskRequest):
             return {"google_event_id": None}
             
         elif req.action in ("create", "update"):
-            if not req.due_date:
-                return {"google_event_id": None}
-                
-            # Create/Update logic
-            # Se abbiamo google_event_id, proviamo update, se fallisce (404) ricreiamo?
-            # Per semplicità usiamo create_event che fa insert
+            is_event = req.item_type == "event"
             
-            # Formatta date: task ha due_date (fine giornata lavorativa o specifico?)
-            # Assumiamo due_date come inizio, e +1h come fine, o tutto il giorno?
-            # Useremo tutto il giorno per i task se non hanno orario specifico
-            
-            start_dt = req.due_date
-            # Se la stringa non ha T, è YYYY-MM-DD -> All Day
-            is_all_day = 'T' not in req.due_date
+            # Per eventi, servono orari specifici; per task, serve almeno due_date
+            if is_event:
+                if not req.event_start_time and not req.due_date:
+                    return {"google_event_id": None}
+            else:
+                if not req.due_date:
+                    return {"google_event_id": None}
             
             event_body = {
                 'summary': req.title,
@@ -1358,39 +1358,79 @@ async def internal_sync_task(req: SyncTaskRequest):
                 'extendedProperties': {
                     'private': {
                         'task_id': req.task_id,
-                        'app_source': 'VC_OS'
+                        'app_source': 'VC_OS',
+                        'item_type': req.item_type or 'task'
                     }
                 }
             }
             
-            if is_all_day:
-                event_body['start'] = {'date': req.due_date}
-                event_body['end'] = {'date': req.due_date} # Google Calendar exclusive end? Check. solitamente end date è esclusiva (+1 day)
-                # Helper: parse date, add 1 day
-                try:
-                    d = datetime.strptime(req.due_date, "%Y-%m-%d")
-                    from datetime import timedelta
-                    d_end = d + timedelta(days=1)
-                    event_body['end'] = {'date': d_end.strftime("%Y-%m-%d")}
-                except:
-                    event_body['end'] = {'date': req.due_date}
+            if is_event:
+                # EVENTO: usa event_start_time e event_end_time, aggiungi partecipanti e Google Meet
+                start_time = req.event_start_time or req.due_date
+                end_time = req.event_end_time
+                
+                # Se non c'è end_time, default a +1 ora
+                if not end_time and start_time:
+                    try:
+                        d = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
+                        from datetime import timedelta
+                        d_end = d + timedelta(hours=1)
+                        end_time = d_end.isoformat()
+                    except:
+                        end_time = start_time
+                
+                event_body['start'] = {'dateTime': start_time, 'timeZone': 'Europe/Rome'}
+                event_body['end'] = {'dateTime': end_time, 'timeZone': 'Europe/Rome'}
+                
+                # Aggiungi partecipanti se presenti
+                if req.event_participants:
+                    event_body['attendees'] = [{'email': email} for email in req.event_participants]
+                    # Opzione per inviare notifiche ai partecipanti
+                    event_body['guestsCanModify'] = False
+                    event_body['guestsCanInviteOthers'] = True
+                
+                # Aggiungi Google Meet (conferencing)
+                event_body['conferenceData'] = {
+                    'createRequest': {
+                        'requestId': f"meet-{req.task_id}",
+                        'conferenceSolutionKey': {'type': 'hangoutsMeet'}
+                    }
+                }
             else:
-                 event_body['start'] = {'dateTime': req.due_date, 'timeZone': 'Europe/Rome'}
-                 # Default 1h duration
-                 try:
-                     d = datetime.fromisoformat(req.due_date.replace("Z", "+00:00"))
-                     from datetime import timedelta
-                     d_end = d + timedelta(hours=1)
-                     event_body['end'] = {'dateTime': d_end.isoformat(), 'timeZone': 'Europe/Rome'}
-                 except:
-                     event_body['end'] = event_body['start']
+                # TASK: promemoria tutto il giorno o con orario specifico
+                is_all_day = 'T' not in req.due_date
+                
+                if is_all_day:
+                    event_body['start'] = {'date': req.due_date}
+                    # Google Calendar end è esclusivo, quindi +1 giorno
+                    try:
+                        d = datetime.strptime(req.due_date, "%Y-%m-%d")
+                        from datetime import timedelta
+                        d_end = d + timedelta(days=1)
+                        event_body['end'] = {'date': d_end.strftime("%Y-%m-%d")}
+                    except:
+                        event_body['end'] = {'date': req.due_date}
+                else:
+                    event_body['start'] = {'dateTime': req.due_date, 'timeZone': 'Europe/Rome'}
+                    # Default 1h duration per task
+                    try:
+                        d = datetime.fromisoformat(req.due_date.replace("Z", "+00:00"))
+                        from datetime import timedelta
+                        d_end = d + timedelta(hours=1)
+                        event_body['end'] = {'dateTime': d_end.isoformat(), 'timeZone': 'Europe/Rome'}
+                    except:
+                        event_body['end'] = event_body['start']
 
+            # Update se esiste già
             if req.action == "update" and req.google_event_id:
                 try:
+                    # Per eventi con conferencing, usa patch con conferenceDataVersion
                     updated = service.events().patch(
                         calendarId=calendar_id,
                         eventId=req.google_event_id,
-                        body=event_body
+                        body=event_body,
+                        conferenceDataVersion=1 if is_event else 0,
+                        sendUpdates='all' if is_event and req.event_participants else 'none'
                     ).execute()
                     return {"google_event_id": updated['id']}
                 except Exception as e:
@@ -1400,7 +1440,9 @@ async def internal_sync_task(req: SyncTaskRequest):
             # Create
             created = service.events().insert(
                 calendarId=calendar_id,
-                body=event_body
+                body=event_body,
+                conferenceDataVersion=1 if is_event else 0,
+                sendUpdates='all' if is_event and req.event_participants else 'none'
             ).execute()
             return {"google_event_id": created['id']}
             

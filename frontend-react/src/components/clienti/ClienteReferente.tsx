@@ -7,13 +7,14 @@ import { toast } from 'react-hot-toast';
 
 interface ClienteReferenteProps {
   referente: Referente;
-  documents: { preventivi: any[], contratti: any[] };
+  documents: { preventivi: any[], contratti: any[], contratti_suggeriti?: any[] };
   onChange: (field: keyof Referente, value: string) => void;
   clienteId?: string;
   showDocuments?: boolean;
+  onDocumentLinked?: () => void; // Callback per ricaricare i dati dopo il collegamento
 }
 
-const ClienteReferente: React.FC<ClienteReferenteProps> = ({ referente, documents, onChange, clienteId, showDocuments = true }) => {
+const ClienteReferente: React.FC<ClienteReferenteProps> = ({ referente, documents, onChange, clienteId, showDocuments = true, onDocumentLinked }) => {
   const [isDbModalOpen, setIsDbModalOpen] = useState(false);
   const [analyzingFile, setAnalyzingFile] = useState(false);
   
@@ -61,6 +62,8 @@ const ClienteReferente: React.FC<ClienteReferenteProps> = ({ referente, document
               // Collega il contratto al cliente nel database
               await clientiApi.linkContrattoToCliente(doc.id, clienteId);
               toast.success(`Contratto #${doc.numero} collegato al cliente`);
+              // Ricarica i dati per aggiornare la lista
+              if (onDocumentLinked) onDocumentLinked();
           } else if (doc.type === 'preventivo') {
               // Per i preventivi, solo riferimento testuale per ora
               onChange('file_preventivo', `Preventivo #${doc.numero} (DB Link)`);
@@ -187,20 +190,21 @@ const ClienteReferente: React.FC<ClienteReferenteProps> = ({ referente, document
       <Modal
         open={isDbModalOpen}
         onClose={() => setIsDbModalOpen(false)}
-        title="Seleziona Documento dal Database"
+        title="Collega Documento dal Database"
         secondaryActions={[{content: 'Chiudi', onAction: () => setIsDbModalOpen(false)}]}
       >
         <Modal.Section>
-            {(documents.preventivi.length > 0 || documents.contratti.length > 0) ? (
+            {/* Mostra i contratti suggeriti (non collegati) per il collegamento */}
+            {(documents.preventivi.length > 0 || (documents.contratti_suggeriti && documents.contratti_suggeriti.length > 0)) ? (
                 <BlockStack gap="400">
                     {documents.preventivi.length > 0 && (
                         <Box>
-                            <Text as="h6" variant="headingXs">Preventivi Trovati</Text>
+                            <Text as="h6" variant="headingXs">Preventivi Disponibili</Text>
                             <List>
                                 {documents.preventivi.map(p => (
                                     <List.Item key={p.id}>
                                         <InlineStack gap="200" blockAlign="center">
-                                            <span style={{flex: 1}}>Preventivo #{p.numero} - €{p.totale}</span>
+                                            <span style={{flex: 1}}>Preventivo #{p.numero} - €{p.totale?.toLocaleString('it-IT')}</span>
                                             <Button size="slim" onClick={() => handleLinkDocument(p)}>Collega</Button>
                                         </InlineStack>
                                     </List.Item>
@@ -208,14 +212,14 @@ const ClienteReferente: React.FC<ClienteReferenteProps> = ({ referente, document
                             </List>
                         </Box>
                     )}
-                    {documents.contratti.length > 0 && (
+                    {documents.contratti_suggeriti && documents.contratti_suggeriti.length > 0 && (
                         <Box>
-                            <Text as="h6" variant="headingXs">Contratti Trovati</Text>
+                            <Text as="h6" variant="headingXs">Contratti Disponibili (Match per Nome/Email)</Text>
                             <List>
-                                {documents.contratti.map(c => (
+                                {documents.contratti_suggeriti.map(c => (
                                     <List.Item key={c.id}>
                                         <InlineStack gap="200" blockAlign="center">
-                                            <span style={{flex: 1}}>Contratto #{c.numero}</span>
+                                            <span style={{flex: 1}}>Contratto #{c.numero} - €{c.totale?.toLocaleString('it-IT')}</span>
                                             <Button size="slim" onClick={() => handleLinkDocument(c)}>Collega</Button>
                                         </InlineStack>
                                     </List.Item>
@@ -228,7 +232,10 @@ const ClienteReferente: React.FC<ClienteReferenteProps> = ({ referente, document
                 <Box padding="400" background="bg-surface-secondary" borderRadius="200">
                     <BlockStack gap="200" align="center">
                         <Icon source={NoteIcon} tone="subdued" />
-                        <Text as="p" tone="subdued" alignment="center">Nessun documento trovato automaticamente per questo cliente.</Text>
+                        <Text as="p" tone="subdued" alignment="center">
+                            Nessun documento disponibile per il collegamento.
+                            {documents.contratti.length > 0 && " I contratti esistenti sono già collegati a questo cliente."}
+                        </Text>
                     </BlockStack>
                 </Box>
             )}

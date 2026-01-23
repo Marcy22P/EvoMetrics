@@ -11,21 +11,34 @@ if not INTERNAL_URL:
 
 async def sync_task_to_calendar(user_id: str, task_data: dict, action: str = "create", google_event_id: Optional[str] = None):
     """
-    Chiama user-service per sincronizzare il task su Google Calendar.
+    Chiama user-service per sincronizzare il task/evento su Google Calendar.
+    
+    - Se item_type='event': crea un evento con orario specifico e partecipanti
+    - Se item_type='task': crea un task nel calendario (promemoria all-day)
     """
     if not user_id:
         return None
-        
-    # Se due_date è assente e action è create/update, non possiamo mettere in calendario
-    if action != "delete" and not task_data.get("due_date"):
-        return None
+    
+    item_type = task_data.get("item_type", "task")
+    
+    # Per eventi, servono date e orari specifici
+    if item_type == "event":
+        if action != "delete" and not (task_data.get("event_start_time") or task_data.get("due_date")):
+            return None
+    else:
+        # Per task, serve almeno due_date
+        if action != "delete" and not task_data.get("due_date"):
+            return None
 
-    # Formatta data
-    due_date = task_data.get("due_date")
-    if due_date and hasattr(due_date, "isoformat"):
-        due_date = due_date.isoformat()
-        # Se è datetime con ora 00:00:00, potrebbe essere inteso come data pura?
-        # Lasciamo gestire al user-service la logica T
+    # Formatta le date
+    def format_date(dt):
+        if dt and hasattr(dt, "isoformat"):
+            return dt.isoformat()
+        return dt
+    
+    due_date = format_date(task_data.get("due_date"))
+    event_start_time = format_date(task_data.get("event_start_time"))
+    event_end_time = format_date(task_data.get("event_end_time"))
     
     payload = {
         "user_id": int(user_id),
@@ -34,16 +47,15 @@ async def sync_task_to_calendar(user_id: str, task_data: dict, action: str = "cr
         "description": task_data.get("description"),
         "due_date": due_date,
         "google_event_id": google_event_id,
-        "action": action
+        "action": action,
+        # Nuovi campi per eventi
+        "item_type": item_type,
+        "event_start_time": event_start_time,
+        "event_end_time": event_end_time,
+        "event_participants": task_data.get("event_participants", [])
     }
 
     try:
-        # Usa URL interno user-service se disponibile, altrimenti gateway
-        # Endpoint: /api/internal/calendar/sync-task
-        # Se siamo dietro gateway, user-service è montato su / ? No, le rotte di user-service sono registrate sul router principale.
-        # User Service ha rotte /api/users, etc.
-        # Quindi l'endpoint è /api/internal/calendar/sync-task
-        
         url = f"{INTERNAL_URL}/api/internal/calendar/sync-task"
         
         async with httpx.AsyncClient() as client:

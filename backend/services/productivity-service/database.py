@@ -97,6 +97,42 @@ async def init_database():
                     print("🔄 Adding entity_type column to tasks table...")
                     await database.execute("ALTER TABLE tasks ADD COLUMN entity_type TEXT DEFAULT 'client'")
 
+                # Check actual_minutes column (tempo effettivo impiegato)
+                check_actual_minutes = await database.fetch_one("SELECT column_name FROM information_schema.columns WHERE table_name='tasks' AND column_name='actual_minutes'")
+                if not check_actual_minutes:
+                    print("🔄 Adding actual_minutes column to tasks table...")
+                    await database.execute("ALTER TABLE tasks ADD COLUMN actual_minutes INTEGER")
+
+                # Check efficiency_score column (punteggio efficienza)
+                check_efficiency_score = await database.fetch_one("SELECT column_name FROM information_schema.columns WHERE table_name='tasks' AND column_name='efficiency_score'")
+                if not check_efficiency_score:
+                    print("🔄 Adding efficiency_score column to tasks table...")
+                    await database.execute("ALTER TABLE tasks ADD COLUMN efficiency_score INTEGER DEFAULT 100")
+
+                # Check item_type column (task o event)
+                check_item_type = await database.fetch_one("SELECT column_name FROM information_schema.columns WHERE table_name='tasks' AND column_name='item_type'")
+                if not check_item_type:
+                    print("🔄 Adding item_type column to tasks table...")
+                    await database.execute("ALTER TABLE tasks ADD COLUMN item_type TEXT DEFAULT 'task'")
+
+                # Check event_start_time column
+                check_event_start = await database.fetch_one("SELECT column_name FROM information_schema.columns WHERE table_name='tasks' AND column_name='event_start_time'")
+                if not check_event_start:
+                    print("🔄 Adding event_start_time column to tasks table...")
+                    await database.execute("ALTER TABLE tasks ADD COLUMN event_start_time TIMESTAMP")
+
+                # Check event_end_time column
+                check_event_end = await database.fetch_one("SELECT column_name FROM information_schema.columns WHERE table_name='tasks' AND column_name='event_end_time'")
+                if not check_event_end:
+                    print("🔄 Adding event_end_time column to tasks table...")
+                    await database.execute("ALTER TABLE tasks ADD COLUMN event_end_time TIMESTAMP")
+
+                # Check event_participants column
+                check_event_participants = await database.fetch_one("SELECT column_name FROM information_schema.columns WHERE table_name='tasks' AND column_name='event_participants'")
+                if not check_event_participants:
+                    print("🔄 Adding event_participants column to tasks table...")
+                    await database.execute("ALTER TABLE tasks ADD COLUMN event_participants JSONB DEFAULT '[]'")
+
                 print("✅ Schema tasks aggiornato.")
             
         except Exception as e:
@@ -115,12 +151,19 @@ async def init_database():
             entity_type TEXT DEFAULT 'client', -- 'client' o 'lead' per distinguere il tipo di entità
             priority TEXT DEFAULT 'medium',
             estimated_minutes INTEGER DEFAULT 0,
+            actual_minutes INTEGER, -- Tempo effettivo impiegato (obbligatorio al completamento)
+            efficiency_score INTEGER DEFAULT 100, -- Punteggio efficienza (100=completato, 0=in ritardo >8gg)
             due_date TIMESTAMP,
             icon TEXT, -- VC_OS: Icona custom (deprecato in favore di category, ma mantenuto per compatibilità)
             category_id TEXT, -- VC_OS: Categoria esplicita
+            item_type TEXT DEFAULT 'task', -- 'task' o 'event' per distinguere dal calendario
+            event_start_time TIMESTAMP, -- Ora inizio evento (solo per item_type='event')
+            event_end_time TIMESTAMP, -- Ora fine evento (solo per item_type='event')
+            event_participants JSONB DEFAULT '[]', -- Email partecipanti (solo per item_type='event')
             created_at TIMESTAMP DEFAULT NOW(),
             updated_at TIMESTAMP DEFAULT NOW(),
             completed_at TIMESTAMP,
+            google_event_id TEXT, -- ID dell'evento su Google Calendar
             dependencies JSONB DEFAULT '[]', -- Array di Task ID che bloccano questo
             metadata JSONB DEFAULT '{}',
             attachments JSONB DEFAULT '[]' -- Array di {name, url, drive_id, type}

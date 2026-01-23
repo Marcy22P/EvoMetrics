@@ -20,10 +20,13 @@ export interface Referente {
 
 export interface Canale {
   id: string;
+  tipo: 'accesso' | 'indirizzo' | 'altro'; // Tipo di credenziale
+  nome: string; // Nome descrittivo (es. "Amazon.com", "Sede Milano")
   url_sito?: string;
   nome_utente?: string;
-  password?: string; // Nota: sicurezza
-  via_negozio?: string;
+  password?: string;
+  indirizzo?: string; // Per tipo "indirizzo"
+  note?: string;
 }
 
 export interface BrandManual {
@@ -45,8 +48,11 @@ export interface Situazione {
 export interface Registrazione {
   id: string;
   data?: string;
-  file_audio?: string;
   titolo?: string;
+  url?: string; // Link al file su Drive
+  drive_file_id?: string;
+  mime_type?: string;
+  durata?: string;
 }
 
 export interface Task {
@@ -127,6 +133,22 @@ export interface DriveFile {
   iconLink: string;
   createdTime?: string;
   size?: string;
+}
+
+export interface ClienteAssignee {
+  id: string;
+  user_id: string;
+  username: string;
+  nome?: string;
+  cognome?: string;
+  role: string;
+  assigned_at: string;
+  assigned_by?: string;
+}
+
+export interface ClienteAssigneesResponse {
+  cliente_id: string;
+  assignees: ClienteAssignee[];
 }
 
 class ClientiApiService {
@@ -652,6 +674,70 @@ class ClientiApiService {
     });
     if (!response.ok) {
       throw new Error(`Errore condivisione procedura: ${response.status}`);
+    }
+    return await response.json();
+  }
+
+  // --- Client Assignment Management ---
+
+  async getClienteAssignees(clienteId: string): Promise<ClienteAssigneesResponse> {
+    const headers = await this.getAuthHeaders();
+    const response = await fetch(`${CLIENTI_SERVICE_URL}/api/clienti/${clienteId}/assignees`, {
+      method: 'GET',
+      headers,
+    });
+    if (!response.ok) {
+      throw new Error(`Errore caricamento assegnatari: ${response.status}`);
+    }
+    return await response.json();
+  }
+
+  async setClienteAssignees(clienteId: string, userIds: string[]): Promise<{
+    status: string;
+    assignees: string[];
+    cliente_id: string;
+  }> {
+    const headers = await this.getAuthHeaders();
+    const response = await fetch(`${CLIENTI_SERVICE_URL}/api/clienti/${clienteId}/assignees`, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify(userIds),
+    });
+    if (!response.ok) {
+      throw new Error(`Errore aggiornamento assegnatari: ${response.status}`);
+    }
+    return await response.json();
+  }
+
+  async addClienteAssignees(clienteId: string, userIds: string[]): Promise<{
+    status: string;
+    added: string[];
+    cliente_id: string;
+  }> {
+    const headers = await this.getAuthHeaders();
+    const response = await fetch(`${CLIENTI_SERVICE_URL}/api/clienti/${clienteId}/assignees`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(userIds),
+    });
+    if (!response.ok) {
+      throw new Error(`Errore assegnazione: ${response.status}`);
+    }
+    return await response.json();
+  }
+
+  async removeClienteAssignee(clienteId: string, userId: string): Promise<{
+    status: string;
+    removed: string;
+    cliente_id: string;
+  }> {
+    const headers = await this.getAuthHeaders();
+    const response = await fetch(`${CLIENTI_SERVICE_URL}/api/clienti/${clienteId}/assignees/${userId}`, {
+      method: 'DELETE',
+      headers,
+    });
+    if (!response.ok) {
+      throw new Error(`Errore rimozione assegnatario: ${response.status}`);
     }
     return await response.json();
   }
