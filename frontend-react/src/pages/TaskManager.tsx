@@ -111,7 +111,9 @@ const TaskManager: React.FC = () => {
   // Date Picker Helpers
   const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
   const [isWorkflowDatePickerOpen, setIsWorkflowDatePickerOpen] = useState(false);
+  const [isEditDueDatePickerOpen, setIsEditDueDatePickerOpen] = useState(false);
   const [datePickerMonth, setDatePickerMonth] = useState({ month: new Date().getMonth(), year: new Date().getFullYear() });
+  const [editDueDateMonth, setEditDueDateMonth] = useState({ month: new Date().getMonth(), year: new Date().getFullYear() });
 
   // Status Manager Form
   const [newStatusId, setNewStatusId] = useState('');
@@ -262,10 +264,17 @@ const TaskManager: React.FC = () => {
               }
           }
           
+          // Per eventi: auto-assegna l'utente corrente se non specificato
+          // Questo è necessario per sincronizzare l'evento sul calendario
+          let effectiveAssignee = newTaskAssignee || undefined;
+          if (newTaskItemType === 'event' && !effectiveAssignee && user?.id) {
+              effectiveAssignee = String(user.id);
+          }
+          
           await productivityApi.createTask({
               title: newTaskTitle,
               description: newTaskDesc,
-              assignee_id: newTaskAssignee || undefined,
+              assignee_id: effectiveAssignee,
               project_id: projectId || undefined,
               entity_type: projectId ? newTaskEntityType : undefined,
               priority: newTaskPriority,
@@ -1113,14 +1122,41 @@ const TaskManager: React.FC = () => {
                                         />
                                     </Box>
                                     <Box minWidth="200px">
-            <TextField
-                                            label="Scadenza"
-                                            value={selectedTask.due_date ? new Date(selectedTask.due_date).toLocaleDateString() : ''}
-              autoComplete="off"
-                                            disabled={!isAdmin} // Solo admin cambia scadenza
-                                            readOnly
-                                        />
-                                        {/* TODO: Aggiungere date picker inline per edit scadenza se admin */}
+                                        <Popover
+                                            active={isEditDueDatePickerOpen && isAdmin}
+                                            activator={
+                                                <TextField
+                                                    label="Scadenza"
+                                                    value={selectedTask.due_date ? new Date(selectedTask.due_date).toLocaleDateString() : 'Nessuna'}
+                                                    onFocus={() => isAdmin && setIsEditDueDatePickerOpen(true)}
+                                                    autoComplete="off"
+                                                    readOnly
+                                                    prefix={<CalendarIcon />}
+                                                    helpText={isAdmin ? "Clicca per modificare" : undefined}
+                                                />
+                                            }
+                                            onClose={() => setIsEditDueDatePickerOpen(false)}
+                                        >
+                                            <Box padding="400">
+                                                <DatePicker
+                                                    month={editDueDateMonth.month}
+                                                    year={editDueDateMonth.year}
+                                                    onChange={(r) => {
+                                                        // Converti a mezzogiorno UTC per evitare shift timezone
+                                                        const newDate = new Date(Date.UTC(
+                                                            r.start.getFullYear(),
+                                                            r.start.getMonth(),
+                                                            r.start.getDate(),
+                                                            12, 0, 0
+                                                        ));
+                                                        handleUpdateTask(selectedTask.id, { due_date: newDate.toISOString() });
+                                                        setIsEditDueDatePickerOpen(false);
+                                                    }}
+                                                    onMonthChange={(m, y) => setEditDueDateMonth({ month: m, year: y })}
+                                                    selected={selectedTask.due_date ? { start: new Date(selectedTask.due_date), end: new Date(selectedTask.due_date) } : undefined}
+                                                />
+                                            </Box>
+                                        </Popover>
                                     </Box>
                                 </InlineStack>
                             </BlockStack>
