@@ -97,7 +97,9 @@ class Lead(Base):
     stage = Column(String, default="optin")
     source = Column(String, default="manual")
     clickfunnels_data = Column(JSON, nullable=True)
-    notes = Column(Text, nullable=True)
+    notes = Column(Text, nullable=True)  # Legacy - campo singolo
+    response_status = Column(String, default="pending", nullable=True)  # Stato risposta: pending, no_show, show, followup, etc.
+    structured_notes = Column(JSON, nullable=True)  # Note strutturate come lista di oggetti
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 
@@ -290,6 +292,31 @@ def init_db():
                             db.execute(text("ALTER TABLE leads ADD COLUMN stage TEXT DEFAULT 'optin'"))
                         db.commit()
                         print("✅ Colonna stage aggiunta.")
+                    
+                    # Aggiungi response_status se mancante
+                    if 'response_status' not in columns:
+                        print("🔄 Aggiungo colonna response_status alla tabella leads...")
+                        try:
+                            db.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS response_status TEXT DEFAULT 'pending'"))
+                        except Exception:
+                            db.execute(text("ALTER TABLE leads ADD COLUMN response_status TEXT DEFAULT 'pending'"))
+                        db.commit()
+                        print("✅ Colonna response_status aggiunta.")
+                    
+                    # Aggiungi structured_notes se mancante (JSON per note strutturate)
+                    if 'structured_notes' not in columns:
+                        print("🔄 Aggiungo colonna structured_notes alla tabella leads...")
+                        try:
+                            db.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS structured_notes JSONB DEFAULT '[]'"))
+                        except Exception:
+                            try:
+                                db.execute(text("ALTER TABLE leads ADD COLUMN structured_notes JSONB DEFAULT '[]'"))
+                            except Exception:
+                                # Fallback per SQLite
+                                db.execute(text("ALTER TABLE leads ADD COLUMN structured_notes TEXT DEFAULT '[]'"))
+                        db.commit()
+                        print("✅ Colonna structured_notes aggiunta.")
+                        
             except Exception as e:
                 print(f"⚠️ Errore aggiunta colonne mancanti: {e}")
                 db.rollback()

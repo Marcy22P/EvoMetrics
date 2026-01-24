@@ -216,6 +216,42 @@ def get_db():
                             except Exception as e:
                                 print(f"⚠️ Errore aggiunta stage: {e}")
                                 db.rollback()
+                    
+                    # Aggiungi response_status se mancante
+                    if 'response_status' not in columns:
+                        try:
+                            db.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS response_status TEXT DEFAULT 'pending'"))
+                            db.commit()
+                            print("✅ Colonna response_status aggiunta (lazy init)")
+                        except Exception:
+                            try:
+                                db.execute(text("ALTER TABLE leads ADD COLUMN response_status TEXT DEFAULT 'pending'"))
+                                db.commit()
+                                print("✅ Colonna response_status aggiunta (lazy init)")
+                            except Exception as e:
+                                print(f"⚠️ Errore aggiunta response_status: {e}")
+                                db.rollback()
+                    
+                    # Aggiungi structured_notes se mancante (JSON per note strutturate)
+                    if 'structured_notes' not in columns:
+                        try:
+                            db.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS structured_notes JSONB DEFAULT '[]'"))
+                            db.commit()
+                            print("✅ Colonna structured_notes aggiunta (lazy init)")
+                        except Exception:
+                            try:
+                                db.execute(text("ALTER TABLE leads ADD COLUMN structured_notes JSONB DEFAULT '[]'"))
+                                db.commit()
+                                print("✅ Colonna structured_notes aggiunta (lazy init)")
+                            except Exception as fallback_e:
+                                # Fallback per SQLite che non ha JSONB
+                                try:
+                                    db.execute(text("ALTER TABLE leads ADD COLUMN structured_notes TEXT DEFAULT '[]'"))
+                                    db.commit()
+                                    print("✅ Colonna structured_notes aggiunta come TEXT (lazy init)")
+                                except Exception as e:
+                                    print(f"⚠️ Errore aggiunta structured_notes: {e}")
+                                    db.rollback()
                 
                 _db_initialized = True
                 print("✅ Database Sales inizializzato al primo accesso")
@@ -631,6 +667,8 @@ def create_lead(lead_in: LeadCreate, db: Session = Depends(get_db)):
         stage=stage,
         source="manual",
         notes=lead_in.notes,
+        response_status=lead_in.response_status or "pending",
+        structured_notes=lead_in.structured_notes or [],
         clickfunnels_data=lead_in.clickfunnels_data
     )
     
@@ -805,6 +843,140 @@ def delete_lead(lead_id: str, db: Session = Depends(get_db)):
     db.delete(lead)
     db.commit()
     return {"status": "deleted"}
+
+# --- NOTE STRUTTURATE ---
+@app.post("/api/leads/{lead_id}/notes")
+def add_lead_note(lead_id: str, note_content: dict, db: Session = Depends(get_db)):
+    """
+    Aggiunge una nota strutturata a un lead.
+    Body: { "content": "Testo della nota" }
+    """
+    lead = db.query(LeadModel).filter(LeadModel.id == lead_id).first()
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    
+    content = note_content.get("content", "").strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="Il contenuto della nota è obbligatorio")
+    
+    # Parse delle note esistenti
+    existing_notes = lead.structured_notes or []
+    if isinstance(existing_notes, str):
+        try:
+            existing_notes = json.loads(existing_notes)
+        except:
+            existing_notes = []
+    
+    # Crea nuova nota
+    new_note = {
+        "id": str(uuid.uuid4()),
+        "content": content,
+        "created_at": datetime.datetime.utcnow().isoformat(),
+        "updated_at": None
+    }
+    
+    existing_notes.append(new_note)
+    lead.structured_notes = existing_notes
+    lead.updated_at = datetime.datetime.utcnow()
+    
+    db.commit()
+    db.refresh(lead)
+    
+    return {"status": "success", "note": new_note, "total_notes": len(existing_notes)}
+
+@app.put("/api/leads/{lead_id}/notes/{note_id}")
+def update_lead_note(lead_id: str, note_id: str, note_content: dict, db: Session = Depends(get_db)):
+    """
+    Aggiorna una nota esistente.
+    Body: { "content": "Nuovo testo della nota" }
+    """
+    lead = db.query(LeadModel).filter(LeadModel.id == lead_id).first()
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    
+    content = note_content.get("content", "").strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="Il contenuto della nota è obbligatorio")
+    
+    existing_notes = lead.structured_notes or []
+    if isinstance(existing_notes, str):
+        try:
+            existing_notes = json.loads(existing_notes)
+        except:
+            existing_notes = []
+    
+    # Trova e aggiorna la nota
+    note_found = False
+    for note in existing_notes:
+        if note.get("id") == note_id:
+            note["content"] = content
+            note["updated_at"] = datetime.datetime.utcnow().isoformat()
+            note_found = True
+            break
+    
+    if not note_found:
+        raise HTTPException(status_code=404, detail="Nota non trovata")
+    
+    lead.structured_notes = existing_notes
+    lead.updated_at = datetime.datetime.utcnow()
+    
+    db.commit()
+    db.refresh(lead)
+    
+    return {"status": "success", "notes": existing_notes}
+
+@app.delete("/api/leads/{lead_id}/notes/{note_id}")
+def delete_lead_note(lead_id: str, note_id: str, db: Session = Depends(get_db)):
+    """
+    Elimina una nota specifica.
+    """
+    lead = db.query(LeadModel).filter(LeadModel.id == lead_id).first()
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    
+    existing_notes = lead.structured_notes or []
+    if isinstance(existing_notes, str):
+        try:
+            existing_notes = json.loads(existing_notes)
+        except:
+            existing_notes = []
+    
+    # Rimuovi la nota
+    original_count = len(existing_notes)
+    existing_notes = [n for n in existing_notes if n.get("id") != note_id]
+    
+    if len(existing_notes) == original_count:
+        raise HTTPException(status_code=404, detail="Nota non trovata")
+    
+    lead.structured_notes = existing_notes
+    lead.updated_at = datetime.datetime.utcnow()
+    
+    db.commit()
+    
+    return {"status": "deleted", "remaining_notes": len(existing_notes)}
+
+# --- RESPONSE STATUS OPTIONS ---
+@app.get("/api/leads/response-statuses")
+def get_response_status_options():
+    """
+    Restituisce le opzioni disponibili per lo stato di risposta del lead.
+    """
+    from models import RESPONSE_STATUS_OPTIONS
+    
+    status_labels = {
+        "pending": "In Attesa",
+        "no_show": "No-Show",
+        "show": "Show",
+        "followup": "Follow-up",
+        "qualified": "Qualificato",
+        "not_interested": "Non Interessato",
+        "callback": "Richiamata"
+    }
+    
+    return [
+        {"value": status, "label": status_labels.get(status, status.title())}
+        for status in RESPONSE_STATUS_OPTIONS
+    ]
 
 # Health check
 @app.get("/health")

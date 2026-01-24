@@ -27,9 +27,14 @@ import {
   ArrowLeftIcon,
   PersonIcon,
   EmailIcon,
-  PhoneIcon
+  PhoneIcon,
+  DeleteIcon,
+  EditIcon,
+  NoteIcon,
+  CheckIcon,
+  XSmallIcon
 } from '@shopify/polaris-icons';
-import { salesApi, type Lead, type PipelineStage, type LeadCreate } from '../services/salesApi';
+import { salesApi, type Lead, type PipelineStage, type LeadCreate, type LeadNote, type ResponseStatusOption } from '../services/salesApi';
 import { PipelineSettingsModal } from '../components/sales/PipelineSettingsModal';
 import { useAuth } from '../hooks/useAuth';
 import toast from 'react-hot-toast';
@@ -48,12 +53,20 @@ const SalesPipeline: React.FC = () => {
   
   // Modale Edit/Dettaglio
   const [showModal, setShowModal] = useState(false);
-  const [editNotes, setEditNotes] = useState('');
+  const [editNotes, setEditNotes] = useState(''); // Legacy
   const [editStage, setEditStage] = useState('');
   const [editFirstName, setEditFirstName] = useState('');
   const [editLastName, setEditLastName] = useState('');
   const [editPhone, setEditPhone] = useState('');
   const [editAzienda, setEditAzienda] = useState('');
+  const [editResponseStatus, setEditResponseStatus] = useState('');
+  
+  // Note strutturate
+  const [structuredNotes, setStructuredNotes] = useState<LeadNote[]>([]);
+  const [newNoteContent, setNewNoteContent] = useState('');
+  const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
+  const [editingNoteContent, setEditingNoteContent] = useState('');
+  const [responseStatuses, setResponseStatuses] = useState<ResponseStatusOption[]>([]);
 
   // Modale Creazione Lead
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -84,6 +97,15 @@ const SalesPipeline: React.FC = () => {
       toast.error("Errore caricamento stage");
     }
   }, []);
+  
+  const fetchResponseStatuses = useCallback(async () => {
+    try {
+      const data = await salesApi.getResponseStatuses();
+      setResponseStatuses(data);
+    } catch(e) {
+      console.error("Errore caricamento response statuses:", e);
+    }
+  }, []);
 
   const fetchLeads = useCallback(async () => {
     try {
@@ -100,7 +122,8 @@ const SalesPipeline: React.FC = () => {
 
   useEffect(() => {
     fetchStages().then(() => fetchLeads());
-  }, [fetchStages, fetchLeads]);
+    fetchResponseStatuses();
+  }, [fetchStages, fetchLeads, fetchResponseStatuses]);
 
   const handleMoveStage = async (lead: Lead, newStage: string) => {
     const originalStage = lead.stage;
@@ -123,6 +146,11 @@ const SalesPipeline: React.FC = () => {
     setEditLastName(lead.last_name || '');
     setEditPhone(lead.phone || '');
     setEditAzienda(lead.azienda || '');
+    setEditResponseStatus(lead.response_status || 'pending');
+    setStructuredNotes(lead.structured_notes || []);
+    setNewNoteContent('');
+    setEditingNoteId(null);
+    setEditingNoteContent('');
     setShowModal(true);
   };
 
@@ -135,7 +163,8 @@ const SalesPipeline: React.FC = () => {
         first_name: editFirstName,
         last_name: editLastName,
         phone: editPhone,
-        azienda: editAzienda
+        azienda: editAzienda,
+        response_status: editResponseStatus as any
       });
       toast.success('Lead aggiornato');
       setShowModal(false);
@@ -156,6 +185,54 @@ const SalesPipeline: React.FC = () => {
     } catch (e) {
       toast.error('Errore eliminazione');
     }
+  };
+
+  // --- GESTIONE NOTE STRUTTURATE ---
+  const handleAddNote = async () => {
+    if (!selectedLead || !newNoteContent.trim()) return;
+    try {
+      const result = await salesApi.addNote(selectedLead.id, newNoteContent.trim());
+      setStructuredNotes(prev => [...prev, result.note]);
+      setNewNoteContent('');
+      toast.success('Nota aggiunta');
+    } catch (e) {
+      toast.error('Errore aggiunta nota');
+    }
+  };
+
+  const handleUpdateNote = async (noteId: string) => {
+    if (!selectedLead || !editingNoteContent.trim()) return;
+    try {
+      const result = await salesApi.updateNote(selectedLead.id, noteId, editingNoteContent.trim());
+      setStructuredNotes(result.notes);
+      setEditingNoteId(null);
+      setEditingNoteContent('');
+      toast.success('Nota aggiornata');
+    } catch (e) {
+      toast.error('Errore aggiornamento nota');
+    }
+  };
+
+  const handleDeleteNote = async (noteId: string) => {
+    if (!selectedLead) return;
+    if (!confirm('Eliminare questa nota?')) return;
+    try {
+      await salesApi.deleteNote(selectedLead.id, noteId);
+      setStructuredNotes(prev => prev.filter(n => n.id !== noteId));
+      toast.success('Nota eliminata');
+    } catch (e) {
+      toast.error('Errore eliminazione nota');
+    }
+  };
+
+  const startEditNote = (note: LeadNote) => {
+    setEditingNoteId(note.id);
+    setEditingNoteContent(note.content);
+  };
+
+  const cancelEditNote = () => {
+    setEditingNoteId(null);
+    setEditingNoteContent('');
   };
 
   const handleCreateLead = async () => {
@@ -648,7 +725,100 @@ const SalesPipeline: React.FC = () => {
             
             <TextField label="Email" value={selectedLead?.email || ''} disabled autoComplete="off" helpText="L'email non può essere modificata" />
             <TextField label="Telefono" value={editPhone} onChange={setEditPhone} autoComplete="off" disabled={!canEdit} />
-            <TextField label="Note Interne" value={editNotes} onChange={setEditNotes} multiline={4} autoComplete="off" placeholder="Aggiungi note sul lead..." disabled={!canEdit} />
+            
+            {/* STATO RISPOSTA */}
+            <Select
+              label="Stato Risposta"
+              options={[
+                { label: 'Seleziona...', value: '' },
+                ...responseStatuses.map(s => ({ label: s.label, value: s.value }))
+              ]}
+              value={editResponseStatus}
+              onChange={setEditResponseStatus}
+              disabled={!canEdit}
+              helpText="Indica lo stato della risposta del lead"
+            />
+
+            {/* NOTE STRUTTURATE */}
+            <Card>
+              <BlockStack gap="400">
+                <InlineStack gap="200" align="space-between">
+                  <InlineStack gap="100" blockAlign="center">
+                    <div style={{ minWidth: '20px' }}><Icon source={NoteIcon} /></div>
+                    <Text as="h3" variant="headingSm">Note ({structuredNotes.length})</Text>
+                  </InlineStack>
+                </InlineStack>
+
+                {/* Lista note esistenti */}
+                {structuredNotes.length > 0 && (
+                  <BlockStack gap="200">
+                    {structuredNotes.map((note) => (
+                      <Box key={note.id} padding="300" background="bg-surface-secondary" borderRadius="200">
+                        {editingNoteId === note.id ? (
+                          <BlockStack gap="200">
+                            <TextField
+                              label=""
+                              labelHidden
+                              value={editingNoteContent}
+                              onChange={setEditingNoteContent}
+                              multiline={2}
+                              autoComplete="off"
+                            />
+                            <InlineStack gap="200">
+                              <Button size="slim" icon={CheckIcon} onClick={() => handleUpdateNote(note.id)}>Salva</Button>
+                              <Button size="slim" icon={XSmallIcon} onClick={cancelEditNote}>Annulla</Button>
+                            </InlineStack>
+                          </BlockStack>
+                        ) : (
+                          <InlineStack gap="200" align="space-between" blockAlign="start">
+                            <div style={{ flex: 1 }}>
+                              <Text as="p" variant="bodyMd">{note.content}</Text>
+                              <Text as="p" variant="bodySm" tone="subdued">
+                                {new Date(note.created_at).toLocaleDateString('it-IT', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                                {note.updated_at && ' (modificata)'}
+                              </Text>
+                            </div>
+                            {canEdit && (
+                              <InlineStack gap="100">
+                                <Button size="slim" icon={EditIcon} variant="tertiary" onClick={() => startEditNote(note)} />
+                                <Button size="slim" icon={DeleteIcon} variant="tertiary" tone="critical" onClick={() => handleDeleteNote(note.id)} />
+                              </InlineStack>
+                            )}
+                          </InlineStack>
+                        )}
+                      </Box>
+                    ))}
+                  </BlockStack>
+                )}
+
+                {/* Aggiungi nuova nota */}
+                {canEdit && (
+                  <BlockStack gap="200">
+                    <TextField
+                      label="Nuova nota"
+                      labelHidden
+                      value={newNoteContent}
+                      onChange={setNewNoteContent}
+                      multiline={2}
+                      autoComplete="off"
+                      placeholder="Scrivi una nota..."
+                    />
+                    <Button size="slim" icon={PlusIcon} onClick={handleAddNote} disabled={!newNoteContent.trim()}>
+                      Aggiungi Nota
+                    </Button>
+                  </BlockStack>
+                )}
+
+                {structuredNotes.length === 0 && !canEdit && (
+                  <Text as="p" tone="subdued">Nessuna nota</Text>
+                )}
+              </BlockStack>
+            </Card>
+
+            {/* Note legacy (nascosto se vuoto) */}
+            {editNotes && (
+              <TextField label="Note Legacy" value={editNotes} onChange={setEditNotes} multiline={2} autoComplete="off" disabled={!canEdit} helpText="Campo legacy - usa le note strutturate sopra" />
+            )}
             
             {selectedLead?.clickfunnels_data && Object.keys(selectedLead.clickfunnels_data).length > 0 && (
               <Box padding="300" background="bg-surface-secondary" borderRadius="200">

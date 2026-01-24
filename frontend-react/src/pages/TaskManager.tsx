@@ -23,8 +23,7 @@ import {
   DatePicker,
   Popover,
   Icon,
-  // Tag, // Removed unused import
-  // ChoiceList // Removed unused import
+  EmptyState
 } from '@shopify/polaris';
 import { 
     PlusIcon, 
@@ -65,7 +64,8 @@ const TaskManager: React.FC = () => {
   const [workflowTemplates, setWorkflowTemplates] = useState<WorkflowTemplate[]>([]);
 
   // UI State
-  const [selectedTab, setSelectedTab] = useState(0); // 0: Miei Task, 1: Tutti, 2: Completati
+  // Tab: 0=Miei Task, 1=Tutti, 2=Completati, 3=Per Lead, 4=Per Cliente
+  const [selectedTab, setSelectedTab] = useState(0);
   const [queryValue, setQueryValue] = useState('');
   const [showOverdueOnly, setShowOverdueOnly] = useState(false);
   const [showHighPriorityOnly, setShowHighPriorityOnly] = useState(false);
@@ -339,6 +339,18 @@ const TaskManager: React.FC = () => {
       setNewTaskEventParticipants('');
   };
 
+  // Apre il modal di creazione task con lead/cliente pre-selezionato
+  const openCreateTaskForEntity = (entityType: 'client' | 'lead', entityId: string) => {
+      resetForm();
+      setNewTaskEntityType(entityType);
+      if (entityType === 'lead') {
+          setNewTaskLead(entityId);
+      } else {
+          setNewTaskClient(entityId);
+      }
+      setIsCreateModalOpen(true);
+  };
+
   // Gestione completamento task con tempo impiegato obbligatorio
   const handleRequestComplete = (task: Task) => {
       setTaskToComplete(task);
@@ -536,11 +548,25 @@ const TaskManager: React.FC = () => {
       return tasks.filter(t => {
           // Tab Logic
           const isCompleted = t.status === 'done';
+          
+          // Tab 0-2: Viste classiche (non completati / completati)
           if (selectedTab === 2) {
               if (!isCompleted) return false;
-          } else {
+          } else if (selectedTab === 0 || selectedTab === 1) {
               if (isCompleted) return false;
               if (selectedTab === 0 && user?.id && String(t.assignee_id) !== String(user.id)) return false;
+          }
+          
+          // Tab 3: Solo Lead - filtra solo task associate a lead, non completate
+          if (selectedTab === 3) {
+              if (isCompleted) return false;
+              if (t.entity_type !== 'lead') return false;
+          }
+          
+          // Tab 4: Solo Cliente - filtra solo task associate a clienti, non completate
+          if (selectedTab === 4) {
+              if (isCompleted) return false;
+              if (t.entity_type === 'lead') return false; // esclude lead, include client e undefined
           }
 
           const entityName = t.entity_type === 'lead' 
@@ -575,7 +601,29 @@ const TaskManager: React.FC = () => {
           if (!b.due_date) return -1;
           return new Date(a.due_date).getTime() - new Date(b.due_date).getTime();
       });
-  }, [tasks, queryValue, showOverdueOnly, showHighPriorityOnly, clientMap]);
+  }, [tasks, queryValue, showOverdueOnly, showHighPriorityOnly, clientMap, leadMap, selectedTab, user?.id]);
+  
+  // Task raggruppate per Lead (per vista Tab 3)
+  const tasksByLead = useMemo(() => {
+      const grouped = new Map<string, Task[]>();
+      tasks.filter(t => t.entity_type === 'lead' && t.status !== 'done').forEach(t => {
+          const leadId = t.project_id || 'no-lead';
+          if (!grouped.has(leadId)) grouped.set(leadId, []);
+          grouped.get(leadId)!.push(t);
+      });
+      return grouped;
+  }, [tasks]);
+  
+  // Task raggruppate per Cliente (per vista Tab 4)
+  const tasksByClient = useMemo(() => {
+      const grouped = new Map<string, Task[]>();
+      tasks.filter(t => t.entity_type !== 'lead' && t.status !== 'done').forEach(t => {
+          const clientId = t.project_id || 'no-client';
+          if (!grouped.has(clientId)) grouped.set(clientId, []);
+          grouped.get(clientId)!.push(t);
+      });
+      return grouped;
+  }, [tasks]);
 
   // Render Helpers
   const getStatusBadge = (statusId: string) => {
@@ -588,9 +636,11 @@ const TaskManager: React.FC = () => {
       if (!dateStr) return <Text as="span" tone="subdued">-</Text>;
       const date = new Date(dateStr);
       const isOverdue = isPast(date) && !isToday(date) && status !== 'done';
-    return (
-          <InlineStack gap="100">
-              <CalendarIcon width={16} className={isOverdue ? 'Polaris-Icon--toneCritical' : ''} />
+      return (
+          <InlineStack gap="100" blockAlign="center" wrap={false}>
+              <div style={{ minWidth: '16px', display: 'flex', alignItems: 'center' }}>
+                  <Icon source={CalendarIcon} tone={isOverdue ? 'critical' : undefined} />
+              </div>
               <Text as="span" tone={isOverdue ? 'critical' : undefined}>
                   {format(date, 'dd MMM', { locale: it })}
               </Text>
@@ -672,22 +722,22 @@ const TaskManager: React.FC = () => {
           )}
               </InlineStack>
         </IndexTable.Cell>
-          <IndexTable.Cell>
+        <IndexTable.Cell>
               {task.status === 'done' && task.completed_at 
                   ? format(new Date(task.completed_at), 'dd MMM', { locale: it })
                   : getDueDateElement(task.due_date, task.status)
               }
-          </IndexTable.Cell>
+        </IndexTable.Cell>
           {selectedTab === 2 && (
-              <IndexTable.Cell>
+        <IndexTable.Cell>
                   {task.actual_minutes ? (
                       <Text as="span" tone="success">
                           {Math.floor(task.actual_minutes / 60)}h {task.actual_minutes % 60}m
-                      </Text>
-                  ) : (
+            </Text>
+          ) : (
                       <Text as="span" tone="subdued">-</Text>
-                  )}
-              </IndexTable.Cell>
+          )}
+        </IndexTable.Cell>
           )}
       </IndexTable.Row>
     );
@@ -726,6 +776,8 @@ const TaskManager: React.FC = () => {
                                     <Button pressed={selectedTab === 0} onClick={() => setSelectedTab(0)}>I Miei Task</Button>
                                     <Button pressed={selectedTab === 1} onClick={() => setSelectedTab(1)}>Tutti i Task</Button>
                                     <Button pressed={selectedTab === 2} onClick={() => setSelectedTab(2)}>Completati</Button>
+                                    <Button pressed={selectedTab === 3} onClick={() => setSelectedTab(3)}>Per Lead</Button>
+                                    <Button pressed={selectedTab === 4} onClick={() => setSelectedTab(4)}>Per Cliente</Button>
                                 </InlineStack>
                                 <InlineStack gap="200">
                                     <Button 
@@ -746,22 +798,24 @@ const TaskManager: React.FC = () => {
                                         onChange={setQueryValue} 
                                         placeholder="Cerca task o cliente..." 
                 autoComplete="off"
-              />
-                                </InlineStack>
+            />
+          </InlineStack>
           </InlineStack>
                         </BlockStack>
             </Box>
+            {/* Vista Tabella Standard (Tab 0, 1, 2) */}
+            {(selectedTab === 0 || selectedTab === 1 || selectedTab === 2) && (
             <IndexTable
                         resourceName={{ singular: 'task', plural: 'tasks' }}
               itemCount={filteredTasks.length}
                         selectedItemsCount={allResourcesSelected ? 'All' : selectedResources.length}
                         onSelectionChange={handleSelectionChange}
               headings={[
-                            { title: 'Task' },
-                { title: 'Stato' },
+                { title: 'Task' },
+                    { title: 'Stato' },
                             { title: 'Assegnato a' },
-                { title: selectedTab === 2 ? 'Completata' : 'Scadenza' },
-                ...(selectedTab === 2 ? [{ title: 'Tempo' }] : []),
+                    { title: selectedTab === 2 ? 'Completata' : 'Scadenza' },
+                    ...(selectedTab === 2 ? [{ title: 'Tempo' }] : []),
                         ]}
                         promotedBulkActions={[
                             { content: 'Elimina', onAction: handleBulkDelete },
@@ -775,6 +829,213 @@ const TaskManager: React.FC = () => {
             >
               {rowMarkup}
             </IndexTable>
+            )}
+
+            {/* Vista Per Lead (Tab 3) - Board Style */}
+            {selectedTab === 3 && (
+                <Box padding="400">
+                    <BlockStack gap="600">
+                        {/* Lead senza task - mostra card vuote con possibilità di aggiungere */}
+                        {leads.filter(l => !tasksByLead.has(l.id)).length > 0 && (
+                            <Card>
+                                <BlockStack gap="300">
+                                    <Text as="h3" variant="headingSm">Lead senza task assegnate</Text>
+                                    <InlineStack gap="200" wrap>
+                                        {leads.filter(l => !tasksByLead.has(l.id)).slice(0, 10).map(lead => (
+                                            <Button 
+                                                key={lead.id} 
+                                                size="slim" 
+                                                icon={PlusIcon}
+                                                onClick={() => openCreateTaskForEntity('lead', lead.id)}
+                                            >
+                                                {lead.azienda || `${lead.first_name || ''} ${lead.last_name || ''}`.trim() || lead.email}
+                                            </Button>
+                                        ))}
+                                        {leads.filter(l => !tasksByLead.has(l.id)).length > 10 && (
+                                            <Badge>{`+${leads.filter(l => !tasksByLead.has(l.id)).length - 10} altri`}</Badge>
+                                        )}
+                                    </InlineStack>
+                                </BlockStack>
+                            </Card>
+                        )}
+                        
+                        {/* Lead con task */}
+                        {tasksByLead.size === 0 ? (
+                            <EmptyState
+                                heading="Nessuna task associata a lead"
+                                image="https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png"
+                                action={leads.length > 0 ? {
+                                    content: 'Crea prima task per un Lead',
+                                    onAction: () => openCreateTaskForEntity('lead', leads[0].id)
+                                } : undefined}
+                            >
+                                <p>Seleziona un lead sopra o crea una task dalla Sales Pipeline</p>
+                            </EmptyState>
+                        ) : (
+                            Array.from(tasksByLead.entries()).map(([leadId, leadTasks]) => {
+                                const leadName = leadMap.get(leadId) || 'Lead sconosciuto';
+                                const lead = leads.find(l => l.id === leadId);
+                                return (
+                                    <Card key={leadId}>
+                                        <BlockStack gap="400">
+                                            <InlineStack gap="200" align="space-between" blockAlign="center">
+                                                <InlineStack gap="200" blockAlign="center">
+                                                    <Badge tone="attention">Lead</Badge>
+                                                    <Text as="h3" variant="headingMd">{leadName}</Text>
+                                                </InlineStack>
+                                                <InlineStack gap="200" blockAlign="center">
+                                                    <Badge>{`${leadTasks.length} task`}</Badge>
+                                                    <Button size="slim" icon={PlusIcon} onClick={() => openCreateTaskForEntity('lead', leadId)}>
+                                                        Aggiungi Task
+                                                    </Button>
+                                                </InlineStack>
+                                            </InlineStack>
+                                            {lead && (
+                                                <Text as="p" variant="bodySm" tone="subdued">
+                                                    {lead.email} {lead.phone && `• ${lead.phone}`}
+                                                </Text>
+                                            )}
+                                            <BlockStack gap="200">
+                                                {leadTasks.map(task => (
+                                                    <Box 
+                                                        key={task.id} 
+                                                        padding="300" 
+                                                        background="bg-surface-secondary" 
+                                                        borderRadius="200"
+                                                        borderWidth="025"
+                                                        borderColor="border"
+                                                    >
+                                                        <InlineStack gap="400" align="space-between" blockAlign="center">
+                                                            {/* Sinistra: Icona + Info */}
+                                                            <InlineStack gap="300" blockAlign="center" wrap={false}>
+                                                                <div style={{ minWidth: '24px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                                                    <Icon source={getTaskIcon(task.icon)} />
+                                                                </div>
+                                                                <Text as="span" variant="bodyMd" fontWeight="semibold">{task.title}</Text>
+                                                                {getStatusBadge(task.status)}
+                                                            </InlineStack>
+                                                            {/* Destra: Scadenza + Bottone */}
+                                                            <InlineStack gap="300" blockAlign="center" wrap={false}>
+                                                                {getDueDateElement(task.due_date, task.status)}
+                                                                <Button size="slim" onClick={() => { setSelectedTask(task); setIsDetailModalOpen(true); }}>
+                                                                    Apri
+                                                                </Button>
+                                                            </InlineStack>
+                                                        </InlineStack>
+                                                    </Box>
+                                                ))}
+                                            </BlockStack>
+                                        </BlockStack>
+                                    </Card>
+                                );
+                            })
+                        )}
+                    </BlockStack>
+                </Box>
+            )}
+
+            {/* Vista Per Cliente (Tab 4) - Board Style */}
+            {selectedTab === 4 && (
+                <Box padding="400">
+                    <BlockStack gap="600">
+                        {/* Clienti senza task - mostra card vuote con possibilità di aggiungere */}
+                        {clients.filter(c => !tasksByClient.has(c.id)).length > 0 && (
+                            <Card>
+                                <BlockStack gap="300">
+                                    <Text as="h3" variant="headingSm">Clienti senza task assegnate</Text>
+                                    <InlineStack gap="200" wrap>
+                                        {clients.filter(c => !tasksByClient.has(c.id)).slice(0, 10).map(client => (
+                                            <Button 
+                                                key={client.id} 
+                                                size="slim" 
+                                                icon={PlusIcon}
+                                                onClick={() => openCreateTaskForEntity('client', client.id)}
+                                            >
+                                                {client.nome_azienda || 'Cliente'}
+                                            </Button>
+                                        ))}
+                                        {clients.filter(c => !tasksByClient.has(c.id)).length > 10 && (
+                                            <Badge>{`+${clients.filter(c => !tasksByClient.has(c.id)).length - 10} altri`}</Badge>
+                                        )}
+                                    </InlineStack>
+                                </BlockStack>
+                            </Card>
+                        )}
+                        
+                        {/* Clienti con task */}
+                        {tasksByClient.size === 0 ? (
+                            <EmptyState
+                                heading="Nessuna task associata a clienti"
+                                image="https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png"
+                                action={clients.length > 0 ? {
+                                    content: 'Crea prima task per un Cliente',
+                                    onAction: () => openCreateTaskForEntity('client', clients[0].id)
+                                } : undefined}
+                            >
+                                <p>Seleziona un cliente sopra o usa il pulsante "Nuova Task"</p>
+                            </EmptyState>
+                        ) : (
+                            Array.from(tasksByClient.entries()).map(([clientId, clientTasks]) => {
+                                const clientName = clientMap.get(clientId) || 'Cliente sconosciuto';
+                                const client = clients.find(c => c.id === clientId);
+                                return (
+                                    <Card key={clientId}>
+                                        <BlockStack gap="400">
+                                            <InlineStack gap="200" align="space-between" blockAlign="center">
+                                                <InlineStack gap="200" blockAlign="center">
+                                                    <Badge tone="success">Cliente</Badge>
+                                                    <Text as="h3" variant="headingMd">{clientName}</Text>
+                                                </InlineStack>
+                                                <InlineStack gap="200" blockAlign="center">
+                                                    <Badge>{`${clientTasks.length} task`}</Badge>
+                                                    <Button size="slim" icon={PlusIcon} onClick={() => openCreateTaskForEntity('client', clientId)}>
+                                                        Aggiungi Task
+                                                    </Button>
+                                                </InlineStack>
+                                            </InlineStack>
+                                            {client && (
+                                                <Text as="p" variant="bodySm" tone="subdued">
+                                                    {client.contatti?.email || '-'} {client.contatti?.telefono && `• ${client.contatti.telefono}`}
+                                                </Text>
+                                            )}
+                                            <BlockStack gap="200">
+                                                {clientTasks.map(task => (
+                                                    <Box 
+                                                        key={task.id} 
+                                                        padding="300" 
+                                                        background="bg-surface-secondary" 
+                                                        borderRadius="200"
+                                                        borderWidth="025"
+                                                        borderColor="border"
+                                                    >
+                                                        <InlineStack gap="400" align="space-between" blockAlign="center">
+                                                            {/* Sinistra: Icona + Info */}
+                                                            <InlineStack gap="300" blockAlign="center" wrap={false}>
+                                                                <div style={{ minWidth: '24px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                                                    <Icon source={getTaskIcon(task.icon)} />
+                                                                </div>
+                                                                <Text as="span" variant="bodyMd" fontWeight="semibold">{task.title}</Text>
+                                                                {getStatusBadge(task.status)}
+                                                            </InlineStack>
+                                                            {/* Destra: Scadenza + Bottone */}
+                                                            <InlineStack gap="300" blockAlign="center" wrap={false}>
+                                                                {getDueDateElement(task.due_date, task.status)}
+                                                                <Button size="slim" onClick={() => { setSelectedTask(task); setIsDetailModalOpen(true); }}>
+                                                                    Apri
+                                                                </Button>
+                                                            </InlineStack>
+                                                        </InlineStack>
+                                                    </Box>
+                                                ))}
+                                            </BlockStack>
+                                        </BlockStack>
+                                    </Card>
+                                );
+                            })
+                        )}
+                    </BlockStack>
+                </Box>
+            )}
                 </Card>
             </Layout.Section>
         </Layout>
@@ -1125,11 +1386,11 @@ const TaskManager: React.FC = () => {
                                         <Popover
                                             active={isEditDueDatePickerOpen && isAdmin}
                                             activator={
-                                                <TextField
+            <TextField
                                                     label="Scadenza"
                                                     value={selectedTask.due_date ? new Date(selectedTask.due_date).toLocaleDateString() : 'Nessuna'}
                                                     onFocus={() => isAdmin && setIsEditDueDatePickerOpen(true)}
-                                                    autoComplete="off"
+              autoComplete="off"
                                                     readOnly
                                                     prefix={<CalendarIcon />}
                                                     helpText={isAdmin ? "Clicca per modificare" : undefined}
@@ -1337,8 +1598,8 @@ const TaskManager: React.FC = () => {
                         </Text>
                     )}
                 </BlockStack>
-            </Modal.Section>
-        </Modal>
+        </Modal.Section>
+      </Modal>
     </Page>
   );
 };

@@ -31,6 +31,22 @@ export interface PipelineStage {
   is_system: boolean;
 }
 
+// Nota strutturata per lead
+export interface LeadNote {
+  id: string;
+  content: string;
+  created_at: string;
+  updated_at?: string;
+}
+
+// Status risposta possibili
+export type ResponseStatus = 'pending' | 'no_show' | 'show' | 'followup' | 'qualified' | 'not_interested' | 'callback';
+
+export interface ResponseStatusOption {
+  value: ResponseStatus;
+  label: string;
+}
+
 export interface Lead {
   id: string;
   email: string;
@@ -41,7 +57,9 @@ export interface Lead {
   stage: string;
   source: string;
   clickfunnels_data?: { [key: string]: any };
-  notes?: string;
+  notes?: string;  // Legacy
+  response_status?: ResponseStatus;  // Stato risposta: pending, no_show, show, etc.
+  structured_notes?: LeadNote[];  // Note strutturate
   created_at: string;
   updated_at: string;
 }
@@ -54,6 +72,7 @@ export interface LeadCreate {
   azienda?: string;  // Nome azienda
   stage?: string;
   notes?: string;
+  response_status?: ResponseStatus;
   clickfunnels_data?: { [key: string]: any };
 }
 
@@ -64,6 +83,7 @@ export interface LeadUpdatePayload {
   last_name?: string;
   phone?: string;
   azienda?: string;  // Nome azienda
+  response_status?: ResponseStatus;
 }
 
 export const salesApi = {
@@ -123,6 +143,32 @@ export const salesApi = {
     return authenticatedFetch(`${SALES_SERVICE_URL}/api/pipeline/stages/reorder`, {
       method: 'POST',
       body: JSON.stringify(order),
+    });
+  },
+
+  // --- RESPONSE STATUS ---
+  getResponseStatuses: async (): Promise<ResponseStatusOption[]> => {
+    return authenticatedFetch(`${SALES_SERVICE_URL}/api/leads/response-statuses`);
+  },
+
+  // --- LEAD NOTES ---
+  addNote: async (leadId: string, content: string): Promise<{ status: string; note: LeadNote; total_notes: number }> => {
+    return authenticatedFetch(`${SALES_SERVICE_URL}/api/leads/${leadId}/notes`, {
+      method: 'POST',
+      body: JSON.stringify({ content }),
+    });
+  },
+
+  updateNote: async (leadId: string, noteId: string, content: string): Promise<{ status: string; notes: LeadNote[] }> => {
+    return authenticatedFetch(`${SALES_SERVICE_URL}/api/leads/${leadId}/notes/${noteId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ content }),
+    });
+  },
+
+  deleteNote: async (leadId: string, noteId: string): Promise<{ status: string; remaining_notes: number }> => {
+    return authenticatedFetch(`${SALES_SERVICE_URL}/api/leads/${leadId}/notes/${noteId}`, {
+      method: 'DELETE',
     });
   },
 };
