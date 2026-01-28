@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Modal,
   Text,
@@ -9,16 +9,20 @@ import {
   TextField,
   Select,
   Banner,
-  Spinner
+  Spinner,
+  Tabs,
+  Badge
 } from '@shopify/polaris';
 import {
   ArrowUpIcon,
   ArrowDownIcon,
   DeleteIcon,
   EditIcon,
-  PlusIcon
+  PlusIcon,
+  CheckIcon,
+  XSmallIcon
 } from '@shopify/polaris-icons';
-import { salesApi, type PipelineStage } from '../../services/salesApi';
+import { salesApi, type PipelineStage, type LeadTag } from '../../services/salesApi';
 import toast from 'react-hot-toast';
 
 interface PipelineSettingsModalProps {
@@ -28,6 +32,10 @@ interface PipelineSettingsModalProps {
 }
 
 export const PipelineSettingsModal: React.FC<PipelineSettingsModalProps> = ({ open, onClose, onUpdate }) => {
+  // Tab state
+  const [selectedTab, setSelectedTab] = useState(0);
+  
+  // Stages state
   const [stages, setStages] = useState<PipelineStage[]>([]);
   const [loading, setLoading] = useState(false);
   
@@ -37,10 +45,19 @@ export const PipelineSettingsModal: React.FC<PipelineSettingsModalProps> = ({ op
   const [newKey, setNewKey] = useState('');
   const [newColor, setNewColor] = useState('base');
 
-  // Edit State
+  // Edit State (Stages)
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editLabel, setEditLabel] = useState('');
   const [editColor, setEditColor] = useState('');
+
+  // Tags state
+  const [tags, setTags] = useState<LeadTag[]>([]);
+  const [loadingTags, setLoadingTags] = useState(false);
+  const [newTagLabel, setNewTagLabel] = useState('');
+  const [newTagColor, setNewTagColor] = useState('base');
+  const [editingTagId, setEditingTagId] = useState<number | null>(null);
+  const [editTagLabel, setEditTagLabel] = useState('');
+  const [editTagColor, setEditTagColor] = useState('base');
 
   const colors = [
     {label: 'Grigio (Base)', value: 'base'},
@@ -48,9 +65,15 @@ export const PipelineSettingsModal: React.FC<PipelineSettingsModalProps> = ({ op
     {label: 'Verde (Success)', value: 'success'},
     {label: 'Giallo (Warning)', value: 'warning'},
     {label: 'Rosso (Critical)', value: 'critical'},
+    {label: 'Arancione (Attention)', value: 'attention'},
   ];
 
-  const fetchStages = async () => {
+  const tabs = [
+    { id: 'stages', content: 'Stage Pipeline', accessibilityLabel: 'Stage Pipeline' },
+    { id: 'tags', content: 'Tag Lead', accessibilityLabel: 'Tag Lead' },
+  ];
+
+  const fetchStages = useCallback(async () => {
     setLoading(true);
     try {
       const data = await salesApi.getStages();
@@ -60,11 +83,26 @@ export const PipelineSettingsModal: React.FC<PipelineSettingsModalProps> = ({ op
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  const fetchTags = useCallback(async () => {
+    setLoadingTags(true);
+    try {
+      const data = await salesApi.getLeadTags();
+      setTags(data);
+    } catch (e) {
+      toast.error('Errore caricamento tag');
+    } finally {
+      setLoadingTags(false);
+    }
+  }, []);
 
   useEffect(() => {
-    if (open) fetchStages();
-  }, [open]);
+    if (open) {
+      fetchStages();
+      fetchTags();
+    }
+  }, [open, fetchStages, fetchTags]);
 
   const handleAdd = async () => {
     if (!newLabel || !newKey) {
@@ -147,109 +185,269 @@ export const PipelineSettingsModal: React.FC<PipelineSettingsModalProps> = ({ op
     }
   };
 
-  return (
-    <Modal open={open} onClose={onClose} title="Configura Pipeline Stages" size="large">
-      <Modal.Section>
-        {loading && <div style={{textAlign:'center'}}><Spinner size="small" /></div>}
-        <BlockStack gap="400">
-          <Banner tone="info">
-            Riordina gli stage o modifica colori e nomi. Tutti gli stage sono eliminabili.
-          </Banner>
-          
-          <div style={{ maxHeight: '400px', overflowY: 'auto' }}>
-            <BlockStack gap="200">
-              {stages.map((stage, i) => (
-                <Box key={stage.id} background="bg-surface-secondary" padding="300" borderRadius="200">
-                  <InlineStack align="space-between" blockAlign="center">
-                    <InlineStack gap="300" blockAlign="center">
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                        <Button 
-                          icon={ArrowUpIcon} 
-                          size="slim" 
-                          disabled={i === 0} 
-                          onClick={() => handleMove(i, 'up')}
-                          variant="plain"
-                        />
-                        <Button 
-                          icon={ArrowDownIcon} 
-                          size="slim" 
-                          disabled={i === stages.length - 1} 
-                          onClick={() => handleMove(i, 'down')}
-                          variant="plain"
-                        />
-                      </div>
-                      
-                      {editingId === stage.id ? (
-                        <InlineStack gap="200">
-                          <TextField 
-                            label="Nome" 
-                            labelHidden 
-                            value={editLabel} 
-                            onChange={setEditLabel} 
-                            autoComplete="off"
-                          />
-                          <Select
-                            label="Colore"
-                            labelHidden
-                            options={colors}
-                            value={editColor}
-                            onChange={setEditColor}
-                          />
-                          <Button variant="primary" onClick={handleSaveEdit}>Salva</Button>
-                          <Button onClick={() => setEditingId(null)}>Annulla</Button>
-                        </InlineStack>
-                      ) : (
-                        <BlockStack gap="050">
-                          <Text variant="bodyMd" fontWeight="bold" as="span">{stage.label}</Text>
-                          <Text variant="bodyXs" tone="subdued" as="span">Key: {stage.key}</Text>
-                        </BlockStack>
-                      )}
-                    </InlineStack>
-                    
-                    <InlineStack gap="200">
-                      {!editingId && (
-                        <>
-                          <Button icon={EditIcon} onClick={() => handleStartEdit(stage)} />
-                          <Button icon={DeleteIcon} tone="critical" onClick={() => handleDelete(stage.id)} />
-                        </>
-                      )}
-                    </InlineStack>
-                  </InlineStack>
-                </Box>
-              ))}
-            </BlockStack>
-          </div>
+  // --- TAG HANDLERS ---
+  const handleCreateTag = async () => {
+    if (!newTagLabel.trim()) {
+      toast.error('Inserisci un nome per il tag');
+      return;
+    }
+    try {
+      await salesApi.createLeadTag({
+        label: newTagLabel.trim(),
+        color: newTagColor
+      });
+      toast.success('Tag creato');
+      setNewTagLabel('');
+      setNewTagColor('base');
+      fetchTags();
+      onUpdate();
+    } catch (e) {
+      toast.error('Errore creazione tag');
+    }
+  };
 
-          {isAdding ? (
-            <Box background="bg-surface" padding="400" borderColor="border" borderWidth="025" borderRadius="200">
-              <BlockStack gap="300">
-                <Text variant="headingSm" as="h4">Nuovo Stage</Text>
-                <InlineStack gap="300">
-                  <TextField 
-                    label="Nome Stage" 
-                    value={newLabel} 
-                    onChange={(v) => { setNewLabel(v); if(!newKey) setNewKey(v.toLowerCase().replace(/\s+/g, '_')); }} 
-                    autoComplete="off" 
-                  />
-                  <TextField 
-                    label="Key (Slug)" 
-                    value={newKey} 
-                    onChange={setNewKey} 
-                    autoComplete="off" 
-                    helpText="Univoco, usato via API"
-                  />
-                  <Select label="Colore" options={colors} value={newColor} onChange={setNewColor} />
-                </InlineStack>
-                <InlineStack gap="200">
-                  <Button variant="primary" onClick={handleAdd}>Crea Stage</Button>
-                  <Button onClick={() => setIsAdding(false)}>Annulla</Button>
-                </InlineStack>
+  const handleStartEditTag = (tag: LeadTag) => {
+    setEditingTagId(tag.id);
+    setEditTagLabel(tag.label);
+    setEditTagColor(tag.color);
+  };
+
+  const handleSaveEditTag = async () => {
+    if (!editingTagId || !editTagLabel.trim()) return;
+    try {
+      await salesApi.updateLeadTag(editingTagId, {
+        label: editTagLabel.trim(),
+        color: editTagColor
+      });
+      toast.success('Tag aggiornato');
+      setEditingTagId(null);
+      setEditTagLabel('');
+      setEditTagColor('base');
+      fetchTags();
+      onUpdate();
+    } catch (e) {
+      toast.error('Errore aggiornamento tag');
+    }
+  };
+
+  const handleDeleteTag = async (tagId: number) => {
+    if (!confirm('Eliminare questo tag? Verrà rimosso da tutti i lead associati.')) return;
+    try {
+      await salesApi.deleteLeadTag(tagId);
+      toast.success('Tag eliminato');
+      fetchTags();
+      onUpdate();
+    } catch (e) {
+      toast.error('Errore eliminazione tag');
+    }
+  };
+
+  const cancelEditTag = () => {
+    setEditingTagId(null);
+    setEditTagLabel('');
+    setEditTagColor('base');
+  };
+
+  return (
+    <Modal open={open} onClose={onClose} title="Impostazioni Pipeline" size="large">
+      <Modal.Section>
+        <Tabs tabs={tabs} selected={selectedTab} onSelect={setSelectedTab}>
+          {/* Tab: Stage Pipeline */}
+          {selectedTab === 0 && (
+            <Box paddingBlockStart="400">
+              {loading && <div style={{textAlign:'center'}}><Spinner size="small" /></div>}
+              <BlockStack gap="400">
+                <Banner tone="info">
+                  Riordina gli stage o modifica colori e nomi. Tutti gli stage sono eliminabili.
+                </Banner>
+                
+                <div style={{ maxHeight: '350px', overflowY: 'auto' }}>
+                  <BlockStack gap="200">
+                    {stages.map((stage, i) => (
+                      <Box key={stage.id} background="bg-surface-secondary" padding="300" borderRadius="200">
+                        <InlineStack align="space-between" blockAlign="center">
+                          <InlineStack gap="300" blockAlign="center">
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                              <Button 
+                                icon={ArrowUpIcon} 
+                                size="slim" 
+                                disabled={i === 0} 
+                                onClick={() => handleMove(i, 'up')}
+                                variant="plain"
+                              />
+                              <Button 
+                                icon={ArrowDownIcon} 
+                                size="slim" 
+                                disabled={i === stages.length - 1} 
+                                onClick={() => handleMove(i, 'down')}
+                                variant="plain"
+                              />
+                            </div>
+                            
+                            {editingId === stage.id ? (
+                              <InlineStack gap="200">
+                                <TextField 
+                                  label="Nome" 
+                                  labelHidden 
+                                  value={editLabel} 
+                                  onChange={setEditLabel} 
+                                  autoComplete="off"
+                                />
+                                <Select
+                                  label="Colore"
+                                  labelHidden
+                                  options={colors}
+                                  value={editColor}
+                                  onChange={setEditColor}
+                                />
+                                <Button variant="primary" onClick={handleSaveEdit}>Salva</Button>
+                                <Button onClick={() => setEditingId(null)}>Annulla</Button>
+                              </InlineStack>
+                            ) : (
+                              <BlockStack gap="050">
+                                <Text variant="bodyMd" fontWeight="bold" as="span">{stage.label}</Text>
+                                <Text variant="bodyXs" tone="subdued" as="span">Key: {stage.key}</Text>
+                              </BlockStack>
+                            )}
+                          </InlineStack>
+                          
+                          <InlineStack gap="200">
+                            {!editingId && (
+                              <>
+                                <Button icon={EditIcon} onClick={() => handleStartEdit(stage)} />
+                                <Button icon={DeleteIcon} tone="critical" onClick={() => handleDelete(stage.id)} />
+                              </>
+                            )}
+                          </InlineStack>
+                        </InlineStack>
+                      </Box>
+                    ))}
+                  </BlockStack>
+                </div>
+
+                {isAdding ? (
+                  <Box background="bg-surface" padding="400" borderColor="border" borderWidth="025" borderRadius="200">
+                    <BlockStack gap="300">
+                      <Text variant="headingSm" as="h4">Nuovo Stage</Text>
+                      <InlineStack gap="300">
+                        <TextField 
+                          label="Nome Stage" 
+                          value={newLabel} 
+                          onChange={(v) => { setNewLabel(v); if(!newKey) setNewKey(v.toLowerCase().replace(/\s+/g, '_')); }} 
+                          autoComplete="off" 
+                        />
+                        <TextField 
+                          label="Key (Slug)" 
+                          value={newKey} 
+                          onChange={setNewKey} 
+                          autoComplete="off" 
+                          helpText="Univoco, usato via API"
+                        />
+                        <Select label="Colore" options={colors} value={newColor} onChange={setNewColor} />
+                      </InlineStack>
+                      <InlineStack gap="200">
+                        <Button variant="primary" onClick={handleAdd}>Crea Stage</Button>
+                        <Button onClick={() => setIsAdding(false)}>Annulla</Button>
+                      </InlineStack>
+                    </BlockStack>
+                  </Box>
+                ) : (
+                  <Button icon={PlusIcon} fullWidth onClick={() => setIsAdding(true)}>Aggiungi Stage</Button>
+                )}
               </BlockStack>
             </Box>
-          ) : (
-            <Button icon={PlusIcon} fullWidth onClick={() => setIsAdding(true)}>Aggiungi Stage</Button>
           )}
-        </BlockStack>
+
+          {/* Tab: Tag Lead */}
+          {selectedTab === 1 && (
+            <Box paddingBlockStart="400">
+              {loadingTags && <div style={{textAlign:'center'}}><Spinner size="small" /></div>}
+              <BlockStack gap="400">
+                <Banner tone="info">
+                  I tag permettono di categorizzare i lead. Puoi crearli, modificarli o eliminarli.
+                </Banner>
+
+                {/* Form per nuovo tag */}
+                <Box background="bg-surface" padding="400" borderColor="border" borderWidth="025" borderRadius="200">
+                  <BlockStack gap="300">
+                    <Text variant="headingSm" as="h4">Nuovo Tag</Text>
+                    <InlineStack gap="300" blockAlign="end">
+                      <div style={{ flex: 2 }}>
+                        <TextField 
+                          label="Nome Tag" 
+                          value={newTagLabel} 
+                          onChange={setNewTagLabel} 
+                          autoComplete="off"
+                          placeholder="Es: Fissato calendly"
+                        />
+                      </div>
+                      <div style={{ flex: 1 }}>
+                        <Select label="Colore" options={colors} value={newTagColor} onChange={setNewTagColor} />
+                      </div>
+                      <Button variant="primary" onClick={handleCreateTag} disabled={!newTagLabel.trim()}>
+                        Crea Tag
+                      </Button>
+                    </InlineStack>
+                  </BlockStack>
+                </Box>
+
+                {/* Lista tag esistenti */}
+                <BlockStack gap="200">
+                  <Text variant="headingSm" as="h4">Tag Esistenti ({tags.length})</Text>
+                  
+                  {tags.length === 0 ? (
+                    <Box padding="400" background="bg-surface-secondary" borderRadius="200">
+                      <Text as="p" tone="subdued" alignment="center">
+                        Nessun tag creato. Crea il primo tag usando il form sopra.
+                      </Text>
+                    </Box>
+                  ) : (
+                    <div style={{ maxHeight: '280px', overflowY: 'auto' }}>
+                      <BlockStack gap="200">
+                        {tags.map((tag) => (
+                          <Box key={tag.id} background="bg-surface-secondary" padding="300" borderRadius="200">
+                            {editingTagId === tag.id ? (
+                              <InlineStack gap="200" blockAlign="center">
+                                <div style={{ flex: 2 }}>
+                                  <TextField 
+                                    label="" 
+                                    labelHidden 
+                                    value={editTagLabel} 
+                                    onChange={setEditTagLabel} 
+                                    autoComplete="off"
+                                  />
+                                </div>
+                                <div style={{ flex: 1 }}>
+                                  <Select
+                                    label=""
+                                    labelHidden
+                                    options={colors}
+                                    value={editTagColor}
+                                    onChange={setEditTagColor}
+                                  />
+                                </div>
+                                <Button icon={CheckIcon} variant="primary" onClick={handleSaveEditTag}>Salva</Button>
+                                <Button icon={XSmallIcon} onClick={cancelEditTag}>Annulla</Button>
+                              </InlineStack>
+                            ) : (
+                              <InlineStack align="space-between" blockAlign="center">
+                                <Badge tone={tag.color as any}>{tag.label}</Badge>
+                                <InlineStack gap="100">
+                                  <Button icon={EditIcon} variant="tertiary" onClick={() => handleStartEditTag(tag)} />
+                                  <Button icon={DeleteIcon} variant="tertiary" tone="critical" onClick={() => handleDeleteTag(tag.id)} />
+                                </InlineStack>
+                              </InlineStack>
+                            )}
+                          </Box>
+                        ))}
+                      </BlockStack>
+                    </div>
+                  )}
+                </BlockStack>
+              </BlockStack>
+            </Box>
+          )}
+        </Tabs>
       </Modal.Section>
     </Modal>
   );

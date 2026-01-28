@@ -34,7 +34,7 @@ import {
   CheckIcon,
   XSmallIcon
 } from '@shopify/polaris-icons';
-import { salesApi, type Lead, type PipelineStage, type LeadCreate, type LeadNote, type ResponseStatusOption } from '../services/salesApi';
+import { salesApi, type Lead, type PipelineStage, type LeadCreate, type LeadNote, type LeadTag } from '../services/salesApi';
 import { PipelineSettingsModal } from '../components/sales/PipelineSettingsModal';
 import { useAuth } from '../hooks/useAuth';
 import toast from 'react-hot-toast';
@@ -59,14 +59,16 @@ const SalesPipeline: React.FC = () => {
   const [editLastName, setEditLastName] = useState('');
   const [editPhone, setEditPhone] = useState('');
   const [editAzienda, setEditAzienda] = useState('');
-  const [editResponseStatus, setEditResponseStatus] = useState('');
+  const [selectedLeadTagId, setSelectedLeadTagId] = useState<string>('');
   
   // Note strutturate
   const [structuredNotes, setStructuredNotes] = useState<LeadNote[]>([]);
   const [newNoteContent, setNewNoteContent] = useState('');
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
   const [editingNoteContent, setEditingNoteContent] = useState('');
-  const [responseStatuses, setResponseStatuses] = useState<ResponseStatusOption[]>([]);
+  
+  // Lead Tags (nuovo sistema)
+  const [leadTags, setLeadTags] = useState<LeadTag[]>([]);
 
   // Modale Creazione Lead
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -98,12 +100,12 @@ const SalesPipeline: React.FC = () => {
     }
   }, []);
   
-  const fetchResponseStatuses = useCallback(async () => {
+  const fetchLeadTags = useCallback(async () => {
     try {
-      const data = await salesApi.getResponseStatuses();
-      setResponseStatuses(data);
+      const data = await salesApi.getLeadTags();
+      setLeadTags(data);
     } catch(e) {
-      console.error("Errore caricamento response statuses:", e);
+      console.error("Errore caricamento lead tags:", e);
     }
   }, []);
 
@@ -122,8 +124,8 @@ const SalesPipeline: React.FC = () => {
 
   useEffect(() => {
     fetchStages().then(() => fetchLeads());
-    fetchResponseStatuses();
-  }, [fetchStages, fetchLeads, fetchResponseStatuses]);
+    fetchLeadTags();
+  }, [fetchStages, fetchLeads, fetchLeadTags]);
 
   const handleMoveStage = async (lead: Lead, newStage: string) => {
     const originalStage = lead.stage;
@@ -146,7 +148,7 @@ const SalesPipeline: React.FC = () => {
     setEditLastName(lead.last_name || '');
     setEditPhone(lead.phone || '');
     setEditAzienda(lead.azienda || '');
-    setEditResponseStatus(lead.response_status || 'pending');
+    setSelectedLeadTagId(lead.lead_tag_id ? String(lead.lead_tag_id) : '');
     setStructuredNotes(lead.structured_notes || []);
     setNewNoteContent('');
     setEditingNoteId(null);
@@ -164,7 +166,7 @@ const SalesPipeline: React.FC = () => {
         last_name: editLastName,
         phone: editPhone,
         azienda: editAzienda,
-        response_status: editResponseStatus as any
+        lead_tag_id: selectedLeadTagId ? parseInt(selectedLeadTagId) : null
       });
       toast.success('Lead aggiornato');
       setShowModal(false);
@@ -273,6 +275,7 @@ const SalesPipeline: React.FC = () => {
   const handleSettingsUpdate = () => {
     fetchStages();
     fetchLeads();
+    fetchLeadTags();
   };
 
   // Drag & Drop
@@ -372,14 +375,20 @@ const SalesPipeline: React.FC = () => {
       >
         <Card padding="300">
           <BlockStack gap="150">
-            {/* Riga 1: Titolo (Azienda) + Badge Fonte */}
+            {/* Riga 1: Titolo (Azienda) + Badge Tag */}
             <InlineStack align="space-between" blockAlign="start">
               <Text variant="headingSm" as="h4" truncate fontWeight={lead.azienda ? 'bold' : 'regular'}>
                 {getLeadTitle(lead)}
               </Text>
-              <Badge tone={lead.source === 'clickfunnels' ? 'info' : 'success'} size="small">
-                {lead.source === 'clickfunnels' ? 'CF' : 'M'}
-              </Badge>
+              {lead.lead_tag ? (
+                <Badge tone={lead.lead_tag.color as any} size="small">
+                  {lead.lead_tag.label}
+                </Badge>
+              ) : (
+                <Badge tone={lead.source === 'clickfunnels' ? 'info' : 'success'} size="small">
+                  {lead.source === 'clickfunnels' ? 'CF' : 'M'}
+                </Badge>
+              )}
             </InlineStack>
             
             {/* Riga 2: Nome e Cognome (se presente) */}
@@ -530,6 +539,15 @@ const SalesPipeline: React.FC = () => {
             {stage && <Badge tone={stage.color as any}>{stage.label}</Badge>}
           </IndexTable.Cell>
           <IndexTable.Cell>
+            {lead.lead_tag ? (
+              <Badge tone={lead.lead_tag.color as any} size="small">
+                {lead.lead_tag.label}
+              </Badge>
+            ) : (
+              <Text as="span" tone="subdued">-</Text>
+            )}
+          </IndexTable.Cell>
+          <IndexTable.Cell>
             <Badge tone={lead.source === 'clickfunnels' ? 'info' : 'success'} size="small">
               {lead.source === 'clickfunnels' ? 'ClickFunnel' : 'Manuale'}
             </Badge>
@@ -596,6 +614,7 @@ const SalesPipeline: React.FC = () => {
               { title: 'Email' },
               { title: 'Telefono' },
               { title: 'Stage' },
+              { title: 'Tag' },
               { title: 'Fonte' },
               { title: 'Data' }
             ]}
@@ -726,17 +745,17 @@ const SalesPipeline: React.FC = () => {
             <TextField label="Email" value={selectedLead?.email || ''} disabled autoComplete="off" helpText="L'email non può essere modificata" />
             <TextField label="Telefono" value={editPhone} onChange={setEditPhone} autoComplete="off" disabled={!canEdit} />
             
-            {/* STATO RISPOSTA */}
+            {/* TAG LEAD */}
             <Select
-              label="Stato Risposta"
+              label="Tag"
               options={[
-                { label: 'Seleziona...', value: '' },
-                ...responseStatuses.map(s => ({ label: s.label, value: s.value }))
+                { label: 'Nessun tag', value: '' },
+                ...leadTags.map(t => ({ label: t.label, value: String(t.id) }))
               ]}
-              value={editResponseStatus}
-              onChange={setEditResponseStatus}
+              value={selectedLeadTagId}
+              onChange={setSelectedLeadTagId}
               disabled={!canEdit}
-              helpText="Indica lo stato della risposta del lead"
+              helpText="Assegna un tag a questo lead"
             />
 
             {/* NOTE STRUTTURATE */}
@@ -881,7 +900,7 @@ const SalesPipeline: React.FC = () => {
         </Modal.Section>
       </Modal>
 
-      {/* Settings Modal */}
+      {/* Settings Modal (include anche la gestione Tag) */}
       <PipelineSettingsModal open={showSettings} onClose={() => setShowSettings(false)} onUpdate={handleSettingsUpdate} />
     </Page>
   );

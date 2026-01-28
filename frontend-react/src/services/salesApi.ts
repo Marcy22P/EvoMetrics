@@ -39,12 +39,33 @@ export interface LeadNote {
   updated_at?: string;
 }
 
-// Status risposta possibili
+// Status risposta possibili (deprecato - usa LeadTag)
 export type ResponseStatus = 'pending' | 'no_show' | 'show' | 'followup' | 'qualified' | 'not_interested' | 'callback';
 
 export interface ResponseStatusOption {
   value: ResponseStatus;
   label: string;
+}
+
+// Tag Lead customizzabili
+export interface LeadTag {
+  id: number;
+  label: string;
+  color: string;  // base, info, success, warning, critical, attention
+  index: number;
+  is_system: boolean;
+}
+
+export interface LeadTagCreate {
+  label: string;
+  color?: string;
+  index?: number;
+}
+
+export interface LeadTagUpdate {
+  label?: string;
+  color?: string;
+  index?: number;
 }
 
 export interface Lead {
@@ -58,7 +79,9 @@ export interface Lead {
   source: string;
   clickfunnels_data?: { [key: string]: any };
   notes?: string;  // Legacy
-  response_status?: ResponseStatus;  // Stato risposta: pending, no_show, show, etc.
+  response_status?: ResponseStatus;  // Deprecato - mantenuto per compatibilità
+  lead_tag_id?: number;  // Nuovo sistema di tag customizzabili
+  lead_tag?: LeadTag;  // Tag associato (popolato dal backend)
   structured_notes?: LeadNote[];  // Note strutturate
   created_at: string;
   updated_at: string;
@@ -72,7 +95,8 @@ export interface LeadCreate {
   azienda?: string;  // Nome azienda
   stage?: string;
   notes?: string;
-  response_status?: ResponseStatus;
+  response_status?: ResponseStatus;  // Deprecato
+  lead_tag_id?: number;  // Nuovo sistema tag
   clickfunnels_data?: { [key: string]: any };
 }
 
@@ -83,7 +107,8 @@ export interface LeadUpdatePayload {
   last_name?: string;
   phone?: string;
   azienda?: string;  // Nome azienda
-  response_status?: ResponseStatus;
+  response_status?: ResponseStatus;  // Deprecato
+  lead_tag_id?: number | null;  // Nuovo sistema tag (null per rimuovere)
 }
 
 export const salesApi = {
@@ -146,7 +171,7 @@ export const salesApi = {
     });
   },
 
-  // --- RESPONSE STATUS ---
+  // --- RESPONSE STATUS (DEPRECATO - usa lead-tags) ---
   getResponseStatuses: async (): Promise<ResponseStatusOption[]> => {
     return authenticatedFetch(`${SALES_SERVICE_URL}/api/leads/response-statuses`);
   },
@@ -169,6 +194,38 @@ export const salesApi = {
   deleteNote: async (leadId: string, noteId: string): Promise<{ status: string; remaining_notes: number }> => {
     return authenticatedFetch(`${SALES_SERVICE_URL}/api/leads/${leadId}/notes/${noteId}`, {
       method: 'DELETE',
+    });
+  },
+
+  // --- LEAD TAGS (nuovo sistema customizzabile) ---
+  getLeadTags: async (): Promise<LeadTag[]> => {
+    return authenticatedFetch(`${SALES_SERVICE_URL}/api/lead-tags`);
+  },
+
+  createLeadTag: async (data: LeadTagCreate): Promise<LeadTag> => {
+    return authenticatedFetch(`${SALES_SERVICE_URL}/api/lead-tags`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  updateLeadTag: async (tagId: number, data: LeadTagUpdate): Promise<LeadTag> => {
+    return authenticatedFetch(`${SALES_SERVICE_URL}/api/lead-tags/${tagId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  },
+
+  deleteLeadTag: async (tagId: number): Promise<{ status: string; tag_id: number }> => {
+    return authenticatedFetch(`${SALES_SERVICE_URL}/api/lead-tags/${tagId}`, {
+      method: 'DELETE',
+    });
+  },
+
+  reorderLeadTags: async (order: number[]): Promise<{ status: string }> => {
+    return authenticatedFetch(`${SALES_SERVICE_URL}/api/lead-tags/reorder`, {
+      method: 'POST',
+      body: JSON.stringify(order),
     });
   },
 };

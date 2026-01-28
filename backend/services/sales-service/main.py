@@ -1,8 +1,8 @@
 from fastapi import FastAPI, Depends, HTTPException, Request, Body, BackgroundTasks
 from sqlalchemy.orm import Session
 from sqlalchemy import text
-from database import SessionLocal, init_db, Lead as LeadModel, PipelineStage as PipelineStageModel, DATABASE_URL, IS_REAL_PRODUCTION
-from models import Lead, LeadCreate, LeadUpdate, PipelineStage, PipelineStageCreate, PipelineStageUpdate
+from database import SessionLocal, init_db, Lead as LeadModel, PipelineStage as PipelineStageModel, LeadTag as LeadTagModel, DATABASE_URL, IS_REAL_PRODUCTION
+from models import Lead, LeadCreate, LeadUpdate, PipelineStage, PipelineStageCreate, PipelineStageUpdate, LeadTag, LeadTagCreate, LeadTagUpdate
 import uuid
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List
@@ -252,6 +252,42 @@ def get_db():
                                 except Exception as e:
                                     print(f"⚠️ Errore aggiunta structured_notes: {e}")
                                     db.rollback()
+                    
+                    # Aggiungi lead_tag_id se mancante (nuovo sistema tag)
+                    if 'lead_tag_id' not in columns:
+                        try:
+                            db.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS lead_tag_id INTEGER"))
+                            db.commit()
+                            print("✅ Colonna lead_tag_id aggiunta (lazy init)")
+                        except Exception:
+                            try:
+                                db.execute(text("ALTER TABLE leads ADD COLUMN lead_tag_id INTEGER"))
+                                db.commit()
+                                print("✅ Colonna lead_tag_id aggiunta (lazy init)")
+                            except Exception as e:
+                                print(f"⚠️ Errore aggiunta lead_tag_id: {e}")
+                                db.rollback()
+                
+                # Seeding lead_tags se la tabella è vuota (refresh inspector per vedere tabelle appena create)
+                updated_tables = inspector.get_table_names()
+                if 'lead_tags' in updated_tables:
+                    tags_count = db.execute(text("SELECT COUNT(*) FROM lead_tags")).scalar()
+                    if tags_count == 0:
+                        print("🌱 Seeding default lead tags (lazy init)...")
+                        default_tags = [
+                            ("Fissato calendly", "success", 0),
+                            ("Non fissato", "warning", 1),
+                            ("Da richiamare", "info", 2),
+                            ("Non interessato", "critical", 3),
+                            ("Non ha budget", "attention", 4),
+                            ("Squalificato", "base", 5),
+                        ]
+                        for label, color, index in default_tags:
+                            db.execute(text(
+                                "INSERT INTO lead_tags (label, color, index, is_system) VALUES (:label, :color, :index, :is_system)"
+                            ), {"label": label, "color": color, "index": index, "is_system": False})
+                        db.commit()
+                        print("✅ Default lead tags seeded (lazy init)")
                 
                 _db_initialized = True
                 print("✅ Database Sales inizializzato al primo accesso")
@@ -629,7 +665,7 @@ def reorder_stages(order: List[int] = Body(...), db: Session = Depends(get_db)):
 
 # --- API CRUD LEADS ---
 
-@app.get("/api/leads", response_model=List[Lead])
+@app.get("/api/leads")
 def get_leads(stage: str = None, db: Session = Depends(get_db)):
     query = db.query(LeadModel)
     if stage:
@@ -643,7 +679,43 @@ def get_leads(stage: str = None, db: Session = Depends(get_db)):
     elif stage:
         print(f"📊 Recuperati {len(leads)} lead per stage '{stage}' (totale nel DB: {total_count})")
     
-    return leads
+    # Popola i tag per ogni lead
+    result = []
+    for lead in leads:
+        lead_dict = {
+            "id": lead.id,
+            "email": lead.email,
+            "first_name": lead.first_name,
+            "last_name": lead.last_name,
+            "phone": lead.phone,
+            "azienda": lead.azienda,
+            "stage": lead.stage,
+            "source": lead.source,
+            "clickfunnels_data": lead.clickfunnels_data,
+            "notes": lead.notes,
+            "response_status": lead.response_status,
+            "lead_tag_id": lead.lead_tag_id,
+            "structured_notes": lead.structured_notes or [],
+            "created_at": lead.created_at,
+            "updated_at": lead.updated_at,
+            "lead_tag": None
+        }
+        
+        # Recupera il tag se presente
+        if lead.lead_tag_id:
+            tag = db.query(LeadTagModel).filter(LeadTagModel.id == lead.lead_tag_id).first()
+            if tag:
+                lead_dict["lead_tag"] = {
+                    "id": tag.id,
+                    "label": tag.label,
+                    "color": tag.color,
+                    "index": tag.index,
+                    "is_system": tag.is_system
+                }
+        
+        result.append(lead_dict)
+    
+    return result
 
 @app.post("/api/leads", response_model=Lead)
 def create_lead(lead_in: LeadCreate, db: Session = Depends(get_db)):
@@ -668,6 +740,7 @@ def create_lead(lead_in: LeadCreate, db: Session = Depends(get_db)):
         source="manual",
         notes=lead_in.notes,
         response_status=lead_in.response_status or "pending",
+        lead_tag_id=lead_in.lead_tag_id,
         structured_notes=lead_in.structured_notes or [],
         clickfunnels_data=lead_in.clickfunnels_data
     )
@@ -955,10 +1028,11 @@ def delete_lead_note(lead_id: str, note_id: str, db: Session = Depends(get_db)):
     
     return {"status": "deleted", "remaining_notes": len(existing_notes)}
 
-# --- RESPONSE STATUS OPTIONS ---
+# --- RESPONSE STATUS OPTIONS (DEPRECATO - usa /api/lead-tags) ---
 @app.get("/api/leads/response-statuses")
 def get_response_status_options():
     """
+    DEPRECATO: Usa /api/lead-tags invece.
     Restituisce le opzioni disponibili per lo stato di risposta del lead.
     """
     from models import RESPONSE_STATUS_OPTIONS
@@ -977,6 +1051,87 @@ def get_response_status_options():
         {"value": status, "label": status_labels.get(status, status.title())}
         for status in RESPONSE_STATUS_OPTIONS
     ]
+
+# --- LEAD TAGS (CRUD) ---
+@app.get("/api/lead-tags", response_model=List[LeadTag])
+def get_lead_tags(db: Session = Depends(get_db)):
+    """
+    Restituisce tutti i tag disponibili per i lead, ordinati per index.
+    """
+    tags = db.query(LeadTagModel).order_by(LeadTagModel.index).all()
+    return tags
+
+@app.post("/api/lead-tags", response_model=LeadTag)
+def create_lead_tag(tag_in: LeadTagCreate, db: Session = Depends(get_db)):
+    """
+    Crea un nuovo tag per i lead.
+    """
+    # Trova il prossimo index disponibile
+    max_index = db.query(LeadTagModel).order_by(LeadTagModel.index.desc()).first()
+    next_index = (max_index.index + 1) if max_index else 0
+    
+    new_tag = LeadTagModel(
+        label=tag_in.label,
+        color=tag_in.color or "base",
+        index=tag_in.index if tag_in.index is not None else next_index,
+        is_system=False
+    )
+    
+    db.add(new_tag)
+    db.commit()
+    db.refresh(new_tag)
+    
+    return new_tag
+
+@app.put("/api/lead-tags/{tag_id}", response_model=LeadTag)
+def update_lead_tag(tag_id: int, tag_in: LeadTagUpdate, db: Session = Depends(get_db)):
+    """
+    Aggiorna un tag esistente.
+    """
+    tag = db.query(LeadTagModel).filter(LeadTagModel.id == tag_id).first()
+    if not tag:
+        raise HTTPException(status_code=404, detail="Tag non trovato")
+    
+    if tag_in.label is not None:
+        tag.label = tag_in.label
+    if tag_in.color is not None:
+        tag.color = tag_in.color
+    if tag_in.index is not None:
+        tag.index = tag_in.index
+    
+    db.commit()
+    db.refresh(tag)
+    
+    return tag
+
+@app.delete("/api/lead-tags/{tag_id}")
+def delete_lead_tag(tag_id: int, db: Session = Depends(get_db)):
+    """
+    Elimina un tag. Se ci sono lead con questo tag, il tag verrà rimosso da essi.
+    """
+    tag = db.query(LeadTagModel).filter(LeadTagModel.id == tag_id).first()
+    if not tag:
+        raise HTTPException(status_code=404, detail="Tag non trovato")
+    
+    # Rimuovi il tag da tutti i lead che lo usano
+    db.query(LeadModel).filter(LeadModel.lead_tag_id == tag_id).update({"lead_tag_id": None})
+    
+    # Elimina il tag
+    db.delete(tag)
+    db.commit()
+    
+    return {"status": "deleted", "tag_id": tag_id}
+
+@app.post("/api/lead-tags/reorder")
+def reorder_lead_tags(order: List[int], db: Session = Depends(get_db)):
+    """
+    Riordina i tag. Riceve una lista di ID nell'ordine desiderato.
+    """
+    for new_index, tag_id in enumerate(order):
+        db.query(LeadTagModel).filter(LeadTagModel.id == tag_id).update({"index": new_index})
+    
+    db.commit()
+    return {"status": "reordered"}
 
 # Health check
 @app.get("/health")

@@ -85,6 +85,16 @@ class PipelineStage(Base):
     index = Column(Integer, default=0)
     is_system = Column(Boolean, default=False)
 
+class LeadTag(Base):
+    """Tag customizzabili per i lead (sostituisce il vecchio response_status)"""
+    __tablename__ = "lead_tags"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    label = Column(String, nullable=False)
+    color = Column(String, default="base")  # base, info, success, warning, critical, attention
+    index = Column(Integer, default=0)  # Per ordinamento
+    is_system = Column(Boolean, default=False)  # Se True, non può essere eliminato
+
 class Lead(Base):
     __tablename__ = "leads"
 
@@ -98,7 +108,8 @@ class Lead(Base):
     source = Column(String, default="manual")
     clickfunnels_data = Column(JSON, nullable=True)
     notes = Column(Text, nullable=True)  # Legacy - campo singolo
-    response_status = Column(String, default="pending", nullable=True)  # Stato risposta: pending, no_show, show, followup, etc.
+    response_status = Column(String, default="pending", nullable=True)  # Deprecato - mantenuto per compatibilità
+    lead_tag_id = Column(Integer, nullable=True)  # Nuovo sistema di tag customizzabili
     structured_notes = Column(JSON, nullable=True)  # Note strutturate come lista di oggetti
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
@@ -316,6 +327,16 @@ def init_db():
                                 db.execute(text("ALTER TABLE leads ADD COLUMN structured_notes TEXT DEFAULT '[]'"))
                         db.commit()
                         print("✅ Colonna structured_notes aggiunta.")
+                    
+                    # Aggiungi lead_tag_id se mancante (nuovo sistema tag)
+                    if 'lead_tag_id' not in columns:
+                        print("🔄 Aggiungo colonna lead_tag_id alla tabella leads...")
+                        try:
+                            db.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS lead_tag_id INTEGER"))
+                        except Exception:
+                            db.execute(text("ALTER TABLE leads ADD COLUMN lead_tag_id INTEGER"))
+                        db.commit()
+                        print("✅ Colonna lead_tag_id aggiunta.")
                         
             except Exception as e:
                 print(f"⚠️ Errore aggiunta colonne mancanti: {e}")
@@ -355,6 +376,24 @@ def init_db():
                 print("✅ Default stages seeded.")
             else:
                 print(f"✅ {count} stages già presenti, seeding saltato.")
+            
+            # Seeding lead_tags solo se non ce ne sono
+            tags_count = db.query(LeadTag).count()
+            if tags_count == 0:
+                print("🌱 Seeding default lead tags...")
+                default_tags = [
+                    LeadTag(label="Fissato calendly", color="success", index=0, is_system=False),
+                    LeadTag(label="Non fissato", color="warning", index=1, is_system=False),
+                    LeadTag(label="Da richiamare", color="info", index=2, is_system=False),
+                    LeadTag(label="Non interessato", color="critical", index=3, is_system=False),
+                    LeadTag(label="Non ha budget", color="attention", index=4, is_system=False),
+                    LeadTag(label="Squalificato", color="base", index=5, is_system=False),
+                ]
+                db.add_all(default_tags)
+                db.commit()
+                print("✅ Default lead tags seeded.")
+            else:
+                print(f"✅ {tags_count} lead tags già presenti, seeding saltato.")
             
             db.close()
             return  # Successo, esci
