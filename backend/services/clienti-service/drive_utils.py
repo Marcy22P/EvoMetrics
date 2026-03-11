@@ -271,7 +271,7 @@ class DriveService:
             return None
 
     def download_file_stream(self, file_id: str):
-        """Scarica file come stream"""
+        """Scarica file come stream (intero file in memoria)"""
         if not self.is_ready():
             raise Exception("Drive service not ready")
             
@@ -294,6 +294,66 @@ class DriveService:
         except Exception as e:
             print(f"❌ Drive download error: {e}")
             raise e
+
+    def download_file_range(self, file_id: str, start: int = 0, end: int = None):
+        """
+        Scarica un range di byte di un file da Drive.
+        Supporta Range Requests per streaming video efficiente.
+        Ritorna (bytes_data, total_size, content_type, filename).
+        """
+        if not self.is_ready():
+            raise Exception("Drive service not ready")
+
+        try:
+            meta = self.get_file_metadata(file_id)
+            if not meta:
+                raise Exception("File not found")
+
+            total_size = int(meta.get('size', 0))
+            content_type = meta.get('mimeType', 'application/octet-stream')
+            filename = meta.get('name', 'file')
+
+            if total_size == 0:
+                # Google Docs/Sheets non hanno size, fallback a download completo
+                stream, ct, fn = self.download_file_stream(file_id)
+                data = stream.read()
+                return data, len(data), ct, fn
+
+            # Calcola range effettivo
+            if end is None or end >= total_size:
+                end = total_size - 1
+
+            # Chunk non troppo grande (max 10MB per request)
+            chunk_size = min(end - start + 1, 10 * 1024 * 1024)
+            actual_end = start + chunk_size - 1
+
+            # Download con header Range
+            request = self.service.files().get_media(fileId=file_id)
+            request.headers['Range'] = f'bytes={start}-{actual_end}'
+
+            file_io = io.BytesIO()
+            downloader = MediaIoBaseDownload(file_io, request, chunksize=chunk_size)
+
+            done = False
+            while not done:
+                dl_status, done = downloader.next_chunk()
+
+            file_io.seek(0)
+            return file_io.read(), total_size, content_type, filename
+
+        except Exception as e:
+            print(f"❌ Drive range download error: {e}")
+            # Fallback: scarica tutto e ritorna il range richiesto
+            try:
+                stream, ct, fn = self.download_file_stream(file_id)
+                data = stream.read()
+                total = len(data)
+                if end is None:
+                    end = total - 1
+                return data[start:end + 1], total, ct, fn
+            except Exception as e2:
+                print(f"❌ Drive range download fallback error: {e2}")
+                raise e2
 
     def share_file(self, file_id: str, user_email: str, role: str = "reader") -> Optional[Dict[str, Any]]:
         """

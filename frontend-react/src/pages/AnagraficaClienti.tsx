@@ -21,7 +21,8 @@ import {
 } from '@shopify/polaris';
 import {
   PlusIcon,
-  ImportIcon
+  ImportIcon,
+  ArrowDownIcon
 } from '@shopify/polaris-icons';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-hot-toast';
@@ -220,9 +221,21 @@ const AnagraficaClienti: React.FC = () => {
     <Page
       title="Clienti"
       primaryAction={isAdmin ? {content: 'Importa Clienti', onAction: handleOpenImportModal, icon: ImportIcon} : undefined}
-      secondaryActions={isAdmin ? [
-          {content: 'Nuovo Cliente', onAction: () => setIsCreateModalOpen(true), icon: PlusIcon}
-      ] : []}
+      secondaryActions={[
+        ...(hasPermission('clienti:read') ? [{
+          content: 'Esporta CSV',
+          onAction: async () => {
+            try {
+              await clientiApi.downloadClientiCsv();
+              toast.success('CSV clienti scaricato');
+            } catch {
+              toast.error('Errore export CSV clienti');
+            }
+          },
+          icon: ArrowDownIcon
+        }] : []),
+        ...(isAdmin ? [{ content: 'Nuovo Cliente', onAction: () => setIsCreateModalOpen(true), icon: PlusIcon }] : [])
+      ]}
     >
       <Layout>
         <Layout.Section>

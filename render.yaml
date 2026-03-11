@@ -8,7 +8,7 @@ services:
     runtime: python
     pythonVersion: 3.12.7
     rootDirectory: backend/api-gateway
-    buildCommand: pip install -r requirements.txt && cd ../../frontend-react && npm install && npm run build
+    buildCommand: apt-get update && apt-get install -y ffmpeg && pip install -r requirements.txt && cd ../../frontend-react && npm install && npm run build
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: PORT
@@ -51,6 +51,14 @@ services:
         sync: false
       - key: UNIFIED_MODE
         value: "true"
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: CLAUDE_ORCHESTRATOR_MODEL
+        value: "claude-sonnet-4-5"
+      - key: CLAUDE_TOOLS_MODEL
+        value: "claude-haiku-4-5-20251001"
       - key: SIBILL_API_KEY
         sync: false
       - key: SIBILL_COMPANY_ID

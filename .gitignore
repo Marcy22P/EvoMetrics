@@ -5,6 +5,8 @@
 .env.*
 .envrc
 *.key
+token.pickle
+*.pickle
 *.pem
 secrets/
 keys/

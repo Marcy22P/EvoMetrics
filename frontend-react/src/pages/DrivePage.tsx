@@ -5,12 +5,14 @@ import {
 } from '@shopify/polaris';
 import { 
     ExternalIcon, LogoGoogleIcon, FolderIcon, FileIcon, NoteIcon, 
-    ImageIcon, ArrowLeftIcon, PlusIcon, UploadIcon, ImportIcon
+    ImageIcon, ArrowLeftIcon, PlusIcon, UploadIcon, ImportIcon,
+    LanguageIcon
 } from '@shopify/polaris-icons';
 import { useAuth } from '../hooks/useAuth';
 import { getServiceUrl } from '../utils/apiConfig';
 import { clientiApi } from '../services/clientiApi';
 import { toast } from '../utils/toast';
+import StartSubtitleJobModal from '../components/subtitles/StartSubtitleJobModal';
 
 interface DriveFile {
     id: string;
@@ -22,13 +24,19 @@ interface DriveFile {
 }
 
 const GlobalDriveBrowser: React.FC = () => {
+    const { user } = useAuth();
     const CLIENTI_SERVICE_URL = getServiceUrl('clienti');
 
     const [files, setFiles] = useState<DriveFile[]>([]);
     const [loading, setLoading] = useState(false);
     const [currentFolderId, setCurrentFolderId] = useState<string | undefined>(undefined);
     const [breadcrumbs, setBreadcrumbs] = useState<{id: string, name: string}[]>([]);
+    const [currentClienteId, setCurrentClienteId] = useState<string>("");
     
+    // Subtitle Modal
+    const [isSubtitleModalOpen, setIsSubtitleModalOpen] = useState(false);
+    const [selectedFileForSubtitle, setSelectedFileForSubtitle] = useState<{id: string, name: string} | null>(null);
+
     // Search
     const [searchTerm, setSearchTerm] = useState("");
     const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -102,10 +110,40 @@ const GlobalDriveBrowser: React.FC = () => {
         fetchFiles(currentFolderId, debouncedSearch);
     }, [debouncedSearch, currentFolderId]);
 
-    const handleFolderClick = (folderId: string, folderName: string) => {
+    const handleFolderClick = async (folderId: string, folderName: string) => {
         setSearchTerm(""); // Reset search on navigation
         setBreadcrumbs([...breadcrumbs, { id: folderId, name: folderName }]);
         setCurrentFolderId(folderId); // Triggera useEffect
+        
+        // Prova a dedurre il cliente_id dal nome della cartella
+        await deduceClienteId(folderName);
+    };
+    
+    const deduceClienteId = async (folderName: string) => {
+        try {
+            const clienti = await clientiApi.getClienti();
+            const matchingCliente = clienti.find(c => c.nome_azienda === folderName);
+            if (matchingCliente) {
+                setCurrentClienteId(matchingCliente.id);
+                console.log(`✅ Cliente dedotto: ${matchingCliente.nome_azienda} (${matchingCliente.id})`);
+            } else {
+                // Nessun match diretto, potremmo essere in una sottocartella
+                // Cerca nei breadcrumbs se c'è un cliente
+                for (let i = breadcrumbs.length - 1; i >= 0; i--) {
+                    const crumb = breadcrumbs[i];
+                    const crumbCliente = clienti.find(c => c.nome_azienda === crumb.name);
+                    if (crumbCliente) {
+                        setCurrentClienteId(crumbCliente.id);
+                        console.log(`✅ Cliente dedotto dai breadcrumbs: ${crumbCliente.nome_azienda}`);
+                        return;
+                    }
+                }
+                setCurrentClienteId("");
+            }
+        } catch (e) {
+            console.error("Errore deduzione cliente:", e);
+            setCurrentClienteId("");
+        }
     };
 
     const handleBackClick = () => {
@@ -219,9 +257,18 @@ const GlobalDriveBrowser: React.FC = () => {
         return (b / (1024 * 1024)).toFixed(1) + ' MB';
     };
 
+    const handleOpenSubtitleModal = (file: DriveFile) => {
+        setSelectedFileForSubtitle({ id: file.id, name: file.name });
+        setIsSubtitleModalOpen(true);
+    };
+
     const resourceName = { singular: 'file', plural: 'files' };
     const rowMarkup = files.map(
-        ({ id, name, mimeType, webViewLink, size }, index) => (
+        ({ id, name, mimeType, webViewLink, size }, index) => {
+            const isVideo = mimeType.includes('video') || name.endsWith('.mp4') || name.endsWith('.mov') || name.endsWith('.MP4') || name.endsWith('.MOV');
+            const canGenerateSubtitles = isVideo && (user?.role === 'admin' || user?.role === 'editor' || user?.role === 'superadmin');
+
+            return (
             <IndexTable.Row id={id} key={id} position={index}>
                 <IndexTable.Cell>
                     <InlineStack gap="200" align="start" blockAlign="center">
@@ -240,6 +287,15 @@ const GlobalDriveBrowser: React.FC = () => {
                 <IndexTable.Cell>{mimeType.includes('folder') ? 'Cartella' : formatSize(size)}</IndexTable.Cell>
                 <IndexTable.Cell>
                     <InlineStack gap="200">
+                        {canGenerateSubtitles && (
+                            <Tooltip content="Genera Sottotitoli">
+                                <Button 
+                                    icon={LanguageIcon} 
+                                    variant="plain" 
+                                    onClick={() => handleOpenSubtitleModal({ id, name, mimeType, webViewLink, size })}
+                                />
+                            </Tooltip>
+                        )}
                         {!mimeType.includes('folder') && (
                             <Tooltip content="Scarica File">
                                 <Button 
@@ -260,7 +316,8 @@ const GlobalDriveBrowser: React.FC = () => {
                     </InlineStack>
                 </IndexTable.Cell>
             </IndexTable.Row>
-        ),
+            );
+        },
     );
 
     const isRoot = !currentFolderId;
@@ -375,6 +432,18 @@ const GlobalDriveBrowser: React.FC = () => {
                     />
                 </Modal.Section>
             </Modal>
+
+            {selectedFileForSubtitle && (
+                <StartSubtitleJobModal 
+                    open={isSubtitleModalOpen}
+                    onClose={() => {
+                        setIsSubtitleModalOpen(false);
+                        setSelectedFileForSubtitle(null);
+                    }}
+                    driveFile={selectedFileForSubtitle}
+                    clienteId={currentClienteId}
+                />
+            )}
         </Card>
     );
 };

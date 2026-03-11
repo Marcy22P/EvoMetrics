@@ -34,10 +34,11 @@ class LeadNote(BaseModel):
 class LeadNoteCreate(BaseModel):
     content: str
 
-# --- LEAD TAGS (customizzabili) ---
+# --- LEAD TAGS (customizzabili con colori infiniti) ---
 class LeadTagBase(BaseModel):
     label: str
-    color: str = "base"  # base, info, success, warning, critical, attention
+    color: str = "base"
+    hex_color: Optional[str] = None  # V2: colore hex custom (#FF5733)
     index: int = 0
 
 class LeadTagCreate(LeadTagBase):
@@ -46,16 +47,16 @@ class LeadTagCreate(LeadTagBase):
 class LeadTagUpdate(BaseModel):
     label: Optional[str] = None
     color: Optional[str] = None
+    hex_color: Optional[str] = None
     index: Optional[int] = None
 
 class LeadTag(LeadTagBase):
     id: int
-    is_system: bool = False  # True se è un tag di default che non può essere eliminato
+    is_system: bool = False
     
     class Config:
         from_attributes = True
 
-# Tag di default per i lead (per seeding iniziale)
 DEFAULT_LEAD_TAGS = [
     {"label": "Fissato calendly", "color": "success", "index": 0},
     {"label": "Non fissato", "color": "warning", "index": 1},
@@ -65,21 +66,39 @@ DEFAULT_LEAD_TAGS = [
     {"label": "Squalificato", "color": "base", "index": 5},
 ]
 
+# --- DEAL SERVICE (V2) ---
+class DealService(BaseModel):
+    name: str
+    price: float = 0
+
 # --- LEADS ---
-# Deprecato - ora usiamo LeadTags dinamici
 RESPONSE_STATUS_OPTIONS = ["pending", "no_show", "show", "followup", "qualified", "not_interested", "callback"]
+
+SOURCE_CHANNEL_OPTIONS = [
+    "Meta Ads", "Google Ads", "TikTok Ads", "LinkedIn Ads",
+    "Referral", "Passaparola", "Sito Web", "Organico",
+    "ClickFunnels", "Email Marketing", "Evento", "Altro",
+]
 
 class LeadBase(BaseModel):
     email: str
     first_name: Optional[str] = None
     last_name: Optional[str] = None
     phone: Optional[str] = None
-    azienda: Optional[str] = None  # Nome azienda
+    azienda: Optional[str] = None
     stage: Optional[str] = "optin"
-    notes: Optional[str] = None  # Legacy - campo singolo (verrà deprecato)
-    response_status: Optional[str] = "pending"  # Deprecato - mantenuto per compatibilità
-    lead_tag_id: Optional[int] = None  # Nuovo sistema di tag customizzabili
-    structured_notes: Optional[List[LeadNote]] = []  # Note strutturate
+    notes: Optional[str] = None
+    response_status: Optional[str] = "pending"
+    lead_tag_id: Optional[int] = None
+    structured_notes: Optional[List[LeadNote]] = []
+    # V2 fields
+    deal_value: Optional[float] = None
+    deal_currency: Optional[str] = "EUR"
+    deal_services: Optional[List[DealService]] = None
+    linked_preventivo_id: Optional[str] = None
+    linked_contratto_id: Optional[str] = None
+    source_channel: Optional[str] = None
+    assigned_to_user_id: Optional[str] = None
 
 class LeadCreate(LeadBase):
     clickfunnels_data: Optional[Dict[str, Any]] = None
@@ -90,18 +109,40 @@ class LeadUpdate(BaseModel):
     first_name: Optional[str] = None
     last_name: Optional[str] = None
     phone: Optional[str] = None
-    azienda: Optional[str] = None  # Nome azienda
-    response_status: Optional[str] = None  # Deprecato - mantenuto per compatibilità
-    lead_tag_id: Optional[int] = None  # Nuovo sistema di tag customizzabili
-    structured_notes: Optional[List[LeadNote]] = None  # Note strutturate
+    azienda: Optional[str] = None
+    response_status: Optional[str] = None
+    lead_tag_id: Optional[int] = None
+    structured_notes: Optional[List[LeadNote]] = None
+    # V2 fields
+    deal_value: Optional[float] = None
+    deal_currency: Optional[str] = None
+    deal_services: Optional[List[DealService]] = None
+    linked_preventivo_id: Optional[str] = None
+    linked_contratto_id: Optional[str] = None
+    source_channel: Optional[str] = None
+    assigned_to_user_id: Optional[str] = None
 
 class Lead(LeadBase):
     id: str
     source: str
     clickfunnels_data: Optional[Dict[str, Any]] = None
-    lead_tag: Optional[LeadTag] = None  # Tag associato (opzionale, popolato dal backend)
+    lead_tag: Optional[LeadTag] = None
+    assigned_to_user: Optional[Dict[str, Any]] = None  # V2: {id, username, nome, cognome}
     created_at: datetime
     updated_at: datetime
 
     class Config:
         from_attributes = True
+
+# --- ANALYTICS (V2) ---
+class MonthlyValueItem(BaseModel):
+    month: int
+    label: str
+    total_value: float
+    leads_count: int
+    delta_pct: Optional[float] = None
+
+class MonthlyValueResponse(BaseModel):
+    year: int
+    months: List[MonthlyValueItem]
+    year_total: float

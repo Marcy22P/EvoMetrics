@@ -4,6 +4,7 @@ from sqlalchemy.orm import relationship
 from database import Base
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
+import uuid
 
 # --- SQLAlchemy Models ---
 
@@ -30,6 +31,20 @@ class ChatMessage(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     session = relationship("ChatSession", back_populates="messages")
+
+class AgentConversation(Base):
+    """Storico conversazioni con EvoAgent (per memoria persistente tra sessioni)."""
+    __tablename__ = "agent_conversations"
+
+    id = Column(String(50), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(50), nullable=True, index=True)
+    session_id = Column(String(100), nullable=True, index=True)
+    channel = Column(String(20), default="evometrics")  # 'evometrics' | 'slack'
+    messages = Column(JSON, default=list)  # [{"role": "user"|"assistant", "content": "..."}]
+    title = Column(String(200), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
 
 class Assessment(Base):
     __tablename__ = "assessment"

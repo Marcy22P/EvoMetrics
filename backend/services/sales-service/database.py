@@ -86,14 +86,15 @@ class PipelineStage(Base):
     is_system = Column(Boolean, default=False)
 
 class LeadTag(Base):
-    """Tag customizzabili per i lead (sostituisce il vecchio response_status)"""
+    """Tag customizzabili per i lead"""
     __tablename__ = "lead_tags"
     
     id = Column(Integer, primary_key=True, index=True)
     label = Column(String, nullable=False)
-    color = Column(String, default="base")  # base, info, success, warning, critical, attention
-    index = Column(Integer, default=0)  # Per ordinamento
-    is_system = Column(Boolean, default=False)  # Se True, non può essere eliminato
+    color = Column(String, default="base")
+    hex_color = Column(String(7), nullable=True)  # V2: colore hex custom (#FF5733)
+    index = Column(Integer, default=0)
+    is_system = Column(Boolean, default=False)
 
 class Lead(Base):
     __tablename__ = "leads"
@@ -103,14 +104,22 @@ class Lead(Base):
     first_name = Column(String, nullable=True)
     last_name = Column(String, nullable=True)
     phone = Column(String, nullable=True)
-    azienda = Column(String, nullable=True)  # Nome azienda (da ClickFunnel o manuale)
+    azienda = Column(String, nullable=True)
     stage = Column(String, default="optin")
     source = Column(String, default="manual")
     clickfunnels_data = Column(JSON, nullable=True)
-    notes = Column(Text, nullable=True)  # Legacy - campo singolo
-    response_status = Column(String, default="pending", nullable=True)  # Deprecato - mantenuto per compatibilità
-    lead_tag_id = Column(Integer, nullable=True)  # Nuovo sistema di tag customizzabili
-    structured_notes = Column(JSON, nullable=True)  # Note strutturate come lista di oggetti
+    notes = Column(Text, nullable=True)
+    response_status = Column(String, default="pending", nullable=True)
+    lead_tag_id = Column(Integer, nullable=True)
+    structured_notes = Column(JSON, nullable=True)
+    # V2 fields
+    deal_value = Column(Integer, nullable=True)  # Valore in centesimi (1500 = 15.00 EUR)
+    deal_currency = Column(String(3), default="EUR")
+    deal_services = Column(JSON, nullable=True)  # [{name, price}]
+    linked_preventivo_id = Column(String(50), nullable=True)
+    linked_contratto_id = Column(String(50), nullable=True)
+    source_channel = Column(String(50), nullable=True)  # Meta Ads, Google Ads, etc.
+    assigned_to_user_id = Column(String(50), nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 
@@ -337,6 +346,40 @@ def init_db():
                             db.execute(text("ALTER TABLE leads ADD COLUMN lead_tag_id INTEGER"))
                         db.commit()
                         print("✅ Colonna lead_tag_id aggiunta.")
+                    
+                    # V2: Nuove colonne Pipeline V2
+                    v2_columns = {
+                        'deal_value': "ALTER TABLE leads ADD COLUMN IF NOT EXISTS deal_value INTEGER",
+                        'deal_currency': "ALTER TABLE leads ADD COLUMN IF NOT EXISTS deal_currency VARCHAR(3) DEFAULT 'EUR'",
+                        'deal_services': "ALTER TABLE leads ADD COLUMN IF NOT EXISTS deal_services JSONB",
+                        'linked_preventivo_id': "ALTER TABLE leads ADD COLUMN IF NOT EXISTS linked_preventivo_id VARCHAR(50)",
+                        'linked_contratto_id': "ALTER TABLE leads ADD COLUMN IF NOT EXISTS linked_contratto_id VARCHAR(50)",
+                        'source_channel': "ALTER TABLE leads ADD COLUMN IF NOT EXISTS source_channel VARCHAR(50)",
+                        'assigned_to_user_id': "ALTER TABLE leads ADD COLUMN IF NOT EXISTS assigned_to_user_id VARCHAR(50)",
+                    }
+                    for col_name, sql in v2_columns.items():
+                        if col_name not in columns:
+                            print(f"🔄 V2: Aggiungo colonna {col_name}...")
+                            try:
+                                db.execute(text(sql))
+                                db.commit()
+                                print(f"✅ V2: Colonna {col_name} aggiunta.")
+                            except Exception as e:
+                                print(f"⚠️ V2: Errore aggiunta {col_name}: {e}")
+                                db.rollback()
+                
+                # V2: hex_color per lead_tags
+                if 'lead_tags' in existing_tables:
+                    tag_columns = [col['name'] for col in inspector.get_columns('lead_tags')]
+                    if 'hex_color' not in tag_columns:
+                        print("🔄 V2: Aggiungo colonna hex_color a lead_tags...")
+                        try:
+                            db.execute(text("ALTER TABLE lead_tags ADD COLUMN IF NOT EXISTS hex_color VARCHAR(7)"))
+                            db.commit()
+                            print("✅ V2: Colonna hex_color aggiunta a lead_tags.")
+                        except Exception as e:
+                            print(f"⚠️ V2: Errore aggiunta hex_color: {e}")
+                            db.rollback()
                         
             except Exception as e:
                 print(f"⚠️ Errore aggiunta colonne mancanti: {e}")

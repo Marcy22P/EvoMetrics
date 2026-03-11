@@ -18,6 +18,7 @@ from contextlib import asynccontextmanager
 import httpx
 import re
 import io
+import csv
 
 try:
     from pypdf import PdfReader
@@ -440,6 +441,144 @@ async def get_clienti(
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Errore: {str(e)}")
+
+
+def _contratto_valore(compenso: Any) -> str:
+    """Estrae valore contratto da compenso (sitoWeb.importoTotale o marketing.importoMensile)."""
+    if not compenso:
+        return ""
+    if isinstance(compenso, str):
+        try:
+            compenso = json.loads(compenso)
+        except Exception:
+            return ""
+    if not isinstance(compenso, dict):
+        return ""
+    sito = compenso.get("sitoWeb") or {}
+    marketing = compenso.get("marketing") or {}
+    if isinstance(sito, dict) and sito.get("importoTotale") is not None:
+        return str(sito["importoTotale"])
+    if isinstance(marketing, dict) and marketing.get("importoMensile") is not None:
+        return str(marketing["importoMensile"])
+    return ""
+
+
+def _contratto_durata_testo(durata: Any) -> str:
+    """Estrae durata come testo (es. '01/01/2024 - 31/12/2024')."""
+    if not durata:
+        return ""
+    if isinstance(durata, str):
+        try:
+            durata = json.loads(durata)
+        except Exception:
+            return ""
+    if not isinstance(durata, dict):
+        return ""
+    dec = durata.get("dataDecorrenza") or ""
+    scad = durata.get("dataScadenza") or ""
+    if dec and scad:
+        return f"{dec} - {scad}"
+    return dec or scad
+
+
+@app.get("/api/clienti/export/csv")
+async def export_clienti_csv(
+    current_user: Dict[str, Any] = Depends(check_clienti_read)
+):
+    """
+    Export clienti in CSV: Nome, Cognome, Nome Azienda, P.IVA, Durata Contratto,
+    Inizio Contratto, Path Drive, Valore Contratto.
+    Il valore contratto viene risolto cercando il contratto per Ragione Sociale (nome azienda).
+    """
+    try:
+        user_perms = await load_user_permissions(current_user)
+        is_admin = user_perms.get("__all__") or current_user.get("role") in ["admin", "superadmin"]
+        if is_admin:
+            clienti = await database.fetch_all(
+                clienti_table.select().order_by(clienti_table.c.created_at.desc())
+            )
+        else:
+            user_id = str(current_user["id"])
+            clienti = await database.fetch_all(
+                "SELECT c.* FROM clienti c INNER JOIN cliente_assignees ca ON c.id = ca.cliente_id WHERE ca.user_id = :user_id ORDER BY c.created_at DESC",
+                {"user_id": user_id}
+            )
+
+        # Fetch contratti (stesso DB): id, cliente_id, ragione_sociale, durata, compenso
+        try:
+            contratti_rows = await database.fetch_all(
+                "SELECT id, cliente_id, ragione_sociale, durata, compenso FROM contratti ORDER BY created_at DESC"
+            )
+        except Exception:
+            contratti_rows = []
+
+        # Per ogni cliente_id o ragione_sociale trovo il contratto (preferenza cliente_id)
+        def find_contratto(cliente_id: str, nome_azienda: str) -> Optional[Dict]:
+            nome_norm = (nome_azienda or "").strip().lower()
+            by_cliente = next((c for c in contratti_rows if (c.get("cliente_id") or "").strip() == cliente_id), None)
+            if by_cliente:
+                return dict(by_cliente)
+            for c in contratti_rows:
+                rs = (c.get("ragione_sociale") or "").strip().lower()
+                if nome_norm and rs and (nome_norm in rs or rs in nome_norm):
+                    return dict(c)
+            return None
+
+        headers = [
+            "Nome", "Cognome", "Nome Azienda", "P.IVA", "Durata Contratto",
+            "Inizio Contratto", "Path Drive", "Valore Contratto"
+        ]
+
+        buf = io.StringIO()
+        writer = csv.writer(buf, delimiter=",", quoting=csv.QUOTE_MINIMAL)
+        writer.writerow(headers)
+
+        for row in clienti:
+            c = serialize_cliente(dict(row))
+            dettagli = c.get("dettagli") or {}
+            contatti = c.get("contatti") or {}
+            referente = dettagli.get("referente") or {}
+            if isinstance(referente, str):
+                try:
+                    referente = json.loads(referente) if referente else {}
+                except Exception:
+                    referente = {}
+            nome = referente.get("nome") or ""
+            cognome = referente.get("cognome") or ""
+            nome_azienda = (c.get("nome_azienda") or "").strip()
+            p_iva = contatti.get("cfPiva") or ""
+            drive_folder_id = dettagli.get("drive_folder_id") or ""
+            path_drive = f"https://drive.google.com/drive/folders/{drive_folder_id}" if drive_folder_id else ""
+
+            contratto = find_contratto(str(c.get("id", "")), nome_azienda)
+            durata_txt = ""
+            inizio_txt = ""
+            valore_txt = ""
+            if contratto:
+                durata_raw = contratto.get("durata")
+                if isinstance(durata_raw, str):
+                    try:
+                        durata_raw = json.loads(durata_raw)
+                    except Exception:
+                        durata_raw = {}
+                durata_txt = _contratto_durata_testo(durata_raw)
+                inizio_txt = (durata_raw.get("dataDecorrenza") or "") if isinstance(durata_raw, dict) else ""
+                valore_txt = _contratto_valore(contratto.get("compenso"))
+
+            writer.writerow([
+                nome, cognome, nome_azienda, p_iva, durata_txt, inizio_txt, path_drive, valore_txt
+            ])
+
+        buf.seek(0)
+        from datetime import datetime
+        filename = f"clienti-export-{datetime.utcnow().strftime('%Y-%m-%d')}.csv"
+        return StreamingResponse(
+            iter([buf.getvalue()]),
+            media_type="text/csv; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/clienti", response_model=Dict[str, Any])
@@ -1396,17 +1535,10 @@ async def download_drive_file(
         if not drive_service or not drive_service.is_ready():
              raise HTTPException(status_code=503, detail="Drive non connesso")
 
-        # Ottieni metadata per nome e size
         meta = drive_service.get_file_metadata(file_id)
         if not meta:
             raise HTTPException(status_code=404, detail="File non trovato")
 
-        # Scarica stream
-        # Nota: serve implementare un metodo download_stream in drive_utils
-        # Per ora usiamo webContentLink se disponibile, o redirect
-        # Ma l'utente vuole scaricare "dalla webapp", quindi meglio proxy se vogliamo evitare auth cookie issues su drive.google.com
-        
-        # Implementiamo download_file_stream in drive_utils
         stream, content_type, filename = drive_service.download_file_stream(file_id)
         
         return StreamingResponse(
@@ -1418,6 +1550,82 @@ async def download_drive_file(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Errore download: {str(e)}")
+
+
+@app.get("/api/drive/stream/{file_id}")
+async def stream_drive_file(
+    file_id: str,
+    request: Request,
+    token: Optional[str] = None,
+    current_user: Dict[str, Any] = Depends(check_clienti_read)
+):
+    """
+    Streaming video da Drive con supporto HTTP Range Requests.
+    Permette seeking nel video senza scaricare l'intero file.
+    Supporta anche auth via query param ?token= per il tag <video>.
+    """
+    try:
+        if not drive_service or not drive_service.is_ready():
+            raise HTTPException(status_code=503, detail="Drive non connesso")
+
+        meta = drive_service.get_file_metadata(file_id)
+        if not meta:
+            raise HTTPException(status_code=404, detail="File non trovato")
+
+        total_size = int(meta.get('size', 0))
+        content_type = meta.get('mimeType', 'application/octet-stream')
+        filename = meta.get('name', 'video')
+
+        # Parse Range header
+        range_header = request.headers.get('Range')
+
+        if not range_header or total_size == 0:
+            # Nessun range: scarica tutto (fallback per file piccoli o Google Docs)
+            stream, ct, fn = drive_service.download_file_stream(file_id)
+            return StreamingResponse(
+                stream,
+                media_type=content_type,
+                headers={
+                    "Content-Disposition": f'inline; filename="{filename}"',
+                    "Accept-Ranges": "bytes",
+                    "Content-Length": str(total_size) if total_size else str(len(stream.getvalue())),
+                }
+            )
+
+        # Parse "bytes=start-end"
+        range_str = range_header.replace("bytes=", "")
+        parts = range_str.split("-")
+        start = int(parts[0]) if parts[0] else 0
+        end = int(parts[1]) if parts[1] else min(start + 5 * 1024 * 1024 - 1, total_size - 1)  # 5MB chunks
+
+        if start >= total_size:
+            raise HTTPException(status_code=416, detail="Range Not Satisfiable")
+
+        if end >= total_size:
+            end = total_size - 1
+
+        # Scarica il range richiesto
+        chunk_data, real_total, ct, fn = drive_service.download_file_range(file_id, start, end)
+        chunk_length = len(chunk_data)
+
+        import io as _io
+        return StreamingResponse(
+            _io.BytesIO(chunk_data),
+            status_code=206,
+            media_type=content_type,
+            headers={
+                "Content-Range": f"bytes {start}-{start + chunk_length - 1}/{real_total}",
+                "Accept-Ranges": "bytes",
+                "Content-Length": str(chunk_length),
+                "Content-Disposition": f'inline; filename="{filename}"',
+            }
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Stream error: {e}")
+        raise HTTPException(status_code=500, detail=f"Errore streaming: {str(e)}")
 
 @app.post("/api/drive/upload")
 async def upload_global_drive_file(

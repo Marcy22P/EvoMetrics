@@ -1,0 +1,850 @@
+"""
+EvoAgent — Piattaforma multi-agente per EvoMetrics.
+
+Architettura:
+  EvoAgentOrchestrator   ←─ riceve il messaggio, sceglie l'agente
+        │
+        ├── SalesAgent      (Pipeline, lead, opportunità)
+        ├── OpsAgent        (Task, workflow, assegnazioni)
+        ├── FinanceAgent    (Pagamenti, fatture, SIBill)
+        └── ClientsAgent    (Anagrafica, contratti, drive)
+
+Ogni agente ha:
+  - system_prompt verticale
+  - tool set dedicato
+  - istanza Claude propria
+
+L'orchestratore sceglie l'agente giusto (o usa tutti) e aggrega le risposte.
+Tutti i tool call usano il JWT dell'utente → auth + permessi preservati.
+"""
+
+import json
+import os
+import sys
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Tuple
+
+import httpx
+
+try:
+    import anthropic as _anthropic_lib
+    _ANTHROPIC_AVAILABLE = True
+except ImportError:
+    _anthropic_lib = None  # type: ignore
+    _ANTHROPIC_AVAILABLE = False
+
+# ─── Configurazione ────────────────────────────────────────────────────────────
+# Letti a call-time per evitare problemi di import-order con load_dotenv
+def _anthropic_key() -> Optional[str]:
+    return (
+        os.environ.get("ANTHROPIC_API_KEY")
+        or os.environ.get("CLAUDE_API_KEY")
+    )
+
+def _model() -> str:
+    return (
+        os.environ.get("CLAUDE_ORCHESTRATOR_MODEL")
+        or os.environ.get("CLAUDE_MODEL")
+        or "claude-sonnet-4-5"
+    )
+
+MAX_TOOL_ITERATIONS = 10
+
+# ─── Tool Definitions ──────────────────────────────────────────────────────────
+
+SALES_TOOLS: List[Dict] = [
+    {
+        "name": "get_pipeline_stages",
+        "description": "Recupera la lista degli stage della pipeline (chiavi e label). Utile prima di operazioni sugli stage.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "get_pipeline_overview",
+        "description": "Stato completo della sales pipeline: tutti i lead raggruppati per stage, con valore deal e canale fonte.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"stage": {"type": "string", "description": "Filtra per stage specifico (opzionale)"}},
+            "required": [],
+        },
+    },
+    {
+        "name": "get_lead_details",
+        "description": "Dettaglio completo di un lead: dati anagrafici, stage, note, deal value, servizi, assegnatario.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"lead_id": {"type": "string", "description": "ID del lead (anche parziale)"}},
+            "required": ["lead_id"],
+        },
+    },
+    {
+        "name": "update_lead_stage",
+        "description": "Sposta un lead a un nuovo stage della pipeline.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "lead_id": {"type": "string"},
+                "new_stage": {"type": "string", "description": "Chiave dello stage (es. 'optin', 'qualified', 'proposta', 'contratto', 'chiuso')"},
+                "note": {"type": "string", "description": "Nota opzionale da aggiungere al lead"},
+            },
+            "required": ["lead_id", "new_stage"],
+        },
+    },
+    {
+        "name": "create_lead",
+        "description": "Crea un nuovo lead nella pipeline.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "email": {"type": "string"},
+                "first_name": {"type": "string"},
+                "last_name": {"type": "string"},
+                "azienda": {"type": "string"},
+                "phone": {"type": "string"},
+                "source_channel": {"type": "string", "description": "Es. Meta Ads, Google Ads, Referral, ClickFunnels"},
+                "stage": {"type": "string"},
+                "notes": {"type": "string"},
+            },
+            "required": ["email"],
+        },
+    },
+    {
+        "name": "get_pipeline_analytics",
+        "description": "Analisi mensile del valore della pipeline: totale deal per mese con variazione percentuale.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"year": {"type": "integer", "description": "Anno (default anno corrente)"}},
+            "required": [],
+        },
+    },
+]
+
+OPS_TOOLS: List[Dict] = [
+    {
+        "name": "get_overdue_tasks",
+        "description": "Tutti i task scaduti del team, ordinati per urgenza (giorni di ritardo). Fondamentale per il briefing operativo.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "assignee_id": {"type": "string", "description": "Filtra per utente specifico (opzionale)"},
+                "limit": {"type": "integer", "description": "Max risultati (default 20)"},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "get_tasks",
+        "description": "Lista task con filtri per utente, status, progetto o cliente.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "assignee_id": {"type": "string"},
+                "status": {"type": "string", "enum": ["todo", "in_progress", "done", "blocked"]},
+                "project_id": {"type": "string", "description": "ID cliente/progetto"},
+                "limit": {"type": "integer"},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "update_task_status",
+        "description": "Aggiorna lo status di un task.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string"},
+                "status": {"type": "string", "enum": ["todo", "in_progress", "done", "blocked"]},
+            },
+            "required": ["task_id", "status"],
+        },
+    },
+    {
+        "name": "get_users_list",
+        "description": "Lista utenti/team members attivi con ruoli e job_title.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "get_workflow_templates",
+        "description": "Lista dei template workflow disponibili (onboarding, sviluppo ecommerce, campagne ADV, ecc.).",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+]
+
+FINANCE_TOOLS: List[Dict] = [
+    {
+        "name": "get_pagamenti_status",
+        "description": "Stato pagamenti: in attesa, scaduti, incassati. Panoramica finanziaria per cliente o globale.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "client_name": {"type": "string", "description": "Filtra per nome cliente (opzionale)"},
+                "status": {"type": "string", "description": "Filtra per status: pending, overdue, paid"},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "get_pipeline_analytics",
+        "description": "Valore mensile della pipeline commerciale con trend e delta percentuale.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"year": {"type": "integer"}},
+            "required": [],
+        },
+    },
+    {
+        "name": "get_preventivi_list",
+        "description": "Lista preventivi emessi con stato e importo. Utile per analisi commerciale.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "get_contratti_list",
+        "description": "Lista contratti firmati/in bozza con valore e date di decorrenza.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+]
+
+CLIENTS_TOOLS: List[Dict] = [
+    {
+        "name": "get_all_clients",
+        "description": "Lista di tutti i clienti attivi con nome azienda, servizi, referente.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "get_client_overview",
+        "description": "Panoramica completa di un cliente: contratti, preventivi, task attivi, note, Drive.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"client_id": {"type": "string"}},
+            "required": ["client_id"],
+        },
+    },
+    {
+        "name": "get_servizi_catalog",
+        "description": "Catalogo servizi di Evoluzione Imprese con categorie e prezzi base.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "get_contratti_list",
+        "description": "Lista contratti: stato, cliente, valore, scadenza.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+]
+
+# Agente universale: tutti i tool
+ALL_TOOLS = SALES_TOOLS + OPS_TOOLS + FINANCE_TOOLS + CLIENTS_TOOLS
+
+# Deduplication per tool con stesso nome (FINANCE_TOOLS + CLIENTS_TOOLS condividono alcuni)
+def _dedup_tools(tools: List[Dict]) -> List[Dict]:
+    seen = set()
+    out = []
+    for t in tools:
+        if t["name"] not in seen:
+            seen.add(t["name"])
+            out.append(t)
+    return out
+
+ALL_TOOLS = _dedup_tools(ALL_TOOLS)
+
+# ─── Configurazione Agenti ─────────────────────────────────────────────────────
+
+AGENT_CONFIGS: Dict[str, Dict] = {
+    "orchestrator": {
+        "id": "orchestrator",
+        "name": "EvoAgent",
+        "emoji": "🤖",
+        "description": "Assistente operativo completo — accede a tutta la piattaforma",
+        "tools": ALL_TOOLS,
+        "system_prompt": """Sei EvoAgent, l'assistente AI operativo di Evoluzione Imprese.
+Hai accesso all'intera piattaforma: pipeline, task, clienti, pagamenti, workflow.
+Sei preciso, diretto e operativo. Usa i tool per recuperare dati reali.
+Nel dubbio su quale agente usare, gestisci tu direttamente.""",
+    },
+    "sales": {
+        "id": "sales",
+        "name": "Sales Agent",
+        "emoji": "📊",
+        "description": "Esperto Pipeline — lead, opportunità, stage, analytics",
+        "tools": SALES_TOOLS,
+        "system_prompt": """Sei il Sales Agent di Evoluzione Imprese.
+Il tuo dominio è la sales pipeline: lead, stage, deal value, fonti di acquisizione.
+Analizza i dati della pipeline, sposta lead, crea nuove opportunità, fornisci insight commerciali.
+Sii analitico e orientato alla conversione.""",
+    },
+    "ops": {
+        "id": "ops",
+        "name": "Ops Agent",
+        "emoji": "⚙️",
+        "description": "Responsabile Operativo — task, workflow, team, scadenze",
+        "tools": OPS_TOOLS,
+        "system_prompt": """Sei l'Ops Agent di Evoluzione Imprese.
+Il tuo dominio è la gestione operativa: task del team, workflow, scadenze, assegnazioni.
+Monitora i task in ritardo, gestisci le priorità, tieni traccia del lavoro del team.
+Sii proattivo nell'identificare blocchi e ritardi.""",
+    },
+    "finance": {
+        "id": "finance",
+        "name": "Finance Agent",
+        "emoji": "💰",
+        "description": "Analista Finance — pagamenti, fatture, valore contratti",
+        "tools": FINANCE_TOOLS,
+        "system_prompt": """Sei il Finance Agent di Evoluzione Imprese.
+Il tuo dominio è la situazione finanziaria: pagamenti in sospeso o scaduti, valore della pipeline, preventivi e contratti.
+Fornisci analisi chiare del flusso di cassa e delle opportunità economiche.
+Sii preciso con i numeri e proattivo sui pagamenti scaduti.""",
+    },
+    "clients": {
+        "id": "clients",
+        "name": "Client Agent",
+        "emoji": "👥",
+        "description": "Gestione Clienti — anagrafica, contratti, servizi attivi",
+        "tools": CLIENTS_TOOLS,
+        "system_prompt": """Sei il Client Agent di Evoluzione Imprese.
+Il tuo dominio è l'anagrafica clienti: dati, contratti, servizi attivi, Drive, documenti.
+Fornisci panoramiche complete sui clienti, identifica opportunità di upsell.
+Sii orientato alla relazione e alla soddisfazione del cliente.""",
+    },
+}
+
+# ─── HTTP Tool Executor ────────────────────────────────────────────────────────
+
+class ToolExecutor:
+    """Esegue le chiamate API verso il Gateway preservando il JWT dell'utente."""
+
+    def __init__(self, token: str, base_url: str):
+        self.token = token
+        self.base_url = base_url.rstrip("/")
+        self._headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        }
+
+    async def _get(self, path: str, params: Optional[Dict] = None) -> Any:
+        async with httpx.AsyncClient(timeout=30.0) as c:
+            r = await c.get(f"{self.base_url}{path}", headers=self._headers, params=params or {})
+            r.raise_for_status()
+            return r.json()
+
+    async def _post(self, path: str, body: Dict) -> Any:
+        async with httpx.AsyncClient(timeout=30.0) as c:
+            r = await c.post(f"{self.base_url}{path}", headers=self._headers, json=body)
+            r.raise_for_status()
+            return r.json()
+
+    async def _put(self, path: str, body: Dict) -> Any:
+        async with httpx.AsyncClient(timeout=30.0) as c:
+            r = await c.put(f"{self.base_url}{path}", headers=self._headers, json=body)
+            r.raise_for_status()
+            return r.json()
+
+    # ── Tool implementations ────────────────────────────────────────────────
+
+    async def get_pipeline_stages(self) -> str:
+        try:
+            stages = await self._get("/api/pipeline/stages")
+            return "\n".join(f"- `{s['key']}`: {s['label']}" for s in stages) or "Nessuno stage trovato."
+        except Exception as e:
+            return f"Errore: {e}"
+
+    async def get_pipeline_overview(self, stage: Optional[str] = None) -> str:
+        try:
+            leads = await self._get("/api/leads", {"stage": stage} if stage else {})
+            if not leads:
+                return "Nessun lead in pipeline."
+            by_stage: Dict[str, List] = {}
+            for l in leads:
+                by_stage.setdefault(l.get("stage", "?"), []).append(l)
+            total_val = sum(l.get("deal_value", 0) or 0 for l in leads) / 100
+            lines = [f"**Pipeline — {len(leads)} lead | valore totale €{total_val:,.0f}**\n"]
+            for stage_key, stage_leads in sorted(by_stage.items()):
+                stage_val = sum(l.get("deal_value", 0) or 0 for l in stage_leads) / 100
+                lines.append(f"\n### {stage_key.upper()} ({len(stage_leads)}) — €{stage_val:,.0f}")
+                for l in stage_leads[:6]:
+                    name = f"{l.get('first_name','')} {l.get('last_name','')}".strip() or l.get("email","?")
+                    az = f" | {l['azienda']}" if l.get("azienda") else ""
+                    val = f" | €{l['deal_value']/100:,.0f}" if l.get("deal_value") else ""
+                    src = f" | {l['source_channel']}" if l.get("source_channel") else ""
+                    ch = (l.get("lead_tag") or {}).get("label", "")
+                    tag = f" [{ch}]" if ch else ""
+                    lines.append(f"- **{name}**{az}{val}{src}{tag} `{l['id'][:8]}`")
+                if len(stage_leads) > 6:
+                    lines.append(f"  _...e altri {len(stage_leads)-6}_")
+            return "\n".join(lines)
+        except Exception as e:
+            return f"Errore recupero pipeline: {e}"
+
+    async def get_lead_details(self, lead_id: str) -> str:
+        try:
+            leads = await self._get("/api/leads")
+            lead = next((l for l in leads if l["id"] == lead_id or l["id"].startswith(lead_id)), None)
+            if not lead:
+                return f"Lead `{lead_id}` non trovato."
+            val = f"€{lead['deal_value']/100:,.2f}" if lead.get("deal_value") else "N/D"
+            assigned = ""
+            if lead.get("assigned_to_user"):
+                u = lead["assigned_to_user"]
+                assigned = f"{u.get('nome','')} {u.get('cognome','')}".strip() or u.get("username","?")
+            svcs = ""
+            if lead.get("deal_services"):
+                svcs = "\n**Servizi:** " + ", ".join(f"{s['name']} (€{s['price']:,.0f})" for s in lead["deal_services"])
+            notes = (lead.get("notes") or "nessuna")[:200]
+            return (
+                f"**{(lead.get('first_name','') + ' ' + lead.get('last_name','')).strip() or lead['email']}**\n"
+                f"Email: {lead.get('email','N/D')} | Tel: {lead.get('phone','N/D')}\n"
+                f"Azienda: {lead.get('azienda','N/D')}\n"
+                f"Stage: **{lead.get('stage','?')}** | Source: {lead.get('source_channel', lead.get('source','N/D'))}\n"
+                f"Deal: {val} | Assegnato a: {assigned or 'nessuno'}\n"
+                f"Tag: {(lead.get('lead_tag') or {}).get('label','nessuno')} | Status: {lead.get('response_status','?')}\n"
+                f"Note: {notes}"
+                f"{svcs}\n"
+                f"Creato: {(lead.get('created_at',''))[:10]} | ID: `{lead['id']}`"
+            )
+        except Exception as e:
+            return f"Errore dettaglio lead: {e}"
+
+    async def update_lead_stage(self, lead_id: str, new_stage: str, note: Optional[str] = None) -> str:
+        try:
+            body: Dict[str, Any] = {"stage": new_stage}
+            if note:
+                body["notes"] = note
+            await self._put(f"/api/leads/{lead_id}", body)
+            return f"✅ Lead `{lead_id[:8]}...` spostato allo stage **{new_stage}**."
+        except Exception as e:
+            return f"❌ Errore aggiornamento stage: {e}"
+
+    async def create_lead(self, email: str, **kwargs) -> str:
+        try:
+            body = {"email": email, **{k: v for k, v in kwargs.items() if v is not None}}
+            r = await self._post("/api/leads", body)
+            return f"✅ Lead creato: {email} | ID: `{(r.get('id','?'))[:8]}`"
+        except Exception as e:
+            return f"❌ Errore creazione lead: {e}"
+
+    async def get_pipeline_analytics(self, year: Optional[int] = None) -> str:
+        try:
+            params = {"year": year or datetime.now().year}
+            data = await self._get("/api/pipeline/analytics/monthly-value", params)
+            months = data.get("months", [])
+            year_total = data.get("year_total", 0)
+            lines = [f"**Pipeline {data.get('year','?')} — Totale annuo: €{year_total:,.0f}**\n"]
+            for m in months:
+                if m["leads_count"] == 0 and m["total_value"] == 0:
+                    continue
+                delta = f" ({'+' if (m['delta_pct'] or 0) >= 0 else ''}{m['delta_pct']:.1f}%)" if m.get("delta_pct") is not None else ""
+                lines.append(f"- **{m['label']}**: €{m['total_value']:,.0f} | {m['leads_count']} lead{delta}")
+            return "\n".join(lines)
+        except Exception as e:
+            return f"Errore analytics: {e}"
+
+    async def get_overdue_tasks(self, assignee_id: Optional[str] = None, limit: int = 20) -> str:
+        try:
+            params: Dict = {}
+            if assignee_id:
+                params["assignee"] = assignee_id
+            tasks = await self._get("/api/tasks", params)
+            if isinstance(tasks, dict):
+                tasks = tasks.get("tasks", tasks.get("data", []))
+            now = datetime.utcnow().date()
+            overdue = []
+            for t in tasks:
+                due = t.get("due_date") or t.get("scadenza") or t.get("deadline")
+                status = t.get("status", "")
+                if due and status not in ("done", "completed", "fatto"):
+                    try:
+                        due_date = datetime.fromisoformat(due[:10]).date()
+                        if due_date < now:
+                            overdue.append(((now - due_date).days, t, due_date))
+                    except Exception:
+                        pass
+            overdue.sort(reverse=True, key=lambda x: x[0])
+            if not overdue:
+                return "✅ Nessun task scaduto nel team."
+            lines = [f"**⚠️ {len(overdue)} task scaduti**\n"]
+            for days_late, t, due_date in overdue[:limit]:
+                title = t.get("title") or t.get("titolo") or "Task senza titolo"
+                assignee = t.get("assignee_name") or t.get("assegnatario") or "N/D"
+                proj = t.get("project_name") or t.get("cliente") or ""
+                lines.append(f"- 🔴 **{title}** — {days_late}g ritardo | {assignee}{' | ' + proj if proj else ''} | scad: {due_date}")
+            return "\n".join(lines)
+        except Exception as e:
+            return f"Errore task scaduti: {e}"
+
+    async def get_tasks(self, assignee_id: Optional[str] = None, status: Optional[str] = None,
+                        project_id: Optional[str] = None, limit: int = 30) -> str:
+        try:
+            params: Dict = {}
+            if assignee_id:
+                params["assignee"] = assignee_id
+            if status:
+                params["status"] = status
+            if project_id:
+                params["project_id"] = project_id
+            tasks = await self._get("/api/tasks", params)
+            if isinstance(tasks, dict):
+                tasks = tasks.get("tasks", tasks.get("data", []))
+            if not tasks:
+                return "Nessun task trovato."
+            lines = [f"**{len(tasks)} task**\n"]
+            for t in tasks[:limit]:
+                title = t.get("title") or t.get("titolo") or "?"
+                s = t.get("status", "?")
+                assignee = t.get("assignee_name") or t.get("assegnatario") or "N/D"
+                due = (t.get("due_date") or t.get("scadenza") or "")[:10]
+                icon = {"todo": "⬜", "in_progress": "🔄", "done": "✅", "blocked": "🚫"}.get(s, "•")
+                lines.append(f"{icon} **{title}** | {assignee} | scad: {due}")
+            return "\n".join(lines)
+        except Exception as e:
+            return f"Errore task: {e}"
+
+    async def update_task_status(self, task_id: str, status: str) -> str:
+        try:
+            await self._put(f"/api/tasks/{task_id}", {"status": status})
+            return f"✅ Task `{task_id[:8]}` → **{status}**."
+        except Exception as e:
+            return f"❌ Errore: {e}"
+
+    async def get_users_list(self) -> str:
+        try:
+            data = await self._get("/api/users")
+            users = data if isinstance(data, list) else data.get("users", [])
+            lines = [f"**{len(users)} utenti**\n"]
+            for u in users:
+                nome = f"{u.get('nome','')} {u.get('cognome','')}".strip() or u.get("username","?")
+                role = u.get("role") or u.get("job_title") or "?"
+                lines.append(f"- **{nome}** ({u.get('username','')}) | {role} | ID: `{u.get('id','')}`")
+            return "\n".join(lines)
+        except Exception as e:
+            return f"Errore utenti: {e}"
+
+    async def get_workflow_templates(self) -> str:
+        try:
+            data = await self._get("/api/workflow-templates")
+            items = data if isinstance(data, list) else data.get("templates", [])
+            if not items:
+                return "Nessun template trovato."
+            lines = [f"**{len(items)} workflow template**\n"]
+            for t in items:
+                name = t.get("name") or t.get("nome") or "?"
+                trigger = t.get("trigger_type") or t.get("trigger") or "?"
+                lines.append(f"- **{name}** | trigger: {trigger} | ID: `{t.get('id','')}`")
+            return "\n".join(lines)
+        except Exception as e:
+            return f"Errore workflow: {e}"
+
+    async def get_pagamenti_status(self, client_name: Optional[str] = None, status: Optional[str] = None) -> str:
+        try:
+            data = await self._get("/api/pagamenti")
+            items = data if isinstance(data, list) else data.get("pagamenti", data.get("data", []))
+            if not items:
+                return "Nessun pagamento trovato."
+            now = datetime.utcnow().date()
+            totals = {"attesa": 0.0, "scaduto": 0.0, "incassato": 0.0}
+            lines = []
+            for p in items:
+                if client_name and client_name.lower() not in (p.get("cliente_nome") or p.get("cliente") or "").lower():
+                    continue
+                pstatus = (p.get("status") or p.get("stato") or "").lower()
+                if status and status.lower() not in pstatus:
+                    continue
+                importo = float(p.get("importo") or p.get("amount") or 0)
+                scadenza = (p.get("scadenza") or p.get("due_date") or "")[:10]
+                cliente = p.get("cliente_nome") or p.get("cliente") or "N/D"
+                flag = ""
+                if pstatus in ("pending", "in_attesa"):
+                    if scadenza:
+                        try:
+                            if datetime.fromisoformat(scadenza).date() < now:
+                                flag = " ⚠️ **SCADUTO**"
+                                totals["scaduto"] += importo
+                            else:
+                                totals["attesa"] += importo
+                        except Exception:
+                            totals["attesa"] += importo
+                    else:
+                        totals["attesa"] += importo
+                elif pstatus in ("paid", "pagato", "incassato"):
+                    totals["incassato"] += importo
+                lines.append(f"- {cliente} | **€{importo:,.2f}** | {pstatus}{flag} | {scadenza}")
+            summary = (
+                f"**Pagamenti** — ✅ Incassati: €{totals['incassato']:,.0f} | "
+                f"⏳ In attesa: €{totals['attesa']:,.0f} | "
+                f"⚠️ Scaduti: €{totals['scaduto']:,.0f}\n"
+            )
+            return summary + "\n".join(lines[:30])
+        except Exception as e:
+            return f"Errore pagamenti: {e}"
+
+    async def get_preventivi_list(self) -> str:
+        try:
+            data = await self._get("/api/preventivi")
+            items = data if isinstance(data, list) else data.get("preventivi", [])
+            if not items:
+                return "Nessun preventivo trovato."
+            lines = [f"**{len(items)} preventivi**\n"]
+            for p in items[:20]:
+                num = p.get("numero") or p.get("id", "?")[:8]
+                cliente = p.get("cliente") or "N/D"
+                totale = p.get("totale") or p.get("importo_totale") or 0
+                status = p.get("status") or "?"
+                lines.append(f"- **{num}** | {cliente} | €{totale:,.0f} | {status}")
+            return "\n".join(lines)
+        except Exception as e:
+            return f"Errore preventivi: {e}"
+
+    async def get_contratti_list(self) -> str:
+        try:
+            data = await self._get("/api/contratti")
+            items = data if isinstance(data, list) else data.get("contratti", [])
+            if not items:
+                return "Nessun contratto trovato."
+            lines = [f"**{len(items)} contratti**\n"]
+            for c in items[:20]:
+                num = c.get("numero") or "?"
+                cliente = c.get("datiCommittente", {}).get("ragioneSociale") if isinstance(c.get("datiCommittente"), dict) else c.get("ragione_sociale") or c.get("nome_cliente") or "N/D"
+                status = c.get("status") or "?"
+                durata = c.get("durata") or {}
+                if isinstance(durata, dict):
+                    dec = durata.get("dataDecorrenza", "")[:10]
+                    scad = durata.get("dataScadenza", "")[:10]
+                    periodo = f"{dec} → {scad}" if dec else ""
+                else:
+                    periodo = ""
+                lines.append(f"- **{num}** | {cliente} | {status} | {periodo}")
+            return "\n".join(lines)
+        except Exception as e:
+            return f"Errore contratti: {e}"
+
+    async def get_all_clients(self) -> str:
+        try:
+            clients = await self._get("/api/clienti")
+            if not clients:
+                return "Nessun cliente trovato."
+            lines = [f"**{len(clients)} clienti attivi**\n"]
+            for c in clients:
+                name = c.get("nome_azienda", "N/D")
+                dettagli = c.get("dettagli") or {}
+                ref = dettagli.get("referente") or {}
+                ref_name = f"{ref.get('nome','')} {ref.get('cognome','')}".strip() if ref else ""
+                svcs = c.get("servizi_attivi") or []
+                srv = ", ".join(svcs[:3]) if isinstance(svcs, list) else "N/D"
+                lines.append(f"- **{name}** | {ref_name or 'N/D'} | {srv} | `{c['id'][:8]}`")
+            return "\n".join(lines)
+        except Exception as e:
+            return f"Errore clienti: {e}"
+
+    async def get_client_overview(self, client_id: str) -> str:
+        try:
+            c = await self._get(f"/api/clienti/{client_id}")
+            name = c.get("nome_azienda", "N/D")
+            cont = c.get("contatti") or {}
+            dettagli = c.get("dettagli") or {}
+            svcs = c.get("servizi_attivi") or []
+            drive_id = dettagli.get("drive_folder_id", "")
+            drive_url = f"https://drive.google.com/drive/folders/{drive_id}" if drive_id else "N/D"
+            out = (
+                f"**{name}**\n"
+                f"Email: {cont.get('email','N/D')} | Tel: {cont.get('telefono','N/D')} | P.IVA: {cont.get('cfPiva','N/D')}\n"
+                f"Servizi: {', '.join(svcs) if svcs else 'N/D'}\n"
+                f"Drive: {drive_url}\n"
+                f"Inizio: {dettagli.get('data_inizio','N/D')} | Note: {(c.get('note','') or '')[:150]}"
+            )
+            # documenti collegati
+            try:
+                docs = await self._get(f"/api/clienti/{client_id}/documents")
+                if docs:
+                    out += f"\n\n**Documenti ({len(docs)})**:"
+                    for d in docs[:5]:
+                        out += f"\n- {d.get('type','?')}: {d.get('numero','')} | {d.get('status','')} | €{d.get('importo_totale', d.get('totale',''))}"
+            except Exception:
+                pass
+            return out
+        except Exception as e:
+            return f"Errore cliente {client_id}: {e}"
+
+    async def get_servizi_catalog(self) -> str:
+        try:
+            # Import diretto dal modulo data.py nella stessa directory
+            _dir = os.path.dirname(os.path.abspath(__file__))
+            if _dir not in sys.path:
+                sys.path.insert(0, _dir)
+            from data import SERVIZI_CATALOG
+            lines = ["**Catalogo Servizi Evoluzione Imprese**\n"]
+            for cat in SERVIZI_CATALOG:
+                lines.append(f"\n### {cat['nome']}")
+                for sub in cat.get("sottoservizi", []):
+                    prezzo = f" — €{sub['prezzo_base']:,.0f}" if sub.get("prezzo_base") else ""
+                    lines.append(f"- {sub['nome']}{prezzo} `{sub['id']}`")
+            return "\n".join(lines)
+        except Exception as e:
+            return f"Errore catalogo: {e}"
+
+    async def execute(self, name: str, args: Dict) -> str:
+        """Dispatch universale: chiama il metodo corrispondente al tool name."""
+        dispatch = {
+            "get_pipeline_stages": lambda: self.get_pipeline_stages(),
+            "get_pipeline_overview": lambda: self.get_pipeline_overview(args.get("stage")),
+            "get_lead_details": lambda: self.get_lead_details(args["lead_id"]),
+            "update_lead_stage": lambda: self.update_lead_stage(args["lead_id"], args["new_stage"], args.get("note")),
+            "create_lead": lambda: self.create_lead(**args),
+            "get_pipeline_analytics": lambda: self.get_pipeline_analytics(args.get("year")),
+            "get_overdue_tasks": lambda: self.get_overdue_tasks(args.get("assignee_id"), args.get("limit", 20)),
+            "get_tasks": lambda: self.get_tasks(args.get("assignee_id"), args.get("status"), args.get("project_id"), args.get("limit", 30)),
+            "update_task_status": lambda: self.update_task_status(args["task_id"], args["status"]),
+            "get_users_list": lambda: self.get_users_list(),
+            "get_workflow_templates": lambda: self.get_workflow_templates(),
+            "get_pagamenti_status": lambda: self.get_pagamenti_status(args.get("client_name"), args.get("status")),
+            "get_preventivi_list": lambda: self.get_preventivi_list(),
+            "get_contratti_list": lambda: self.get_contratti_list(),
+            "get_all_clients": lambda: self.get_all_clients(),
+            "get_client_overview": lambda: self.get_client_overview(args["client_id"]),
+            "get_servizi_catalog": lambda: self.get_servizi_catalog(),
+        }
+        fn = dispatch.get(name)
+        if fn is None:
+            return f"Tool '{name}' non implementato."
+        try:
+            return await fn()
+        except Exception as e:
+            return f"Errore tool '{name}': {e}"
+
+
+# ─── Singolo Agente ────────────────────────────────────────────────────────────
+
+class Agent:
+    """
+    Un singolo agente specializzato con il suo Claude + tool set + system prompt.
+    """
+
+    def __init__(self, agent_id: str, token: str, user: Dict[str, Any]):
+        self.config = AGENT_CONFIGS[agent_id]
+        self.executor = ToolExecutor(
+            token=token,
+            base_url=_base_url(),
+        )
+        self.user = user
+
+    def _system_prompt(self) -> str:
+        now = datetime.now().strftime("%A %d %B %Y, %H:%M")
+        nome = f"{self.user.get('nome','')}{' ' + self.user.get('cognome','') if self.user.get('cognome') else ''}".strip() or self.user.get("username", "utente")
+        role = self.user.get("role") or self.user.get("job_title") or "team member"
+        return (
+            f"{self.config['system_prompt']}\n\n"
+            f"Stai parlando con {nome} ({role}).\n"
+            f"Data/ora: {now} (Europa/Roma).\n"
+            "Regole:\n"
+            "- Risposte brevi e dirette\n"
+            "- Usa SOLO i tool per dati reali, non inventare\n"
+            "- Formatta con markdown (grassetto per urgenze, liste per elenchi)\n"
+            "- Lingua: italiano"
+        )
+
+    async def chat(self, message: str, history: List[Dict]) -> Dict[str, Any]:
+        api_key = _anthropic_key()
+        if not _ANTHROPIC_AVAILABLE or not api_key:
+            return {
+                "response": "ANTHROPIC_API_KEY non configurata. Aggiungila nelle variabili d'ambiente.",
+                "tools_used": [],
+                "agent_id": self.config["id"],
+                "error": "no_api_key",
+            }
+
+        client = _anthropic_lib.Anthropic(api_key=api_key)
+        messages = list(history) + [{"role": "user", "content": message}]
+        tools_used: List[str] = []
+
+        for _ in range(MAX_TOOL_ITERATIONS):
+            response = client.messages.create(
+                model=_model(),
+                max_tokens=4096,
+                system=self._system_prompt(),
+                tools=self.config["tools"],
+                messages=messages,
+            )
+
+            if response.stop_reason == "tool_use":
+                tool_results = []
+                for block in response.content:
+                    if block.type == "tool_use":
+                        tools_used.append(block.name)
+                        result_text = await self.executor.execute(block.name, block.input)
+                        tool_results.append({
+                            "type": "tool_result",
+                            "tool_use_id": block.id,
+                            "content": result_text,
+                        })
+                messages.append({"role": "assistant", "content": response.content})
+                messages.append({"role": "user", "content": tool_results})
+            else:
+                text = "".join(b.text for b in response.content if hasattr(b, "text"))
+                return {
+                    "response": text,
+                    "tools_used": tools_used,
+                    "agent_id": self.config["id"],
+                    "error": None,
+                }
+
+        return {
+            "response": "⚠️ Troppe iterazioni di tool calling. Riprova con una richiesta più specifica.",
+            "tools_used": tools_used,
+            "agent_id": self.config["id"],
+            "error": "max_iterations",
+        }
+
+
+# ─── Orchestratore ─────────────────────────────────────────────────────────────
+
+class EvoAgentOrchestrator:
+    """
+    Orchestratore centrale. Smista i messaggi all'agente corretto,
+    o gestisce direttamente con accesso a tutti i tool.
+    """
+
+    def __init__(self, token: str, user: Dict[str, Any]):
+        self.token = token
+        self.user = user
+
+    def _get_agent(self, agent_id: str) -> Agent:
+        agent_id = agent_id if agent_id in AGENT_CONFIGS else "orchestrator"
+        return Agent(agent_id=agent_id, token=self.token, user=self.user)
+
+    async def chat(
+        self,
+        message: str,
+        history: List[Dict],
+        agent_id: str = "orchestrator",
+    ) -> Dict[str, Any]:
+        agent = self._get_agent(agent_id)
+        return await agent.chat(message=message, history=history)
+
+    async def morning_briefing(self, agent_id: str = "orchestrator") -> Dict[str, Any]:
+        prompt = (
+            "Genera un briefing mattutino operativo per il team. "
+            "Usa i tool per raccogliere: (1) task scaduti, (2) stato pipeline con lead critici, "
+            "(3) pagamenti in sospeso o scaduti. "
+            "Poi sintetizza in max 6 punti chiave con emoji. "
+            "🔴 = critico/urgente, 🟡 = attenzione, ✅ = ok. "
+            "Massimo 250 parole. Sii molto diretto."
+        )
+        return await self.chat(message=prompt, history=[], agent_id=agent_id)
+
+    @staticmethod
+    def get_agents_info() -> List[Dict]:
+        return [
+            {
+                "id": cfg["id"],
+                "name": cfg["name"],
+                "emoji": cfg["emoji"],
+                "description": cfg["description"],
+                "tools_count": len(cfg["tools"]),
+            }
+            for cfg in AGENT_CONFIGS.values()
+        ]
+
+
+# ─── Helpers ───────────────────────────────────────────────────────────────────
+
+def _base_url() -> str:
+    return (
+        os.environ.get("BASE_URL")
+        or os.environ.get("GATEWAY_URL")
+        or "http://localhost:10000"
+    ).rstrip("/")

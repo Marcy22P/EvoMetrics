@@ -1,4 +1,5 @@
 from fastapi import FastAPI, Depends, HTTPException, Request, Body, BackgroundTasks
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from database import SessionLocal, init_db, Lead as LeadModel, PipelineStage as PipelineStageModel, LeadTag as LeadTagModel, DATABASE_URL, IS_REAL_PRODUCTION
@@ -10,6 +11,8 @@ import os
 import datetime
 from datetime import timedelta
 import json
+import csv
+import io
 
 app = FastAPI(
     title="Sales Service",
@@ -679,8 +682,11 @@ def get_leads(stage: str = None, db: Session = Depends(get_db)):
     elif stage:
         print(f"📊 Recuperati {len(leads)} lead per stage '{stage}' (totale nel DB: {total_count})")
     
-    # Popola i tag per ogni lead
+    # Popola tag e utente assegnato per ogni lead
     result = []
+    # Cache utenti per evitare N+1 queries
+    user_cache = {}
+    
     for lead in leads:
         lead_dict = {
             "id": lead.id,
@@ -696,6 +702,14 @@ def get_leads(stage: str = None, db: Session = Depends(get_db)):
             "response_status": lead.response_status,
             "lead_tag_id": lead.lead_tag_id,
             "structured_notes": lead.structured_notes or [],
+            "deal_value": getattr(lead, 'deal_value', None),
+            "deal_currency": getattr(lead, 'deal_currency', 'EUR'),
+            "deal_services": getattr(lead, 'deal_services', None),
+            "linked_preventivo_id": getattr(lead, 'linked_preventivo_id', None),
+            "linked_contratto_id": getattr(lead, 'linked_contratto_id', None),
+            "source_channel": getattr(lead, 'source_channel', None),
+            "assigned_to_user_id": getattr(lead, 'assigned_to_user_id', None),
+            "assigned_to_user": None,
             "created_at": lead.created_at,
             "updated_at": lead.updated_at,
             "lead_tag": None
@@ -709,9 +723,32 @@ def get_leads(stage: str = None, db: Session = Depends(get_db)):
                     "id": tag.id,
                     "label": tag.label,
                     "color": tag.color,
+                    "hex_color": getattr(tag, 'hex_color', None),
                     "index": tag.index,
                     "is_system": tag.is_system
                 }
+        
+        # Recupera utente assegnato se presente
+        assigned_uid = getattr(lead, 'assigned_to_user_id', None)
+        if assigned_uid:
+            if assigned_uid not in user_cache:
+                try:
+                    user_row = db.execute(
+                        text("SELECT id, username, nome, cognome FROM users WHERE id = :uid"),
+                        {"uid": assigned_uid}
+                    ).fetchone()
+                    if user_row:
+                        user_cache[assigned_uid] = {
+                            "id": str(user_row[0]),
+                            "username": user_row[1],
+                            "nome": user_row[2],
+                            "cognome": user_row[3],
+                        }
+                    else:
+                        user_cache[assigned_uid] = None
+                except Exception:
+                    user_cache[assigned_uid] = None
+            lead_dict["assigned_to_user"] = user_cache.get(assigned_uid)
         
         result.append(lead_dict)
     
@@ -729,6 +766,11 @@ def create_lead(lead_in: LeadCreate, db: Session = Depends(get_db)):
         first_stage = db.query(PipelineStageModel).order_by(PipelineStageModel.index).first()
         stage = first_stage.key if first_stage else "optin"
     
+    # Serializza deal_services se presente
+    deal_services_json = None
+    if lead_in.deal_services:
+        deal_services_json = [{"name": s.name, "price": s.price} for s in lead_in.deal_services]
+
     new_lead = LeadModel(
         id=str(uuid.uuid4()),
         email=lead_in.email,
@@ -742,7 +784,14 @@ def create_lead(lead_in: LeadCreate, db: Session = Depends(get_db)):
         response_status=lead_in.response_status or "pending",
         lead_tag_id=lead_in.lead_tag_id,
         structured_notes=lead_in.structured_notes or [],
-        clickfunnels_data=lead_in.clickfunnels_data
+        clickfunnels_data=lead_in.clickfunnels_data,
+        deal_value=lead_in.deal_value,
+        deal_currency=lead_in.deal_currency or "EUR",
+        deal_services=deal_services_json,
+        linked_preventivo_id=lead_in.linked_preventivo_id,
+        linked_contratto_id=lead_in.linked_contratto_id,
+        source_channel=lead_in.source_channel,
+        assigned_to_user_id=lead_in.assigned_to_user_id,
     )
     
     db.add(new_lead)
@@ -892,6 +941,9 @@ def update_lead(lead_id: str, lead_in: LeadUpdate, background_tasks: BackgroundT
             if key == "stage" and value != previous_stage:
                 stage_changed = True
                 print(f"🔄 Lead {lead_id}: Stage cambiato da '{previous_stage}' a '{value}'")
+            # Serializza deal_services se presente
+            if key == "deal_services" and isinstance(value, list):
+                value = [{"name": s.get("name", s.name) if hasattr(s, "name") else s.get("name", ""), "price": s.get("price", 0)} for s in value]
             setattr(lead, key, value)
     
     # Aggiorna updated_at
@@ -1073,6 +1125,7 @@ def create_lead_tag(tag_in: LeadTagCreate, db: Session = Depends(get_db)):
     new_tag = LeadTagModel(
         label=tag_in.label,
         color=tag_in.color or "base",
+        hex_color=getattr(tag_in, 'hex_color', None),
         index=tag_in.index if tag_in.index is not None else next_index,
         is_system=False
     )
@@ -1096,6 +1149,8 @@ def update_lead_tag(tag_id: int, tag_in: LeadTagUpdate, db: Session = Depends(ge
         tag.label = tag_in.label
     if tag_in.color is not None:
         tag.color = tag_in.color
+    if tag_in.hex_color is not None:
+        tag.hex_color = tag_in.hex_color
     if tag_in.index is not None:
         tag.index = tag_in.index
     
@@ -1132,6 +1187,266 @@ def reorder_lead_tags(order: List[int], db: Session = Depends(get_db)):
     
     db.commit()
     return {"status": "reordered"}
+
+# ========================
+# V2: ANALYTICS - Monthly Value Tracker
+# ========================
+
+@app.get("/api/pipeline/analytics/monthly-value")
+def get_monthly_value(year: int = None, db: Session = Depends(get_db)):
+    """
+    Tracker valore mensile: somma deal_value per mese con delta percentuale.
+    """
+    import calendar
+    if not year:
+        year = datetime.datetime.utcnow().year
+    
+    month_labels = ["Gen", "Feb", "Mar", "Apr", "Mag", "Giu",
+                    "Lug", "Ago", "Set", "Ott", "Nov", "Dic"]
+    
+    months = []
+    year_total = 0
+    prev_value = None
+    
+    for m in range(1, 13):
+        rows = db.execute(
+            text("""
+                SELECT COALESCE(SUM(deal_value), 0) as total, COUNT(*) as cnt
+                FROM leads
+                WHERE EXTRACT(YEAR FROM created_at) = :y
+                  AND EXTRACT(MONTH FROM created_at) = :m
+            """),
+            {"y": year, "m": m}
+        ).fetchone()
+        
+        total_value = float(rows[0]) if rows else 0
+        leads_count = int(rows[1]) if rows else 0
+        
+        delta_pct = None
+        if prev_value is not None and prev_value > 0:
+            delta_pct = round(((total_value - prev_value) / prev_value) * 100, 1)
+        
+        months.append({
+            "month": m,
+            "label": month_labels[m - 1],
+            "total_value": total_value,
+            "leads_count": leads_count,
+            "delta_pct": delta_pct,
+        })
+        
+        year_total += total_value
+        if total_value > 0:
+            prev_value = total_value
+    
+    return {
+        "year": year,
+        "months": months,
+        "year_total": year_total,
+    }
+
+
+# ========================
+# V2: SERVICES LIST (dal preventivatore)
+# ========================
+
+@app.get("/api/pipeline/services")
+def get_available_services():
+    """
+    Lista servizi disponibili per associare a un deal.
+    Categorie dal preventivatore.
+    """
+    return {
+        "categories": [
+            {
+                "id": "ecommerce",
+                "label": "E-Commerce",
+                "services": [
+                    {"id": "sito_web", "name": "Sito Web / E-Commerce", "default_price": 0},
+                    {"id": "restyling", "name": "Restyling Sito", "default_price": 0},
+                    {"id": "landing_page", "name": "Landing Page", "default_price": 0},
+                ]
+            },
+            {
+                "id": "emailMarketing",
+                "label": "Email Marketing",
+                "services": [
+                    {"id": "email_setup", "name": "Setup Email Marketing", "default_price": 0},
+                    {"id": "email_gestione", "name": "Gestione Email Marketing", "default_price": 0},
+                ]
+            },
+            {
+                "id": "videoPost",
+                "label": "Video & Post",
+                "services": [
+                    {"id": "video_produzione", "name": "Produzione Video", "default_price": 0},
+                    {"id": "social_management", "name": "Social Media Management", "default_price": 0},
+                    {"id": "content_creation", "name": "Content Creation", "default_price": 0},
+                ]
+            },
+            {
+                "id": "metaAds",
+                "label": "Meta Ads",
+                "services": [
+                    {"id": "meta_setup", "name": "Setup Campagne Meta", "default_price": 0},
+                    {"id": "meta_gestione", "name": "Gestione Meta Ads", "default_price": 0},
+                ]
+            },
+            {
+                "id": "googleAds",
+                "label": "Google Ads",
+                "services": [
+                    {"id": "google_setup", "name": "Setup Campagne Google", "default_price": 0},
+                    {"id": "google_gestione", "name": "Gestione Google Ads", "default_price": 0},
+                ]
+            },
+            {
+                "id": "seo",
+                "label": "SEO",
+                "services": [
+                    {"id": "seo_audit", "name": "SEO Audit", "default_price": 0},
+                    {"id": "seo_gestione", "name": "Gestione SEO", "default_price": 0},
+                ]
+            },
+        ]
+    }
+
+
+# ========================
+# V2: SOURCE CHANNELS LIST
+# ========================
+
+@app.get("/api/pipeline/source-channels")
+def get_source_channels():
+    """Lista canali fonte disponibili."""
+    channels = [
+        "Meta Ads", "Google Ads", "TikTok Ads", "LinkedIn Ads",
+        "Referral", "Passaparola", "Sito Web", "Organico",
+        "ClickFunnels", "Email Marketing", "Evento", "Altro",
+    ]
+    return {"channels": channels}
+
+
+# ========================
+# V2: USERS LIST (per assegnazione)
+# ========================
+
+@app.get("/api/pipeline/users")
+def get_pipeline_users(db: Session = Depends(get_db)):
+    """Lista utenti per assegnazione lead."""
+    try:
+        rows = db.execute(
+            text("SELECT id, username, nome, cognome, role FROM users WHERE is_active = true ORDER BY username")
+        ).fetchall()
+        return [
+            {"id": str(r[0]), "username": r[1], "nome": r[2], "cognome": r[3], "role": r[4]}
+            for r in rows
+        ]
+    except Exception as e:
+        print(f"⚠️ Errore recupero utenti pipeline: {e}")
+        return []
+
+
+# ========================
+# V2: EXPORT CSV OPPORTUNITÀ
+# ========================
+
+def _format_ts(dt):
+    """Formatta datetime per CSV (ISO o vuoto)."""
+    if dt is None:
+        return ""
+    if hasattr(dt, "isoformat"):
+        return dt.isoformat()
+    return str(dt)
+
+@app.get("/api/leads/export/csv")
+def export_leads_csv(db: Session = Depends(get_db)):
+    """
+    Export di tutte le opportunità in Pipeline in CSV.
+    Colonne: Nome, Cognome, Nome Azienda, Canale fonte, Source, Stage, Stage label,
+    Data opt-in, Data ultima modifica, Email, Telefono, Valore deal, Valuta, Servizi deal,
+    ID preventivo, ID contratto, Assegnato a, Tag, Response status, Note, ID.
+    """
+    leads = db.query(LeadModel).order_by(LeadModel.created_at.desc()).all()
+    stages = {s.key: s.label for s in db.query(PipelineStageModel).all()}
+    tags_by_id = {t.id: t.label for t in db.query(LeadTagModel).all()}
+    user_cache = {}
+    for lead in leads:
+        uid = getattr(lead, "assigned_to_user_id", None)
+        if uid and uid not in user_cache:
+            try:
+                row = db.execute(
+                    text("SELECT id, nome, cognome FROM users WHERE id = :uid"),
+                    {"uid": uid},
+                ).fetchone()
+                user_cache[uid] = f"{row[1] or ''} {row[2] or ''}".strip() if row else ""
+            except Exception:
+                user_cache[uid] = ""
+        if uid and uid not in user_cache:
+            user_cache[uid] = ""
+
+    headers = [
+        "Nome", "Cognome", "Nome Azienda", "Canale della fonte", "Source",
+        "Stage", "Stage label", "Data opt-in", "Data ultima modifica",
+        "Email", "Telefono", "Valore deal (EUR)", "Valuta", "Servizi deal",
+        "ID preventivo", "ID contratto", "Assegnato a", "Tag", "Response status",
+        "Note", "ID",
+    ]
+
+    def row_for(lead):
+        stage_label = stages.get(lead.stage, lead.stage or "")
+        tag_label = tags_by_id.get(lead.lead_tag_id, "") if lead.lead_tag_id else ""
+        assigned = user_cache.get(getattr(lead, "assigned_to_user_id", None) or "", "")
+        deal_val = getattr(lead, "deal_value", None)
+        if deal_val is not None and isinstance(deal_val, int):
+            deal_val = round(deal_val / 100.0, 2)
+        deal_services = getattr(lead, "deal_services", None) or []
+        if isinstance(deal_services, str):
+            try:
+                deal_services = json.loads(deal_services) if deal_services else []
+            except Exception:
+                deal_services = []
+        services_str = "; ".join(
+            f"{s.get('name', '')}: {s.get('price', 0)}€" for s in deal_services
+        ) if isinstance(deal_services, list) else ""
+        source_channel = getattr(lead, "source_channel", None) or ""
+        return [
+            (lead.first_name or ""),
+            (lead.last_name or ""),
+            (lead.azienda or ""),
+            source_channel,
+            (lead.source or ""),
+            (lead.stage or ""),
+            stage_label,
+            _format_ts(lead.created_at),
+            _format_ts(lead.updated_at),
+            (lead.email or ""),
+            (lead.phone or ""),
+            str(deal_val) if deal_val is not None else "",
+            (getattr(lead, "deal_currency", None) or "EUR"),
+            services_str,
+            (getattr(lead, "linked_preventivo_id", None) or ""),
+            (getattr(lead, "linked_contratto_id", None) or ""),
+            assigned,
+            tag_label,
+            (lead.response_status or ""),
+            (lead.notes or "").replace("\r\n", " ").replace("\n", " "),
+            (lead.id or ""),
+        ]
+
+    buf = io.StringIO()
+    writer = csv.writer(buf, delimiter=",", quoting=csv.QUOTE_MINIMAL)
+    writer.writerow(headers)
+    for lead in leads:
+        writer.writerow(row_for(lead))
+
+    buf.seek(0)
+    filename = f"pipeline-opportunita-{datetime.datetime.utcnow().strftime('%Y-%m-%d')}.csv"
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
 
 # Health check
 @app.get("/health")

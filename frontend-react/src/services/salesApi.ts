@@ -31,7 +31,6 @@ export interface PipelineStage {
   is_system: boolean;
 }
 
-// Nota strutturata per lead
 export interface LeadNote {
   id: string;
   content: string;
@@ -39,7 +38,6 @@ export interface LeadNote {
   updated_at?: string;
 }
 
-// Status risposta possibili (deprecato - usa LeadTag)
 export type ResponseStatus = 'pending' | 'no_show' | 'show' | 'followup' | 'qualified' | 'not_interested' | 'callback';
 
 export interface ResponseStatusOption {
@@ -47,11 +45,11 @@ export interface ResponseStatusOption {
   label: string;
 }
 
-// Tag Lead customizzabili
 export interface LeadTag {
   id: number;
   label: string;
-  color: string;  // base, info, success, warning, critical, attention
+  color: string;
+  hex_color?: string;  // V2: colore hex custom
   index: number;
   is_system: boolean;
 }
@@ -59,13 +57,45 @@ export interface LeadTag {
 export interface LeadTagCreate {
   label: string;
   color?: string;
+  hex_color?: string;
   index?: number;
 }
 
 export interface LeadTagUpdate {
   label?: string;
   color?: string;
+  hex_color?: string;
   index?: number;
+}
+
+// V2: Servizio associato a un deal
+export interface DealService {
+  name: string;
+  price: number;
+}
+
+// V2: Utente assegnato
+export interface PipelineUser {
+  id: string;
+  username: string;
+  nome?: string;
+  cognome?: string;
+  role?: string;
+}
+
+// V2: Analytics mensile
+export interface MonthlyValueItem {
+  month: number;
+  label: string;
+  total_value: number;
+  leads_count: number;
+  delta_pct: number | null;
+}
+
+export interface MonthlyValueResponse {
+  year: number;
+  months: MonthlyValueItem[];
+  year_total: number;
 }
 
 export interface Lead {
@@ -74,15 +104,24 @@ export interface Lead {
   first_name?: string;
   last_name?: string;
   phone?: string;
-  azienda?: string;  // Nome azienda
+  azienda?: string;
   stage: string;
   source: string;
   clickfunnels_data?: { [key: string]: any };
-  notes?: string;  // Legacy
-  response_status?: ResponseStatus;  // Deprecato - mantenuto per compatibilità
-  lead_tag_id?: number;  // Nuovo sistema di tag customizzabili
-  lead_tag?: LeadTag;  // Tag associato (popolato dal backend)
-  structured_notes?: LeadNote[];  // Note strutturate
+  notes?: string;
+  response_status?: ResponseStatus;
+  lead_tag_id?: number;
+  lead_tag?: LeadTag;
+  structured_notes?: LeadNote[];
+  // V2 fields
+  deal_value?: number;
+  deal_currency?: string;
+  deal_services?: DealService[];
+  linked_preventivo_id?: string;
+  linked_contratto_id?: string;
+  source_channel?: string;
+  assigned_to_user_id?: string;
+  assigned_to_user?: PipelineUser;
   created_at: string;
   updated_at: string;
 }
@@ -92,12 +131,18 @@ export interface LeadCreate {
   first_name?: string;
   last_name?: string;
   phone?: string;
-  azienda?: string;  // Nome azienda
+  azienda?: string;
   stage?: string;
   notes?: string;
-  response_status?: ResponseStatus;  // Deprecato
-  lead_tag_id?: number;  // Nuovo sistema tag
+  response_status?: ResponseStatus;
+  lead_tag_id?: number;
   clickfunnels_data?: { [key: string]: any };
+  // V2 fields
+  deal_value?: number;
+  deal_currency?: string;
+  deal_services?: DealService[];
+  source_channel?: string;
+  assigned_to_user_id?: string;
 }
 
 export interface LeadUpdatePayload {
@@ -106,9 +151,17 @@ export interface LeadUpdatePayload {
   first_name?: string;
   last_name?: string;
   phone?: string;
-  azienda?: string;  // Nome azienda
-  response_status?: ResponseStatus;  // Deprecato
-  lead_tag_id?: number | null;  // Nuovo sistema tag (null per rimuovere)
+  azienda?: string;
+  response_status?: ResponseStatus;
+  lead_tag_id?: number | null;
+  // V2 fields
+  deal_value?: number | null;
+  deal_currency?: string;
+  deal_services?: DealService[] | null;
+  linked_preventivo_id?: string | null;
+  linked_contratto_id?: string | null;
+  source_channel?: string | null;
+  assigned_to_user_id?: string | null;
 }
 
 export const salesApi = {
@@ -116,6 +169,23 @@ export const salesApi = {
   getLeads: async (stage?: string): Promise<Lead[]> => {
     const url = stage ? `${SALES_SERVICE_URL}/api/leads?stage=${stage}` : `${SALES_SERVICE_URL}/api/leads`;
     return authenticatedFetch(url);
+  },
+
+  /** Scarica CSV di tutte le opportunità in pipeline (overview). */
+  downloadLeadsCsv: async (): Promise<void> => {
+    const token = getAuthToken();
+    const res = await fetch(`${SALES_SERVICE_URL}/api/leads/export/csv`, {
+      headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+    });
+    if (!res.ok) throw new Error(res.statusText || 'Export fallito');
+    const blob = await res.blob();
+    const name = res.headers.get('Content-Disposition')?.match(/filename="?([^";]+)"?/)?.[1] ?? 'pipeline-opportunita.csv';
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    a.click();
+    URL.revokeObjectURL(url);
   },
 
   createLead: async (data: LeadCreate): Promise<Lead> => {
@@ -171,7 +241,7 @@ export const salesApi = {
     });
   },
 
-  // --- RESPONSE STATUS (DEPRECATO - usa lead-tags) ---
+  // --- RESPONSE STATUS (DEPRECATO) ---
   getResponseStatuses: async (): Promise<ResponseStatusOption[]> => {
     return authenticatedFetch(`${SALES_SERVICE_URL}/api/leads/response-statuses`);
   },
@@ -197,7 +267,7 @@ export const salesApi = {
     });
   },
 
-  // --- LEAD TAGS (nuovo sistema customizzabile) ---
+  // --- LEAD TAGS ---
   getLeadTags: async (): Promise<LeadTag[]> => {
     return authenticatedFetch(`${SALES_SERVICE_URL}/api/lead-tags`);
   },
@@ -227,5 +297,28 @@ export const salesApi = {
       method: 'POST',
       body: JSON.stringify(order),
     });
+  },
+
+  // --- V2: ANALYTICS ---
+  getMonthlyValue: async (year?: number): Promise<MonthlyValueResponse> => {
+    const url = year
+      ? `${SALES_SERVICE_URL}/api/pipeline/analytics/monthly-value?year=${year}`
+      : `${SALES_SERVICE_URL}/api/pipeline/analytics/monthly-value`;
+    return authenticatedFetch(url);
+  },
+
+  // --- V2: SERVICES ---
+  getAvailableServices: async (): Promise<any> => {
+    return authenticatedFetch(`${SALES_SERVICE_URL}/api/pipeline/services`);
+  },
+
+  // --- V2: SOURCE CHANNELS ---
+  getSourceChannels: async (): Promise<{ channels: string[] }> => {
+    return authenticatedFetch(`${SALES_SERVICE_URL}/api/pipeline/source-channels`);
+  },
+
+  // --- V2: PIPELINE USERS ---
+  getPipelineUsers: async (): Promise<PipelineUser[]> => {
+    return authenticatedFetch(`${SALES_SERVICE_URL}/api/pipeline/users`);
   },
 };

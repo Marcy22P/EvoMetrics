@@ -2,7 +2,15 @@ import asyncio
 from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Optional
 import os
+import sys
 import json
+
+# Assicura che la directory del mcp-service sia in sys.path anche a runtime
+# (il api-gateway rimuove le path dei servizi dopo il caricamento)
+_MCP_SERVICE_DIR = os.path.dirname(os.path.abspath(__file__))
+if _MCP_SERVICE_DIR not in sys.path:
+    sys.path.insert(0, _MCP_SERVICE_DIR)
+
 import mcp.types as types
 from mcp.server import Server
 from mcp.server.sse import SseServerTransport
@@ -12,15 +20,20 @@ from fastapi import FastAPI, Request, HTTPException, Depends
 from pydantic import BaseModel
 from openai import AsyncOpenAI
 from sqlalchemy.orm import Session
-from sqlalchemy import desc, func, cast, String
+from sqlalchemy import desc, func, cast, String, text
 from datetime import datetime, timedelta
 from data import SERVIZI_CATALOG, PREVENTIVO_SCHEMA, EXPENSE_CATEGORIES
 from database import SessionLocal, engine, Base
-from models import ChatSession, ChatMessage, Assessment
+from models import ChatSession, ChatMessage, Assessment, AgentConversation as _AgentConversation
 import httpx
+
+# Import EvoAgent a livello di modulo (il path è già garantito da _MCP_SERVICE_DIR)
+try:
+    from evo_agent import EvoAgentOrchestrator as _EvoAgentOrchestrator
+except ImportError as _e:
+    print(f"⚠️ evo_agent non importabile: {_e}")
+    _EvoAgentOrchestrator = None
 from bs4 import BeautifulSoup
-import sys
-import os
 # Aggiungi il path del sibill-service per importare il categorizzatore
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'sibill-service'))
 try:
@@ -80,15 +93,31 @@ def get_db():
     global _db_initialized
     db = SessionLocal()
     try:
-        # Se non inizializzato, prova a creare le tabelle al primo accesso
         if not _db_initialized:
             try:
+                # Crea tutte le tabelle (inclusa agent_conversations)
                 Base.metadata.create_all(bind=engine)
+                # Migrazione sicura: crea agent_conversations se non esiste già (DB pre-esistente)
+                try:
+                    db.execute(text("""
+                        CREATE TABLE IF NOT EXISTS agent_conversations (
+                            id VARCHAR(50) PRIMARY KEY,
+                            user_id VARCHAR(50),
+                            session_id VARCHAR(100),
+                            channel VARCHAR(20) DEFAULT 'evometrics',
+                            messages JSONB DEFAULT '[]',
+                            title VARCHAR(200),
+                            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                            updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                        )
+                    """))
+                    db.commit()
+                except Exception:
+                    db.rollback()
                 _db_initialized = True
-                print("✅ Database MCP inizializzato al primo accesso")
+                print("✅ Database MCP inizializzato al primo accesso (incl. agent_conversations)")
             except Exception as e:
                 print(f"⚠️ Errore inizializzazione database al primo accesso: {e}")
-                # Continua comunque, potrebbe essere un problema temporaneo
         yield db
     finally:
         db.close()
@@ -860,3 +889,222 @@ async def handle_sse(request: Request):
 @app.post("/api/mcp/messages")
 async def handle_messages(request: Request):
     pass
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# EVO AGENT — Claude Orchestrator Endpoints
+# ═══════════════════════════════════════════════════════════════════════════
+
+# AgentConversation già importato a livello di modulo come _AgentConversation
+
+class EvoAgentChatRequest(BaseModel):
+    message: str
+    conversation_id: Optional[str] = None
+    channel: str = "evometrics"
+    agent_id: str = "orchestrator"  # orchestrator | sales | ops | finance | clients
+
+
+class EvoAgentChatResponse(BaseModel):
+    response: str
+    conversation_id: str
+    tools_used: list
+    error: Optional[str] = None
+
+
+def _get_evo_agent_user(request: Request) -> dict:
+    """Estrae l'utente dal JWT token nella request."""
+    SECRET_KEY = os.environ.get("SECRET_KEY", "")
+    ALGORITHM = "HS256"
+    from jose import JWTError, jwt as jose_jwt
+    auth = request.headers.get("Authorization", "")
+    token = auth.replace("Bearer ", "") if auth.startswith("Bearer ") else ""
+    if not token:
+        return {"id": "anonymous", "nome": "Utente", "cognome": "", "role": "user", "username": ""}
+    try:
+        payload = jose_jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        return {
+            "id": str(payload.get("sub", payload.get("user_id", ""))),
+            "nome": payload.get("nome", ""),
+            "cognome": payload.get("cognome", ""),
+            "username": payload.get("username", ""),
+            "role": payload.get("role", ""),
+            "job_title": payload.get("job_title", ""),
+        }
+    except JWTError:
+        return {"id": "anonymous", "nome": "Utente", "cognome": "", "role": "user", "username": ""}
+
+
+def _get_jwt_token(request: Request) -> str:
+    auth = request.headers.get("Authorization", "")
+    return auth.replace("Bearer ", "") if auth.startswith("Bearer ") else ""
+
+
+@app.post("/api/mcp/evo-agent/chat", response_model=EvoAgentChatResponse)
+async def evo_agent_chat(payload: EvoAgentChatRequest, request: Request, db: Session = Depends(get_db)):
+    """
+    Endpoint principale EvoAgent.
+    Processa un messaggio utente con Claude + tool calling verso i microservizi.
+    Mantiene la storia della conversazione in agent_conversations.
+    """
+    EvoAgentOrchestrator = _EvoAgentOrchestrator
+    if not EvoAgentOrchestrator:
+        if _MCP_SERVICE_DIR not in sys.path:
+            sys.path.insert(0, _MCP_SERVICE_DIR)
+        from evo_agent import EvoAgentOrchestrator
+
+    user = _get_evo_agent_user(request)
+    token = _get_jwt_token(request)
+
+    # Usa AgentConversation importato a livello di modulo (evita conflitti sys.path)
+    AgentConversation = _AgentConversation
+
+    # Carica o crea la conversazione
+    conversation = None
+    history = []
+    if payload.conversation_id:
+        try:
+            conversation = db.query(AgentConversation).filter(
+                AgentConversation.id == payload.conversation_id
+            ).first()
+            if conversation:
+                history = conversation.messages or []
+        except Exception:
+            pass
+
+    if not conversation:
+        import uuid as _uuid
+        conversation = AgentConversation(
+            id=str(_uuid.uuid4()),
+            user_id=user.get("id"),
+            channel=payload.channel,
+            messages=[],
+            title=payload.message[:60],
+        )
+        try:
+            db.add(conversation)
+            db.commit()
+            db.refresh(conversation)
+        except Exception as e:
+            print(f"⚠️ Warning salvataggio nuova conversazione: {e}")
+            db.rollback()
+
+    # Processa con l'orchestratore
+    orchestrator = EvoAgentOrchestrator(token=token, user=user)
+    result = await orchestrator.chat(message=payload.message, history=history, agent_id=payload.agent_id)
+
+    # Salva la conversazione aggiornata
+    try:
+        new_messages = list(history) + [
+            {"role": "user", "content": payload.message},
+            {"role": "assistant", "content": result["response"]},
+        ]
+        # Mantieni max 50 messaggi per conversazione
+        if len(new_messages) > 50:
+            new_messages = new_messages[-50:]
+        conversation.messages = new_messages
+        if not conversation.title or conversation.title == "":
+            conversation.title = payload.message[:60]
+        db.commit()
+    except Exception as e:
+        print(f"⚠️ Warning salvataggio conversazione: {e}")
+        db.rollback()
+
+    return EvoAgentChatResponse(
+        response=result["response"],
+        conversation_id=conversation.id,
+        tools_used=result.get("tools_used", []),
+        error=result.get("error"),
+    )
+
+
+@app.get("/api/mcp/evo-agent/briefing")
+async def evo_agent_briefing(request: Request, db: Session = Depends(get_db)):
+    """
+    Morning briefing automatico: Claude raccoglie dati operativi e genera un
+    riepilogo con task scaduti, pipeline critica, pagamenti in sospeso.
+    """
+    EvoAgentOrchestrator = _EvoAgentOrchestrator
+    if not EvoAgentOrchestrator:
+        if _MCP_SERVICE_DIR not in sys.path:
+            sys.path.insert(0, _MCP_SERVICE_DIR)
+        from evo_agent import EvoAgentOrchestrator
+
+    user = _get_evo_agent_user(request)
+    token = _get_jwt_token(request)
+
+    orchestrator = EvoAgentOrchestrator(token=token, user=user)
+    result = await orchestrator.morning_briefing()
+
+    return {
+        "briefing": result["response"],
+        "tools_used": result.get("tools_used", []),
+        "generated_at": datetime.now().isoformat(),
+        "error": result.get("error"),
+    }
+
+
+@app.get("/api/mcp/evo-agent/conversations")
+async def list_evo_agent_conversations(request: Request, db: Session = Depends(get_db)):
+    """Lista le conversazioni EvoAgent dell'utente corrente."""
+    user = _get_evo_agent_user(request)
+    AgentConversation = _AgentConversation
+    try:
+        convs = db.query(AgentConversation).filter(
+            AgentConversation.user_id == user["id"]
+        ).order_by(AgentConversation.updated_at.desc()).limit(20).all()
+        return [
+            {
+                "id": c.id,
+                "title": c.title or "Conversazione",
+                "channel": c.channel,
+                "message_count": len(c.messages or []),
+                "updated_at": c.updated_at.isoformat() if c.updated_at else None,
+            }
+            for c in convs
+        ]
+    except Exception:
+        return []
+
+
+@app.delete("/api/mcp/evo-agent/conversations/{conv_id}")
+async def delete_evo_agent_conversation(conv_id: str, request: Request, db: Session = Depends(get_db)):
+    """Elimina una conversazione EvoAgent."""
+    user = _get_evo_agent_user(request)
+    AgentConversation = _AgentConversation
+    conv = db.query(AgentConversation).filter(
+        AgentConversation.id == conv_id,
+        AgentConversation.user_id == user["id"],
+    ).first()
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversazione non trovata")
+    db.delete(conv)
+    db.commit()
+    return {"deleted": True}
+
+
+@app.get("/api/mcp/evo-agent/agents")
+async def list_agents():
+    """Lista agenti disponibili con descrizione e tool count."""
+    try:
+        from evo_agent import EvoAgentOrchestrator as _EAO
+        return {"agents": _EAO.get_agents_info()}
+    except Exception as e:
+        return {"agents": [], "error": str(e)}
+
+
+@app.get("/api/mcp/evo-agent/status")
+async def evo_agent_status():
+    """Verifica se EvoAgent è configurato e operativo."""
+    key = os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("CLAUDE_API_KEY") or ""
+    model = os.environ.get("CLAUDE_ORCHESTRATOR_MODEL") or os.environ.get("CLAUDE_MODEL") or "claude-sonnet-4-5"
+    try:
+        import anthropic as _a
+        lib_ok = True
+    except ImportError:
+        lib_ok = False
+    return {
+        "configured": bool(key) and lib_ok,
+        "anthropic_key": "presente" if key else "mancante (ANTHROPIC_API_KEY)",
+        "library": "installata" if lib_ok else "mancante",
+        "model": model,
+    }

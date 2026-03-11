@@ -166,6 +166,23 @@ class ClientiApiService {
     return headers;
   }
 
+  /** Scarica CSV export clienti (Nome, Cognome, Azienda, P.IVA, Durata/Inizio contratto, Path Drive, Valore). */
+  async downloadClientiCsv(): Promise<void> {
+    const token = localStorage.getItem('auth_token');
+    const res = await fetch(`${CLIENTI_SERVICE_URL}/api/clienti/export/csv`, {
+      headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+    });
+    if (!res.ok) throw new Error(res.statusText || 'Export fallito');
+    const blob = await res.blob();
+    const name = res.headers.get('Content-Disposition')?.match(/filename="?([^";]+)"?/)?.[1] ?? 'clienti-export.csv';
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   async getClienti(): Promise<Cliente[]> {
     const headers = await this.getAuthHeaders();
     const response = await fetch(`${CLIENTI_SERVICE_URL}/api/clienti`, {

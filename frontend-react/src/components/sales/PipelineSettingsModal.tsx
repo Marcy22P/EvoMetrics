@@ -55,9 +55,11 @@ export const PipelineSettingsModal: React.FC<PipelineSettingsModalProps> = ({ op
   const [loadingTags, setLoadingTags] = useState(false);
   const [newTagLabel, setNewTagLabel] = useState('');
   const [newTagColor, setNewTagColor] = useState('base');
+  const [newTagHexColor, setNewTagHexColor] = useState('');
   const [editingTagId, setEditingTagId] = useState<number | null>(null);
   const [editTagLabel, setEditTagLabel] = useState('');
   const [editTagColor, setEditTagColor] = useState('base');
+  const [editTagHexColor, setEditTagHexColor] = useState('');
 
   const colors = [
     {label: 'Grigio (Base)', value: 'base'},
@@ -194,11 +196,13 @@ export const PipelineSettingsModal: React.FC<PipelineSettingsModalProps> = ({ op
     try {
       await salesApi.createLeadTag({
         label: newTagLabel.trim(),
-        color: newTagColor
+        color: newTagColor,
+        hex_color: newTagHexColor || undefined
       });
       toast.success('Tag creato');
       setNewTagLabel('');
       setNewTagColor('base');
+      setNewTagHexColor('');
       fetchTags();
       onUpdate();
     } catch (e) {
@@ -210,6 +214,7 @@ export const PipelineSettingsModal: React.FC<PipelineSettingsModalProps> = ({ op
     setEditingTagId(tag.id);
     setEditTagLabel(tag.label);
     setEditTagColor(tag.color);
+    setEditTagHexColor(tag.hex_color || '');
   };
 
   const handleSaveEditTag = async () => {
@@ -217,12 +222,14 @@ export const PipelineSettingsModal: React.FC<PipelineSettingsModalProps> = ({ op
     try {
       await salesApi.updateLeadTag(editingTagId, {
         label: editTagLabel.trim(),
-        color: editTagColor
+        color: editTagColor,
+        hex_color: editTagHexColor || undefined
       });
       toast.success('Tag aggiornato');
       setEditingTagId(null);
       setEditTagLabel('');
       setEditTagColor('base');
+      setEditTagHexColor('');
       fetchTags();
       onUpdate();
     } catch (e) {
@@ -246,6 +253,7 @@ export const PipelineSettingsModal: React.FC<PipelineSettingsModalProps> = ({ op
     setEditingTagId(null);
     setEditTagLabel('');
     setEditTagColor('base');
+    setEditTagHexColor('');
   };
 
   return (
@@ -381,9 +389,34 @@ export const PipelineSettingsModal: React.FC<PipelineSettingsModalProps> = ({ op
                           placeholder="Es: Fissato calendly"
                         />
                       </div>
-                      <div style={{ flex: 1 }}>
+                      <div style={{ flex: 1, minWidth: '120px' }}>
                         <Select label="Colore" options={colors} value={newTagColor} onChange={setNewTagColor} />
                       </div>
+                      
+                      {/* Hex Color Picker */}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                        <Text variant="bodySm" as="span">Custom</Text>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', height: '36px' }}>
+                          <input 
+                            type="color" 
+                            value={newTagHexColor || '#000000'} 
+                            onChange={(e) => setNewTagHexColor(e.target.value)}
+                            style={{ width: '36px', height: '36px', padding: 0, border: '1px solid #ccc', borderRadius: '4px', cursor: 'pointer' }}
+                            title="Scegli colore custom"
+                          />
+                          <div style={{ width: '80px' }}>
+                            <TextField 
+                              label="Hex" 
+                              labelHidden 
+                              value={newTagHexColor} 
+                              onChange={setNewTagHexColor} 
+                              placeholder="#..." 
+                              autoComplete="off"
+                            />
+                          </div>
+                        </div>
+                      </div>
+
                       <Button variant="primary" onClick={handleCreateTag} disabled={!newTagLabel.trim()}>
                         Crea Tag
                       </Button>
@@ -417,7 +450,7 @@ export const PipelineSettingsModal: React.FC<PipelineSettingsModalProps> = ({ op
                                     autoComplete="off"
                                   />
                                 </div>
-                                <div style={{ flex: 1 }}>
+                                <div style={{ flex: 1, minWidth: '120px' }}>
                                   <Select
                                     label=""
                                     labelHidden
@@ -426,12 +459,53 @@ export const PipelineSettingsModal: React.FC<PipelineSettingsModalProps> = ({ op
                                     onChange={setEditTagColor}
                                   />
                                 </div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                  <input 
+                                    type="color" 
+                                    value={editTagHexColor || '#000000'} 
+                                    onChange={(e) => setEditTagHexColor(e.target.value)}
+                                    style={{ width: '32px', height: '32px', padding: 0, border: '1px solid #ccc', borderRadius: '4px', cursor: 'pointer' }}
+                                    title="Scegli colore custom"
+                                  />
+                                  <div style={{ width: '70px' }}>
+                                    <TextField 
+                                      label="Hex" 
+                                      labelHidden 
+                                      value={editTagHexColor} 
+                                      onChange={setEditTagHexColor} 
+                                      placeholder="#" 
+                                      autoComplete="off"
+                                    />
+                                  </div>
+                                </div>
                                 <Button icon={CheckIcon} variant="primary" onClick={handleSaveEditTag}>Salva</Button>
                                 <Button icon={XSmallIcon} onClick={cancelEditTag}>Annulla</Button>
                               </InlineStack>
                             ) : (
                               <InlineStack align="space-between" blockAlign="center">
-                                <Badge tone={tag.color as any}>{tag.label}</Badge>
+                                <InlineStack gap="200" blockAlign="center">
+                                   {tag.hex_color ? (
+                                     <div style={{ 
+                                       display: 'flex', 
+                                       alignItems: 'center', 
+                                       gap: '8px', 
+                                       padding: '4px 8px', 
+                                       background: '#fff', 
+                                       border: '1px solid #e1e3e5', 
+                                       borderRadius: '4px' 
+                                     }}>
+                                       <div style={{ 
+                                         width: '12px', 
+                                         height: '12px', 
+                                         borderRadius: '50%', 
+                                         backgroundColor: tag.hex_color 
+                                       }} />
+                                       <Text variant="bodyMd" as="span">{tag.label}</Text>
+                                     </div>
+                                   ) : (
+                                     <Badge tone={tag.color as any}>{tag.label}</Badge>
+                                   )}
+                                </InlineStack>
                                 <InlineStack gap="100">
                                   <Button icon={EditIcon} variant="tertiary" onClick={() => handleStartEditTag(tag)} />
                                   <Button icon={DeleteIcon} variant="tertiary" tone="critical" onClick={() => handleDeleteTag(tag.id)} />

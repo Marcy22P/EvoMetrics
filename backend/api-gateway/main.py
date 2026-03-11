@@ -113,7 +113,7 @@ def load_service_app(service_name):
                                                                'gradimento-service', 'contratti-service', 'pagamenti-service',
                                                                'assessments-service', 'clienti-service', 'shopify-service', 
                                                                'email-service', 'mcp-service', 'sibill-service', 'productivity-service',
-                                                               'calendar-service', 'sales-service'] if s != service_name]
+                                                               'calendar-service', 'sales-service', 'subtitle-service'] if s != service_name]
         for other_dir in other_service_dirs:
             if other_dir in sys.path:
                 sys.path.remove(other_dir)
@@ -154,6 +154,7 @@ mcp_app = load_service_app("mcp-service")
 sibill_app = load_service_app("sibill-service")
 productivity_app = load_service_app("productivity-service")
 sales_app = load_service_app("sales-service")
+subtitle_app = load_service_app("subtitle-service")
 
 # Path frontend build
 FRONTEND_DIR = Path(__file__).parent.parent.parent / "frontend-react" / "dist"
@@ -172,7 +173,7 @@ async def unified_lifespan(app: FastAPI):
         auth_app, user_app, preventivi_app, gradimento_app, 
         contratti_app, pagamenti_app, assessments_app, 
         clienti_app, shopify_app, email_app, mcp_app, sibill_app,
-        productivity_app, sales_app
+        productivity_app, sales_app, subtitle_app
     ]
     
     # 1. Esegui startup legacy (on_event("startup")) in PARALLELO per velocità
@@ -260,6 +261,7 @@ app.include_router(mcp_app.router)
 app.include_router(sibill_app.router)
 app.include_router(productivity_app.router)
 app.include_router(sales_app.router)
+app.include_router(subtitle_app.router)
 
 # Endpoint Ottimizzato Dashboard
 @app.get("/api/dashboard/summary")
@@ -333,6 +335,7 @@ async def services_health():
         'mcp': mcp_app,
         'sibill': sibill_app,
         'shopify': shopify_app,
+        'subtitle': subtitle_app,
     }
     
     for name, service in internal_services.items():

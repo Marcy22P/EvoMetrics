@@ -1,0 +1,24 @@
+# Subtitle Service Dependencies
+# NOTA: La maggior parte delle dipendenze sono nel requirements.txt dell'API Gateway
+# Questo file è solo per documentazione e per installazione standalone
+
+# Core (già in api-gateway/requirements.txt)
+# fastapi, uvicorn, databases, asyncpg, python-jose, pydantic, sqlalchemy
+
+# Audio/Video processing (richiede ffmpeg binario installato sul sistema!)
+# macOS: brew install ffmpeg
+# Ubuntu: apt-get install ffmpeg
+# Render.com: aggiunto nel buildCommand di render.yaml
+ffmpeg-python==0.2.0
+
+# Trascrizione: usa OpenAI Whisper API via httpx (già in api-gateway deps)
+# NON usiamo openai-whisper locale in produzione (troppo pesante, richiede PyTorch ~2GB)
+# Il fallback è via httpx diretto alla API REST di OpenAI (nessuna dipendenza extra)
+
+# Subtitle parsing (utility)
+pysrt==1.1.2
+
+# NOTA: openai-whisper locale è OPZIONALE per sviluppo.
+# Se installato, verrà usato al posto dell'API.
+# Per installarlo: pip install openai-whisper
+# Richiede anche PyTorch: pip install torch

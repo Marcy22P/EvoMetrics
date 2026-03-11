@@ -32,9 +32,10 @@ import {
   EditIcon,
   NoteIcon,
   CheckIcon,
-  XSmallIcon
+  XSmallIcon,
+  ArrowDownIcon
 } from '@shopify/polaris-icons';
-import { salesApi, type Lead, type PipelineStage, type LeadCreate, type LeadNote, type LeadTag } from '../services/salesApi';
+import { salesApi, type Lead, type PipelineStage, type LeadCreate, type LeadNote, type LeadTag, type PipelineUser, type MonthlyValueResponse } from '../services/salesApi';
 import { PipelineSettingsModal } from '../components/sales/PipelineSettingsModal';
 import { useAuth } from '../hooks/useAuth';
 import toast from 'react-hot-toast';
@@ -69,6 +70,22 @@ const SalesPipeline: React.FC = () => {
   
   // Lead Tags (nuovo sistema)
   const [leadTags, setLeadTags] = useState<LeadTag[]>([]);
+
+  // V2 state
+  const [pipelineUsers, setPipelineUsers] = useState<PipelineUser[]>([]);
+  const [sourceChannels, setSourceChannels] = useState<string[]>([]);
+  const [monthlyData, setMonthlyData] = useState<MonthlyValueResponse | null>(null);
+  const [showTracker, setShowTracker] = useState(false);
+  const [monthFilter, setMonthFilter] = useState<number | null>(null);
+
+  // Nuovi campi per creazione/editing lead
+  const [newDealValue, setNewDealValue] = useState('');
+  const [newSourceChannel, setNewSourceChannel] = useState('');
+  const [newAssignedTo, setNewAssignedTo] = useState('');
+  // Dettaglio lead editing
+  const [editDealValue, setEditDealValue] = useState('');
+  const [editSourceChannel, setEditSourceChannel] = useState('');
+  const [editAssignedTo, setEditAssignedTo] = useState('');
 
   // Modale Creazione Lead
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -125,6 +142,9 @@ const SalesPipeline: React.FC = () => {
   useEffect(() => {
     fetchStages().then(() => fetchLeads());
     fetchLeadTags();
+    salesApi.getPipelineUsers().then(setPipelineUsers).catch(() => {});
+    salesApi.getSourceChannels().then(d => setSourceChannels(d.channels)).catch(() => {});
+    salesApi.getMonthlyValue().then(setMonthlyData).catch(() => {});
   }, [fetchStages, fetchLeads, fetchLeadTags]);
 
   const handleMoveStage = async (lead: Lead, newStage: string) => {
@@ -153,6 +173,12 @@ const SalesPipeline: React.FC = () => {
     setNewNoteContent('');
     setEditingNoteId(null);
     setEditingNoteContent('');
+    
+    // V2 fields
+    setEditDealValue(lead.deal_value?.toString() || '');
+    setEditSourceChannel(lead.source_channel || '');
+    setEditAssignedTo(lead.assigned_to_user_id || '');
+    
     setShowModal(true);
   };
 
@@ -166,7 +192,11 @@ const SalesPipeline: React.FC = () => {
         last_name: editLastName,
         phone: editPhone,
         azienda: editAzienda,
-        lead_tag_id: selectedLeadTagId ? parseInt(selectedLeadTagId) : null
+        lead_tag_id: selectedLeadTagId ? parseInt(selectedLeadTagId) : null,
+        // V2 fields
+        deal_value: editDealValue ? parseFloat(editDealValue) : null,
+        source_channel: editSourceChannel || null,
+        assigned_to_user_id: editAssignedTo || null,
       });
       toast.success('Lead aggiornato');
       setShowModal(false);
@@ -250,7 +280,11 @@ const SalesPipeline: React.FC = () => {
         phone: newLeadPhone || undefined,
         azienda: newLeadAzienda || undefined,
         stage: newLeadStage || undefined,
-        notes: newLeadNotes || undefined
+        notes: newLeadNotes || undefined,
+        // V2 fields
+        source_channel: newSourceChannel || undefined,
+        deal_value: newDealValue ? parseFloat(newDealValue) : undefined,
+        assigned_to_user_id: newAssignedTo || undefined,
       };
       await salesApi.createLead(leadData);
       toast.success('Lead creato!');
@@ -270,6 +304,10 @@ const SalesPipeline: React.FC = () => {
     setNewLeadAzienda('');
     setNewLeadStage('');
     setNewLeadNotes('');
+    // V2 fields
+    setNewDealValue('');
+    setNewSourceChannel('');
+    setNewAssignedTo('');
   };
 
   const handleSettingsUpdate = () => {
@@ -346,9 +384,16 @@ const SalesPipeline: React.FC = () => {
       }
       // Filter by stage
       if (stageFilter && lead.stage !== stageFilter) return false;
+      
+      // Filter by month (V2)
+      if (monthFilter) {
+        const leadDate = new Date(lead.created_at);
+        if (leadDate.getMonth() + 1 !== monthFilter) return false;
+      }
+
       return true;
     });
-  }, [leads, queryValue, stageFilter]);
+  }, [leads, queryValue, stageFilter, monthFilter]);
 
   // Index table selection
   const { selectedResources, allResourcesSelected, handleSelectionChange } = 
@@ -381,9 +426,22 @@ const SalesPipeline: React.FC = () => {
                 {getLeadTitle(lead)}
               </Text>
               {lead.lead_tag ? (
-                <Badge tone={lead.lead_tag.color as any} size="small">
-                  {lead.lead_tag.label}
-                </Badge>
+                lead.lead_tag.hex_color ? (
+                  <span style={{ 
+                    backgroundColor: lead.lead_tag.hex_color, 
+                    color: '#fff', 
+                    padding: '2px 8px', 
+                    borderRadius: '10px', 
+                    fontSize: '0.75rem',
+                    fontWeight: 600
+                  }}>
+                    {lead.lead_tag.label}
+                  </span>
+                ) : (
+                  <Badge tone={lead.lead_tag.color as any} size="small">
+                    {lead.lead_tag.label}
+                  </Badge>
+                )
               ) : (
                 <Badge tone={lead.source === 'clickfunnels' ? 'info' : 'success'} size="small">
                   {lead.source === 'clickfunnels' ? 'CF' : 'M'}
@@ -412,6 +470,23 @@ const SalesPipeline: React.FC = () => {
                 <Text variant="bodySm" as="span" tone="subdued">{lead.phone}</Text>
               </InlineStack>
             )}
+
+            {/* V2 Info: Value, Channel, Assigned */}
+            <InlineStack gap="200" wrap>
+              {lead.deal_value && (
+                <Badge tone="success">{`€ ${lead.deal_value.toLocaleString('it-IT')}`}</Badge>
+              )}
+              {lead.source_channel && (
+                <Badge tone="new">{lead.source_channel}</Badge>
+              )}
+              {lead.assigned_to_user && (
+                <Tooltip content={`Assegnato a: ${lead.assigned_to_user.username}`}>
+                  <div style={{width: 24, height: 24, borderRadius: '50%', background: '#e1e3e5', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px'}}>
+                    {lead.assigned_to_user.username.substring(0, 2).toUpperCase()}
+                  </div>
+                </Tooltip>
+              )}
+            </InlineStack>
             
             {/* Pulsanti Navigazione Stage - solo se ha permessi */}
             {canEdit && (
@@ -536,13 +611,35 @@ const SalesPipeline: React.FC = () => {
             <Text variant="bodySm" as="span">{lead.phone || '-'}</Text>
           </IndexTable.Cell>
           <IndexTable.Cell>
+            {lead.deal_value ? `€ ${lead.deal_value.toLocaleString('it-IT')}` : '-'}
+          </IndexTable.Cell>
+          <IndexTable.Cell>
+            {lead.source_channel || '-'}
+          </IndexTable.Cell>
+          <IndexTable.Cell>
+            {lead.assigned_to_user?.username || '-'}
+          </IndexTable.Cell>
+          <IndexTable.Cell>
             {stage && <Badge tone={stage.color as any}>{stage.label}</Badge>}
           </IndexTable.Cell>
           <IndexTable.Cell>
             {lead.lead_tag ? (
-              <Badge tone={lead.lead_tag.color as any} size="small">
-                {lead.lead_tag.label}
-              </Badge>
+              lead.lead_tag.hex_color ? (
+                <span style={{ 
+                  backgroundColor: lead.lead_tag.hex_color, 
+                  color: '#fff', 
+                  padding: '2px 8px', 
+                  borderRadius: '10px', 
+                  fontSize: '0.75rem',
+                  fontWeight: 600
+                }}>
+                  {lead.lead_tag.label}
+                </span>
+              ) : (
+                <Badge tone={lead.lead_tag.color as any} size="small">
+                  {lead.lead_tag.label}
+                </Badge>
+              )
             ) : (
               <Text as="span" tone="subdued">-</Text>
             )}
@@ -613,6 +710,9 @@ const SalesPipeline: React.FC = () => {
               { title: 'Nome' },
               { title: 'Email' },
               { title: 'Telefono' },
+              { title: 'Valore' },
+              { title: 'Canale' },
+              { title: 'Assegnato a' },
               { title: 'Stage' },
               { title: 'Tag' },
               { title: 'Fonte' },
@@ -624,6 +724,58 @@ const SalesPipeline: React.FC = () => {
           </IndexTable>
         )}
       </Card>
+    );
+  };
+
+  // Monthly Value Tracker
+  const renderMonthlyTracker = () => {
+    if (!monthlyData) return null;
+
+    return (
+      <Box paddingBlockEnd="400">
+        <BlockStack gap="200">
+          <InlineStack align="space-between" blockAlign="center">
+            <Text variant="headingSm" as="h3">Performance {monthlyData.year}</Text>
+            <Button size="slim" onClick={() => setShowTracker(!showTracker)}>
+              {showTracker ? 'Nascondi Tracker' : 'Mostra Tracker'}
+            </Button>
+          </InlineStack>
+          
+          {showTracker && (
+            <div style={{ overflowX: 'auto', paddingBottom: '10px' }}>
+              <InlineStack gap="300" wrap={false}>
+                {monthlyData.months.map(m => (
+                  <div 
+                    key={m.month} 
+                    onClick={() => setMonthFilter(monthFilter === m.month ? null : m.month)}
+                    style={{ 
+                      minWidth: '140px', 
+                      cursor: 'pointer',
+                      opacity: monthFilter && monthFilter !== m.month ? 0.5 : 1,
+                      transition: 'opacity 0.2s'
+                    }}
+                  >
+                    <Card padding="300">
+                      <BlockStack gap="100">
+                        <Text variant="headingXs" as="h4">{m.label}</Text>
+                        <Text variant="headingMd" as="p">€ {m.total_value.toLocaleString('it-IT')}</Text>
+                        <InlineStack align="space-between">
+                          <Text as="span" variant="bodyXs" tone="subdued">{`${m.leads_count} leads`}</Text>
+                          {m.delta_pct !== null && (
+                            <Text as="span" variant="bodyXs" tone={m.delta_pct >= 0 ? 'success' : 'critical'}>
+                              {`${m.delta_pct > 0 ? '+' : ''}${m.delta_pct}%`}
+                            </Text>
+                          )}
+                        </InlineStack>
+                      </BlockStack>
+                    </Card>
+                  </div>
+                ))}
+              </InlineStack>
+            </div>
+          )}
+        </BlockStack>
+      </Box>
     );
   };
 
@@ -675,9 +827,18 @@ const SalesPipeline: React.FC = () => {
       } : undefined}
       secondaryActions={[
         { content: 'Ricarica', onAction: fetchLeads },
+        { content: 'Esporta CSV overview', icon: ArrowDownIcon, onAction: async () => {
+          try {
+            await salesApi.downloadLeadsCsv();
+            toast.success('CSV scaricato');
+          } catch {
+            toast.error('Errore export CSV');
+          }
+        }},
         ...(canEdit ? [{ content: 'Configura Pipeline', icon: SettingsIcon, onAction: () => setShowSettings(true) }] : [])
       ]}
     >
+      {renderMonthlyTracker()}
       <Tabs tabs={tabs} selected={selectedTab} onSelect={setSelectedTab}>
         <Box paddingBlockStart="400">
           {selectedTab === 0 ? renderPipelineView() : renderListView()}
@@ -744,6 +905,37 @@ const SalesPipeline: React.FC = () => {
             
             <TextField label="Email" value={selectedLead?.email || ''} disabled autoComplete="off" helpText="L'email non può essere modificata" />
             <TextField label="Telefono" value={editPhone} onChange={setEditPhone} autoComplete="off" disabled={!canEdit} />
+            
+            {/* V2 Fields */}
+            <InlineStack gap="400">
+              <div style={{ flex: 1 }}>
+                <TextField 
+                  label="Valore Opportunità (€)" 
+                  type="number" 
+                  value={editDealValue} 
+                  onChange={setEditDealValue} 
+                  autoComplete="off" 
+                  disabled={!canEdit}
+                />
+              </div>
+              <div style={{ flex: 1 }}>
+                <Select
+                  label="Canale Fonte"
+                  options={[{label: 'Seleziona...', value: ''}, ...sourceChannels.map(c => ({label: c, value: c}))]}
+                  value={editSourceChannel}
+                  onChange={setEditSourceChannel}
+                  disabled={!canEdit}
+                />
+              </div>
+            </InlineStack>
+
+            <Select
+              label="Assegna a"
+              options={[{label: 'Nessuno', value: ''}, ...pipelineUsers.map(u => ({label: u.nome && u.cognome ? `${u.nome} ${u.cognome}` : u.username, value: u.id}))]}
+              value={editAssignedTo}
+              onChange={setEditAssignedTo}
+              disabled={!canEdit}
+            />
             
             {/* TAG LEAD */}
             <Select
@@ -886,6 +1078,36 @@ const SalesPipeline: React.FC = () => {
               </div>
             </InlineStack>
             <TextField label="Telefono" value={newLeadPhone} onChange={setNewLeadPhone} autoComplete="off" placeholder="+39 ..." />
+            
+            {/* V2 Fields */}
+            <InlineStack gap="400">
+              <div style={{ flex: 1 }}>
+                <TextField 
+                  label="Valore (€)" 
+                  type="number" 
+                  value={newDealValue} 
+                  onChange={setNewDealValue} 
+                  autoComplete="off" 
+                  placeholder="0.00" 
+                />
+              </div>
+              <div style={{ flex: 1 }}>
+                <Select
+                  label="Canale Fonte"
+                  options={[{label: 'Seleziona...', value: ''}, ...sourceChannels.map(c => ({label: c, value: c}))]}
+                  value={newSourceChannel}
+                  onChange={setNewSourceChannel}
+                />
+              </div>
+            </InlineStack>
+            
+            <Select
+              label="Assegna a"
+              options={[{label: 'Nessuno', value: ''}, ...pipelineUsers.map(u => ({label: u.nome && u.cognome ? `${u.nome} ${u.cognome}` : u.username, value: u.id}))]}
+              value={newAssignedTo}
+              onChange={setNewAssignedTo}
+            />
+
             <Select
               label="Stage Iniziale"
               options={[

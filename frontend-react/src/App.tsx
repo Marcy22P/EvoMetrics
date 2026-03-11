@@ -29,6 +29,10 @@ import TaskManager from './pages/TaskManager'
 import ProductivityDashboard from './pages/ProductivityDashboard'
 import WorkflowBuilder from './pages/WorkflowBuilder'
 import DrivePage from './pages/DrivePage'
+import SubtitleJobStatus from './pages/SubtitleJobStatus'
+// SubtitlesInbox replaced by ContenutiPage
+import SubtitleReviewPage from './pages/SubtitleReviewPage'
+import ContenutiPage from './pages/ContenutiPage'
 import TeamCollaboratorsView from './pages/TeamCollaboratorsView'
 import TeamOverview from './pages/TeamOverview'
 import Calendar from './pages/Calendar'
@@ -36,6 +40,7 @@ import CalendarCallback from './pages/CalendarCallback'
 // SettingsTasks ora è integrato in Settings.tsx
 import Settings from './pages/Settings'
 import SalesPipeline from './pages/SalesPipeline'
+import EvoAgentPage from './pages/EvoAgentPage'
 // import TeamCollaborators from './pages/TeamCollaborators' // Used internally by Team.tsx
 import ShopifyLayout from './components/Layout/ShopifyLayout' // Nuovo Layout Polaris
 import { TasksConfigurationProvider } from './contexts/TasksConfigurationContext'
@@ -302,6 +307,15 @@ const AppRoutes: React.FC = () => {
         <Route path="/task" element={<TaskManager />} />
         <Route path="/workflow" element={<WorkflowBuilder />} />
         <Route path="/drive" element={<DrivePage />} />
+        
+          {/* CONTENUTI HUB */}
+        <Route path="/contenuti" element={<ContenutiPage />} />
+        
+        {/* SUBTITLE WORKFLOW (legacy routes, redirect to contenuti) */}
+        <Route path="/subtitles/jobs/:id" element={<SubtitleJobStatus />} />
+        <Route path="/subtitles/inbox" element={<Navigate to="/contenuti" replace />} />
+        <Route path="/subtitles/review/:id" element={<SubtitleReviewPage />} />
+
         <Route path="/attenzione-clienti" element={<div className="page-container"><h1>Attenzione Clienti</h1><p>Sezione in sviluppo</p></div>} />
         <Route path="/team/indice-benessere" element={<div className="page-container"><h1>Indice di Benessere</h1><p>Sezione in sviluppo</p></div>} />
         <Route path="/team/bonus" element={<div className="page-container"><h1>Bonus</h1><p>Sezione in sviluppo</p></div>} />
@@ -313,6 +327,16 @@ const AppRoutes: React.FC = () => {
         <Route path="/sistema" element={<div className="page-container"><h1>Stato Sistema</h1><p>Sezione in sviluppo</p></div>} />
 
       </Route>
+
+      {/* EVO AGENT — layout dedicato full-screen (fuori ShopifyLayout) */}
+      <Route
+        path="/evo-agent"
+        element={
+          <ProtectedRoute>
+            <EvoAgentPage />
+          </ProtectedRoute>
+        }
+      />
 
       {/* Redirect default */}
       <Route path="*" element={<Navigate to="/" replace />} />

@@ -48,13 +48,17 @@ const SidebarNew: React.FC<SidebarProps> = ({ collapsed, onToggle }) => {
 
   // Stato per i sottomenu
   const [expandedMenus, setExpandedMenus] = useState<Record<string, boolean>>({});
-
+  
   // Auto-expand menu based on current route
   React.useEffect(() => {
-    // Trova il menu che dovrebbe essere aperto
+    // Trova il menu che dovrebbe essere aperto: controlla sia il path parent
+    // sia i path dei children per coprire route come /contenuti sotto /task
     const activeMenu = menuStructure
       .flatMap(s => s.items)
-      .find(item => item.children && location.pathname.startsWith(item.path));
+      .find(item => item.children && (
+        location.pathname.startsWith(item.path) ||
+        item.children.some(child => location.pathname.startsWith(child.path))
+      ));
       
     if (activeMenu) {
         setExpandedMenus({ [activeMenu.label]: true });
@@ -70,6 +74,16 @@ const SidebarNew: React.FC<SidebarProps> = ({ collapsed, onToggle }) => {
 
   // Definizione struttura menu basata sulle richieste specifiche
   const menuStructure: MenuSection[] = [
+    {
+      title: 'AI',
+      items: [
+        {
+          path: '/evo-agent',
+          label: 'EvoAgent',
+          icon: <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><path d="M12,2A2,2 0 0,1 14,4C14,4.74 13.6,5.39 13,5.73V7H14A7,7 0 0,1 21,14H22A1,1 0 0,1 23,15V18A1,1 0 0,1 22,19H21V20A2,2 0 0,1 19,22H5A2,2 0 0,1 3,20V19H2A1,1 0 0,1 1,18V15A1,1 0 0,1 2,14H3A7,7 0 0,1 10,7H11V5.73C10.4,5.39 10,4.74 10,4A2,2 0 0,1 12,2M7.5,13A2.5,2.5 0 0,0 5,15.5A2.5,2.5 0 0,0 7.5,18A2.5,2.5 0 0,0 10,15.5A2.5,2.5 0 0,0 7.5,13M16.5,13A2.5,2.5 0 0,0 14,15.5A2.5,2.5 0 0,0 16.5,18A2.5,2.5 0 0,0 19,15.5A2.5,2.5 0 0,0 16.5,13Z" /></svg>,
+        }
+      ]
+    },
     {
       title: 'AMMINISTRAZIONE',
       items: [
@@ -120,7 +134,16 @@ const SidebarNew: React.FC<SidebarProps> = ({ collapsed, onToggle }) => {
       title: 'GESTIONE SERVIZI',
       items: [
         { path: '/produttivita', label: 'Produttività Team', icon: <ChartIcon /> },
-        { path: '/task', label: 'Task', icon: <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><path d="M19,3H5C3.89,3 3,3.89 3,5V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19V5C21,3.89 20.1,3 19,3M19,5V19H5V5H19M10,17L6,13L7.41,11.59L10,14.17L16.59,7.58L18,9L10,17Z" /></svg>, permission: 'task:read' },
+        { 
+          path: '/task', 
+          label: 'Task', 
+          icon: <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><path d="M19,3H5C3.89,3 3,3.89 3,5V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19V5C21,3.89 20.1,3 19,3M19,5V19H5V5H19M10,17L6,13L7.41,11.59L10,14.17L16.59,7.58L18,9L10,17Z" /></svg>, 
+          permission: 'task:read',
+          children: [
+            { path: '/drive', label: 'Drive' },
+            { path: '/contenuti', label: 'Contenuti' }
+          ]
+        },
         { path: '/attenzione-clienti', label: 'Attenzione su clienti', icon: <UserIcon /> }
       ]
     },

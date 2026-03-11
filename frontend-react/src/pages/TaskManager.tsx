@@ -47,10 +47,11 @@ import { isPast, isToday, format } from 'date-fns';
 import { it } from 'date-fns/locale';
 import { inferTaskCategory, getTaskIcon, TASK_ICONS_OPTIONS } from '../utils/taskUtils';
 import { useTasksConfiguration } from '../contexts/TasksConfigurationContext';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 
 const TaskManager: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
   const { categories } = useTasksConfiguration();
   const { user, hasPermission } = useAuth();
   
@@ -778,6 +779,9 @@ const TaskManager: React.FC = () => {
                                     <Button pressed={selectedTab === 2} onClick={() => setSelectedTab(2)}>Completati</Button>
                                     <Button pressed={selectedTab === 3} onClick={() => setSelectedTab(3)}>Per Lead</Button>
                                     <Button pressed={selectedTab === 4} onClick={() => setSelectedTab(4)}>Per Cliente</Button>
+                                    <div style={{ borderLeft: '1px solid #e1e3e5', height: '24px', margin: '0 4px' }} />
+                                    <Button onClick={() => navigate('/drive')}>Drive</Button>
+                                    <Button variant="primary" onClick={() => navigate('/contenuti')}>Contenuti</Button>
                                 </InlineStack>
                                 <InlineStack gap="200">
                                     <Button 
@@ -1464,7 +1468,14 @@ const TaskManager: React.FC = () => {
                                     <List>
                                         {selectedTask.attachments.map((att, i) => (
                                             <List.Item key={i}>
-                                                <Link url={att.url} target="_blank">{att.name}</Link>
+                                                <InlineStack gap="200" blockAlign="center">
+                                                    <Link url={att.url} target="_blank">{att.name}</Link>
+                                                    {att.drive_file_id && att.mime_type?.includes('video') && (
+                                                        <Link url={`/contenuti?file=${att.drive_file_id}`}>
+                                                            <Badge tone="info">Apri in Contenuti</Badge>
+                                                        </Link>
+                                                    )}
+                                                </InlineStack>
                                             </List.Item>
                                         ))}
                                     </List>
