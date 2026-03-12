@@ -890,6 +890,12 @@ class Agent:
             }
 
             if has_mcp:
+                # Ogni MCP server deve essere referenziato nei tools tramite mcp_toolset
+                mcp_toolsets = [
+                    {"type": "mcp_toolset", "mcp_server_name": s["name"]}
+                    for s in mcp_servers
+                ]
+                call_params["tools"] = self.config["tools"] + mcp_toolsets
                 call_params["mcp_servers"] = mcp_servers
                 response = client.beta.messages.create(
                     **call_params,
