@@ -267,8 +267,17 @@ Nel dubbio su quale agente usare, gestisci tu direttamente.""",
         "tools": SALES_TOOLS,
         "system_prompt": """Sei il Sales Agent di Evoluzione Imprese.
 Il tuo dominio è la sales pipeline: lead, stage, deal value, fonti di acquisizione.
-Analizza i dati della pipeline, sposta lead, crea nuove opportunità, fornisci insight commerciali.
-Sii analitico e orientato alla conversione.""",
+
+Fonti di dati disponibili:
+1. **EvoMetrics** (tool interni): pipeline, stage, preventivi, contratti
+2. **Fireflies** (se configurato): trascrizioni call di vendita e meeting
+
+Quando analizzi lead o trattative, combina entrambe le fonti:
+- Stato pipeline → tool EvoMetrics
+- "Cosa è emerso nella call con X?" → cerca su Fireflies per nome/azienda
+- "Lead contattati di recente?" → Fireflies trascrizioni + pipeline EvoMetrics
+
+Sii analitico e orientato alla conversione. Usa i tool per dati reali, non inventare.""",
     },
     "ops": {
         "id": "ops",
@@ -304,6 +313,68 @@ Fornisci panoramiche complete sui clienti, identifica opportunità di upsell.
 Sii orientato alla relazione e alla soddisfazione del cliente.""",
     },
 }
+
+# ─── MCP Server Configurations ────────────────────────────────────────────────
+
+def _fireflies_token() -> Optional[str]:
+    return os.environ.get("FIREFLIES_API_KEY")
+
+def _slack_token() -> Optional[str]:
+    return os.environ.get("SLACK_BOT_TOKEN")
+
+# Mapping agente → MCP server disponibili
+# Solo i server con token configurato vengono attivati (graceful degradation)
+_AGENT_MCP_SERVERS: Dict[str, List[Dict]] = {
+    "orchestrator": [],  # riceve l'unione di tutti i server degli altri agenti
+    "sales": [
+        {
+            "name": "fireflies",
+            "url": "https://api.fireflies.ai/mcp",
+            "token_fn": _fireflies_token,
+        }
+    ],
+    "ops": [],      # Slack → Sprint 3
+    "finance": [],
+    "clients": [
+        {
+            "name": "fireflies",
+            "url": "https://api.fireflies.ai/mcp",
+            "token_fn": _fireflies_token,
+        }
+    ],
+}
+
+def _build_mcp_servers(agent_id: str) -> List[Dict]:
+    """
+    Costruisce la lista mcp_servers da passare all'API Anthropic.
+    Se agent_id == 'orchestrator', unisce tutti i server unici di tutti gli agenti.
+    Include SOLO i server con token effettivamente configurato.
+    """
+    if agent_id == "orchestrator":
+        seen: set = set()
+        configs: List[Dict] = []
+        for agent_cfgs in _AGENT_MCP_SERVERS.values():
+            for cfg in agent_cfgs:
+                if cfg["name"] not in seen:
+                    seen.add(cfg["name"])
+                    configs.append(cfg)
+    else:
+        configs = _AGENT_MCP_SERVERS.get(agent_id, [])
+
+    result = []
+    for cfg in configs:
+        token = cfg["token_fn"]()
+        if token:
+            result.append({
+                "type": "url",
+                "url": cfg["url"],
+                "name": cfg["name"],
+                "authorization_token": token,
+            })
+        else:
+            print(f"⚠️  MCP '{cfg['name']}' non attivato per '{agent_id}': token mancante")
+    return result
+
 
 # ─── HTTP Tool Executor ────────────────────────────────────────────────────────
 
@@ -353,15 +424,24 @@ class ToolExecutor:
             by_stage: Dict[str, List] = {}
             for l in leads:
                 by_stage.setdefault(l.get("stage", "?"), []).append(l)
-            total_val = sum(l.get("deal_value", 0) or 0 for l in leads) / 100
-            lines = [f"**Pipeline — {len(leads)} lead | valore totale €{total_val:,.0f}**\n"]
+
+            # deal_value è in centesimi (es. 150000 = €1.500); divisione per 100
+            raw_values = [l.get("deal_value", 0) or 0 for l in leads]
+            raw_total = sum(raw_values)
+            # euristica: se il massimo è > 10000 sono certamente centesimi
+            divisor = 100 if (max(raw_values, default=0) > 10000 or raw_total > 10000) else 1
+            total_val = raw_total / divisor
+            value_warning = "\n_Deal value non ancora popolato — i valori economici non sono disponibili._" if raw_total == 0 else ""
+
+            lines = [f"**Pipeline — {len(leads)} lead | valore totale €{total_val:,.0f}**{value_warning}\n"]
             for stage_key, stage_leads in sorted(by_stage.items()):
-                stage_val = sum(l.get("deal_value", 0) or 0 for l in stage_leads) / 100
+                stage_val = sum(l.get("deal_value", 0) or 0 for l in stage_leads) / divisor
                 lines.append(f"\n### {stage_key.upper()} ({len(stage_leads)}) — €{stage_val:,.0f}")
                 for l in stage_leads[:6]:
                     name = f"{l.get('first_name','')} {l.get('last_name','')}".strip() or l.get("email","?")
                     az = f" | {l['azienda']}" if l.get("azienda") else ""
-                    val = f" | €{l['deal_value']/100:,.0f}" if l.get("deal_value") else ""
+                    raw_dv = l.get("deal_value") or 0
+                    val = f" | €{raw_dv/divisor:,.0f}" if raw_dv else ""
                     src = f" | {l['source_channel']}" if l.get("source_channel") else ""
                     ch = (l.get("lead_tag") or {}).get("label", "")
                     tag = f" [{ch}]" if ch else ""
@@ -378,7 +458,8 @@ class ToolExecutor:
             lead = next((l for l in leads if l["id"] == lead_id or l["id"].startswith(lead_id)), None)
             if not lead:
                 return f"Lead `{lead_id}` non trovato."
-            val = f"€{lead['deal_value']/100:,.2f}" if lead.get("deal_value") else "N/D"
+            raw_dv = lead.get("deal_value") or 0
+            val = f"€{raw_dv/100:,.2f}" if raw_dv > 0 else "non impostato"
             assigned = ""
             if lead.get("assigned_to_user"):
                 u = lead["assigned_to_user"]
@@ -444,6 +525,7 @@ class ToolExecutor:
             if isinstance(tasks, dict):
                 tasks = tasks.get("tasks", tasks.get("data", []))
             now = datetime.utcnow().date()
+
             overdue = []
             for t in tasks:
                 due = t.get("due_date") or t.get("scadenza") or t.get("deadline")
@@ -457,13 +539,23 @@ class ToolExecutor:
                         pass
             overdue.sort(reverse=True, key=lambda x: x[0])
             if not overdue:
-                return "✅ Nessun task scaduto nel team."
-            lines = [f"**⚠️ {len(overdue)} task scaduti**\n"]
+                return "Nessun task scaduto nel team."
+            lines = [f"**{len(overdue)} task scaduti**\n"]
             for days_late, t, due_date in overdue[:limit]:
                 title = t.get("title") or t.get("titolo") or "Task senza titolo"
-                assignee = t.get("assignee_name") or t.get("assegnatario") or "N/D"
+                assignee_name = t.get("assignee_name") or t.get("assegnatario")
+                assignee_id = t.get("assignee_id")
+                if assignee_name:
+                    assignee = assignee_name
+                elif assignee_id:
+                    assignee = f"ID:{str(assignee_id)[:8]}"
+                else:
+                    assignee = "non assegnato"
+                role = t.get("role_required") or t.get("role") or ""
+                if role and not assignee_name:
+                    assignee = f"{assignee} ({role})"
                 proj = t.get("project_name") or t.get("cliente") or ""
-                lines.append(f"- 🔴 **{title}** — {days_late}g ritardo | {assignee}{' | ' + proj if proj else ''} | scad: {due_date}")
+                lines.append(f"- **{title}** — {days_late}g ritardo | {assignee}{' | ' + proj if proj else ''} | scad: {due_date}")
             return "\n".join(lines)
         except Exception as e:
             return f"Errore task scaduti: {e}"
@@ -473,62 +565,97 @@ class ToolExecutor:
         try:
             params: Dict = {}
             if assignee_id:
-                params["assignee"] = assignee_id
+                params["assignee_id"] = assignee_id
             if status:
                 params["status"] = status
             if project_id:
                 params["project_id"] = project_id
+            params["limit"] = limit
             tasks = await self._get("/api/tasks", params)
             if isinstance(tasks, dict):
                 tasks = tasks.get("tasks", tasks.get("data", []))
             if not tasks:
-                return "Nessun task trovato."
-            lines = [f"**{len(tasks)} task**\n"]
+                filter_desc = f" con status '{status}'" if status else ""
+                return f"Nessun task trovato{filter_desc}."
+            lines = [f"**{len(tasks)} task{' (' + status + ')' if status else ''}**\n"]
             for t in tasks[:limit]:
+                task_id = str(t.get("id") or t.get("task_id") or "?")
+                short_id = task_id[:8] if task_id != "?" else "?"
                 title = t.get("title") or t.get("titolo") or "?"
                 s = t.get("status", "?")
-                assignee = t.get("assignee_name") or t.get("assegnatario") or "N/D"
-                due = (t.get("due_date") or t.get("scadenza") or "")[:10]
+                assignee = t.get("assignee_name") or t.get("role_required") or "non assegnato"
+                due = (t.get("due_date") or "")[:10] or "—"
                 icon = {"todo": "⬜", "in_progress": "🔄", "done": "✅", "blocked": "🚫"}.get(s, "•")
-                lines.append(f"{icon} **{title}** | {assignee} | scad: {due}")
+                lines.append(f"{icon} `{short_id}` **{title}** | {assignee} | {due}")
             return "\n".join(lines)
         except Exception as e:
             return f"Errore task: {e}"
 
     async def update_task_status(self, task_id: str, status: str) -> str:
+        valid_statuses = ("todo", "in_progress", "done", "blocked")
+        if status not in valid_statuses:
+            return f"Status '{status}' non valido. Usa: {', '.join(valid_statuses)}."
         try:
             await self._put(f"/api/tasks/{task_id}", {"status": status})
-            return f"✅ Task `{task_id[:8]}` → **{status}**."
+            return f"Task `{task_id[:8]}` aggiornato a **{status}**."
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                return (
+                    f"Task `{task_id[:8]}` non trovato. "
+                    "Verifica che l'ID sia completo e corretto — usa get_tasks per ottenere gli ID validi."
+                )
+            return f"Errore aggiornamento task (HTTP {e.response.status_code}): {e}"
         except Exception as e:
-            return f"❌ Errore: {e}"
+            return f"Errore aggiornamento task: {e}"
 
     async def get_users_list(self) -> str:
         try:
             data = await self._get("/api/users")
             users = data if isinstance(data, list) else data.get("users", [])
-            lines = [f"**{len(users)} utenti**\n"]
-            for u in users:
-                nome = f"{u.get('nome','')} {u.get('cognome','')}".strip() or u.get("username","?")
-                role = u.get("role") or u.get("job_title") or "?"
-                lines.append(f"- **{nome}** ({u.get('username','')}) | {role} | ID: `{u.get('id','')}`")
+            if not users:
+                return "Nessun utente trovato."
+            team = [u for u in users if u.get("role") not in ("superadmin",)]
+            lines = [f"**Team — {len(team)} membri**\n"]
+            for u in team:
+                nome = f"{u.get('nome','') or ''} {u.get('cognome','') or ''}".strip() or u.get("username", "?")
+                job = u.get("job_title") or "ruolo non impostato"
+                email = u.get("email") or ""
+                uid = str(u.get("id", ""))
+                lines.append(f"- **{nome}** (ID:{uid}) — {job}{' | ' + email if email else ''}")
             return "\n".join(lines)
         except Exception as e:
             return f"Errore utenti: {e}"
 
     async def get_workflow_templates(self) -> str:
         try:
-            data = await self._get("/api/workflow-templates")
+            # Path corretto: /api/workflows/templates (con alias /api/workflow-templates)
+            data = await self._get("/api/workflows/templates")
             items = data if isinstance(data, list) else data.get("templates", [])
             if not items:
-                return "Nessun template trovato."
-            lines = [f"**{len(items)} workflow template**\n"]
+                return (
+                    "Nessun workflow template trovato.\n"
+                    "I template (Onboarding, E-commerce, Campagne ADV) dovrebbero essere presenti — "
+                    "verifica la configurazione del productivity-service."
+                )
+            lines = [f"**{len(items)} workflow template disponibili**\n"]
             for t in items:
                 name = t.get("name") or t.get("nome") or "?"
-                trigger = t.get("trigger_type") or t.get("trigger") or "?"
-                lines.append(f"- **{name}** | trigger: {trigger} | ID: `{t.get('id','')}`")
+                trigger_type = t.get("trigger_type") or "?"
+                trigger_services = t.get("trigger_services") or []
+                if isinstance(trigger_services, list):
+                    services_str = ", ".join(str(s) for s in trigger_services[:3]) or "tutti"
+                else:
+                    services_str = str(trigger_services)
+                lines.append(
+                    f"- **{name}** | trigger: {trigger_type} | servizi: {services_str} | ID: `{t.get('id','')}`"
+                )
             return "\n".join(lines)
         except Exception as e:
-            return f"Errore workflow: {e}"
+            return (
+                f"Workflow template non disponibili ({e}). "
+                "L'endpoint esiste nel sistema ma potrebbe non essere raggiungibile. "
+                "Contatta il team tecnico."
+            )
 
     async def get_pagamenti_status(self, client_name: Optional[str] = None, status: Optional[str] = None) -> str:
         try:
@@ -750,15 +877,26 @@ class Agent:
         client = _anthropic_lib.Anthropic(api_key=api_key)
         messages = list(history) + [{"role": "user", "content": message}]
         tools_used: List[str] = []
+        mcp_servers = _build_mcp_servers(self.config["id"])
+        has_mcp = len(mcp_servers) > 0
 
         for _ in range(MAX_TOOL_ITERATIONS):
-            response = client.messages.create(
-                model=_model(),
-                max_tokens=4096,
-                system=self._system_prompt(),
-                tools=self.config["tools"],
-                messages=messages,
-            )
+            call_params: Dict[str, Any] = {
+                "model": _model(),
+                "max_tokens": 4096,
+                "system": self._system_prompt(),
+                "tools": self.config["tools"],
+                "messages": messages,
+            }
+
+            if has_mcp:
+                call_params["mcp_servers"] = mcp_servers
+                response = client.beta.messages.create(
+                    **call_params,
+                    betas=["mcp-client-2025-11-20"],
+                )
+            else:
+                response = client.messages.create(**call_params)
 
             if response.stop_reason == "tool_use":
                 tool_results = []
@@ -779,13 +917,15 @@ class Agent:
                     "response": text,
                     "tools_used": tools_used,
                     "agent_id": self.config["id"],
+                    "mcp_servers_active": [s["name"] for s in mcp_servers],
                     "error": None,
                 }
 
         return {
-            "response": "⚠️ Troppe iterazioni di tool calling. Riprova con una richiesta più specifica.",
+            "response": "Troppe iterazioni di tool calling. Riprova con una richiesta più specifica.",
             "tools_used": tools_used,
             "agent_id": self.config["id"],
+            "mcp_servers_active": [s["name"] for s in mcp_servers],
             "error": "max_iterations",
         }
 

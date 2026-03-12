@@ -569,6 +569,7 @@ class UpdateWorkflowTemplateRequest(BaseModel):
     tasks_definition: Optional[List[Dict[str, Any]]] = None
 
 @app.get("/api/workflows/templates", response_model=List[WorkflowTemplate])
+@app.get("/api/workflow-templates", response_model=List[WorkflowTemplate])
 async def get_workflow_templates():
     """Restituisce tutti i template di workflow disponibili"""
     query = "SELECT * FROM workflow_templates"
@@ -789,30 +790,47 @@ async def delete_status(status_id: str):
 
 @app.get("/api/tasks", response_model=List[Task])
 async def get_tasks(
-    project_id: Optional[str] = None, 
+    project_id: Optional[str] = None,
     assignee_id: Optional[str] = None,
     role: Optional[str] = None,
-    exclude_completed: bool = False
+    status: Optional[str] = None,
+    exclude_completed: bool = False,
+    limit: int = 500,
+    offset: int = 0,
 ):
     query = "SELECT * FROM tasks WHERE 1=1"
-    params = {}
-    
+    params: Dict[str, Any] = {}
+
     if project_id:
         query += " AND project_id = :project_id"
         params["project_id"] = project_id
-    
+
     if assignee_id:
         query += " AND assignee_id = :assignee_id"
         params["assignee_id"] = assignee_id
-        
+
     if role:
-        query += " AND (role_required = :role OR role_required IS NULL)" # Semplificazione
+        query += " AND (role_required = :role OR role_required IS NULL)"
         params["role"] = role
+
+    if status:
+        # Supporta filtro multiplo: "todo,in_progress"
+        if "," in status:
+            status_list = [s.strip() for s in status.split(",")]
+            placeholders = ", ".join(f":s{i}" for i in range(len(status_list)))
+            query += f" AND status IN ({placeholders})"
+            for i, s in enumerate(status_list):
+                params[f"s{i}"] = s
+        else:
+            query += " AND status = :status"
+            params["status"] = status
 
     if exclude_completed:
         query += " AND status != 'done'"
 
-    query += " ORDER BY due_date ASC"
+    query += " ORDER BY due_date ASC NULLS LAST LIMIT :limit OFFSET :offset"
+    params["limit"] = limit
+    params["offset"] = offset
     
     rows = await database.fetch_all(query, params)
     
@@ -868,8 +886,31 @@ async def get_tasks(
         # 7. Calcola efficiency_score
         item["efficiency_score"] = calculate_efficiency_score(item)
 
+        # Placeholder per campi calcolati (riempiti dopo il loop)
+        item.setdefault("assignee_name", None)
+        item.setdefault("project_name", None)
+
         results.append(item)
-        
+
+    # 8. Batch-lookup nomi assignee per evitare N query
+    unique_ids = list({item["assignee_id"] for item in results if item.get("assignee_id")})
+    user_name_map: Dict[str, str] = {}
+    if unique_ids:
+        try:
+            placeholders = ", ".join(f"'{uid}'" for uid in unique_ids)
+            user_rows = await database.fetch_all(
+                f"SELECT id::text as id, COALESCE(nome || ' ' || COALESCE(cognome,''), username) AS full_name "
+                f"FROM users WHERE id::text IN ({placeholders})"
+            )
+            for ur in user_rows:
+                user_name_map[str(ur["id"])] = ur["full_name"].strip() or str(ur["id"])[:8]
+        except Exception:
+            pass
+
+    for item in results:
+        if item.get("assignee_id"):
+            item["assignee_name"] = user_name_map.get(str(item["assignee_id"]))
+
     return results
 
 
@@ -897,10 +938,25 @@ async def get_task(task_id: str):
     
     if item.get("description") is None:
         item["description"] = ""
-    
+
     # Calcola efficiency_score
     item["efficiency_score"] = calculate_efficiency_score(item)
-    
+
+    # Lookup assignee_name
+    item.setdefault("assignee_name", None)
+    item.setdefault("project_name", None)
+    if item.get("assignee_id"):
+        try:
+            user_row = await database.fetch_one(
+                "SELECT COALESCE(nome || ' ' || COALESCE(cognome,''), username) AS full_name "
+                "FROM users WHERE id::text = :uid",
+                {"uid": str(item["assignee_id"])}
+            )
+            if user_row:
+                item["assignee_name"] = (user_row["full_name"] or "").strip() or None
+        except Exception:
+            pass
+
     return item
 
 

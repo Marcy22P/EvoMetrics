@@ -1219,8 +1219,10 @@ def get_monthly_value(year: int = None, db: Session = Depends(get_db)):
             {"y": year, "m": m}
         ).fetchone()
         
-        total_value = float(rows[0]) if rows else 0
+        raw_total = float(rows[0]) if rows else 0
         leads_count = int(rows[1]) if rows else 0
+        # deal_value è in centesimi → converti in euro
+        total_value = round(raw_total / 100, 2)
         
         delta_pct = None
         if prev_value is not None and prev_value > 0:
@@ -1241,7 +1243,7 @@ def get_monthly_value(year: int = None, db: Session = Depends(get_db)):
     return {
         "year": year,
         "months": months,
-        "year_total": year_total,
+        "year_total": round(year_total, 2),
     }
 
 

@@ -68,6 +68,8 @@ class Task(TaskBase):
     completed_at: Optional[datetime] = None
     google_event_id: Optional[str] = None
     efficiency_score: Optional[int] = None  # Punteggio efficienza calcolato
+    assignee_name: Optional[str] = None     # Calcolato via join su users
+    project_name: Optional[str] = None      # Calcolato via join su clienti
 
 class WorkflowTemplate(BaseModel):
     id: str
