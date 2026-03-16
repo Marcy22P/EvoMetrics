@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import type { Lead } from '../../services/salesApi';
+import { getApiGatewayUrl } from '../../utils/apiConfig';
 
 interface AiInsightEntry {
   lead_id: string;
@@ -13,9 +14,7 @@ interface AiInsightsPanelProps {
   onClose: () => void;
 }
 
-const GATEWAY = (window as { __GATEWAY_URL__?: string }).__GATEWAY_URL__ ||
-  (import.meta as { env?: { VITE_GATEWAY_URL?: string } }).env?.VITE_GATEWAY_URL ||
-  'http://localhost:10000';
+const GATEWAY = getApiGatewayUrl();
 
 const AiInsightsPanel: React.FC<AiInsightsPanelProps> = ({ leads, onClose }) => {
   const [insights, setInsights] = useState<AiInsightEntry[]>([]);

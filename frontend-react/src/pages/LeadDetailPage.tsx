@@ -17,6 +17,7 @@ import {
 } from '../services/salesApi';
 import { useAuth } from '../hooks/useAuth';
 import toast from 'react-hot-toast';
+import { getApiGatewayUrl } from '../utils/apiConfig';
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
 
@@ -214,9 +215,7 @@ const LeadDetailPage: React.FC = () => {
   const chatBottomRef = useRef<HTMLDivElement>(null);
   const chatTriggered = useRef(false);
 
-  const GATEWAY = (window as { __GATEWAY_URL__?: string }).__GATEWAY_URL__ ||
-    (import.meta as { env?: { VITE_GATEWAY_URL?: string } }).env?.VITE_GATEWAY_URL ||
-    'http://localhost:10000';
+  const GATEWAY = getApiGatewayUrl();
 
   function authHeaders(): Record<string, string> {
     const t = localStorage.getItem('auth_token');
