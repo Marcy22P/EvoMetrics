@@ -46,10 +46,14 @@ def _model() -> str:
     return (
         os.environ.get("CLAUDE_ORCHESTRATOR_MODEL")
         or os.environ.get("CLAUDE_MODEL")
-        or "claude-sonnet-4-5"
+        or "claude-sonnet-4-6"
     )
 
-MAX_TOOL_ITERATIONS = 10
+def _fast_model() -> str:
+    """Model ultraleggero per task semplici (classificazione, riepilogo breve)."""
+    return os.environ.get("CLAUDE_FAST_MODEL") or "claude-haiku-4-5"
+
+MAX_TOOL_ITERATIONS = 5
 
 # ─── Tool Definitions ──────────────────────────────────────────────────────────
 
@@ -421,24 +425,28 @@ class ToolExecutor:
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
         }
+        # Client persistente: riusa le connessioni TCP tra tool call consecutive
+        # evitando l'overhead di handshake per ogni richiesta interna
+        self._client = httpx.AsyncClient(
+            timeout=30.0,
+            headers=self._headers,
+            limits=httpx.Limits(max_keepalive_connections=10, max_connections=20),
+        )
 
     async def _get(self, path: str, params: Optional[Dict] = None) -> Any:
-        async with httpx.AsyncClient(timeout=30.0) as c:
-            r = await c.get(f"{self.base_url}{path}", headers=self._headers, params=params or {})
-            r.raise_for_status()
-            return r.json()
+        r = await self._client.get(f"{self.base_url}{path}", params=params or {})
+        r.raise_for_status()
+        return r.json()
 
     async def _post(self, path: str, body: Dict) -> Any:
-        async with httpx.AsyncClient(timeout=30.0) as c:
-            r = await c.post(f"{self.base_url}{path}", headers=self._headers, json=body)
-            r.raise_for_status()
-            return r.json()
+        r = await self._client.post(f"{self.base_url}{path}", json=body)
+        r.raise_for_status()
+        return r.json()
 
     async def _put(self, path: str, body: Dict) -> Any:
-        async with httpx.AsyncClient(timeout=30.0) as c:
-            r = await c.put(f"{self.base_url}{path}", headers=self._headers, json=body)
-            r.raise_for_status()
-            return r.json()
+        r = await self._client.put(f"{self.base_url}{path}", json=body)
+        r.raise_for_status()
+        return r.json()
 
     # ── Tool implementations ────────────────────────────────────────────────
 
@@ -948,39 +956,39 @@ class ToolExecutor:
         token = _fireflies_token()
         if not token:
             raise RuntimeError("FIREFLIES_API_KEY non configurata nelle env var.")
-        payload = {"query": query}
+        payload: Dict[str, Any] = {"query": query}
         if variables:
             payload["variables"] = variables
-        async with httpx.AsyncClient(timeout=20) as client:
-            resp = await client.post(
-                _FIREFLIES_GQL_URL,
-                json=payload,
-                headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            if "errors" in data:
-                raise RuntimeError(f"Fireflies GraphQL errors: {data['errors']}")
-            return data.get("data", {})
+        # Riusa il client persistente del ToolExecutor per evitare handshake TCP
+        resp = await self._client.post(
+            _FIREFLIES_GQL_URL,
+            json=payload,
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        if "errors" in data:
+            raise RuntimeError(f"Fireflies GraphQL errors: {data['errors']}")
+        return data.get("data", {})
 
     async def search_fireflies_transcripts(self, query: str, limit: int = 5) -> str:
         try:
             gql = """
-            query SearchTranscripts($title: String) {
-              transcripts(filter: { title: $title }) {
+            query SearchTranscripts($title: String, $limit: Int) {
+              transcripts(title: $title, limit: $limit) {
                 id
                 title
                 date
                 duration
-                summary { overview action_items keywords }
                 organizer_email
-                participants { displayName email }
+                participants
+                meeting_attendees { displayName email }
+                summary { overview action_items keywords }
               }
             }
             """
-            data = await self._fireflies_gql(gql, {"title": query})
+            data = await self._fireflies_gql(gql, {"title": query, "limit": limit})
             transcripts = data.get("transcripts") or []
-            transcripts = transcripts[:limit]
             if not transcripts:
                 return f"Nessuna trascrizione trovata per la ricerca: '{query}'."
             lines = [f"**{len(transcripts)} trascrizioni trovate per '{query}'**\n"]
@@ -992,11 +1000,14 @@ class ToolExecutor:
                         date_str = _dt.fromtimestamp(int(t["date"]) / 1000).strftime("%d/%m/%Y") if str(t["date"]).isdigit() else str(t["date"])[:10]
                     except Exception:
                         date_str = str(t.get("date", ""))[:10]
-                participants = ", ".join(p.get("displayName") or p.get("email", "?") for p in (t.get("participants") or []))
+                attendees = t.get("meeting_attendees") or []
+                participants_str = ", ".join(
+                    a.get("displayName") or a.get("email", "?") for a in attendees
+                ) if attendees else ", ".join(t.get("participants") or []) or "N/D"
                 summary = (t.get("summary") or {}).get("overview") or ""
                 lines.append(
                     f"- **{t.get('title','?')}** | {date_str} | ID: `{t['id']}`\n"
-                    f"  Partecipanti: {participants or 'N/D'}\n"
+                    f"  Partecipanti: {participants_str}\n"
                     + (f"  Sintesi: {summary[:200]}..." if len(summary) > 200 else f"  Sintesi: {summary}" if summary else "")
                 )
             return "\n".join(lines)
@@ -1015,9 +1026,10 @@ class ToolExecutor:
                 date
                 duration
                 organizer_email
-                participants { displayName email }
-                summary { overview action_items keywords }
-                sentences { raw_words speaker_id speaker_name }
+                participants
+                meeting_attendees { displayName email }
+                summary { overview action_items keywords outline }
+                sentences { text speaker_id speaker_name start_time }
               }
             }
             """
@@ -1029,7 +1041,10 @@ class ToolExecutor:
             overview   = summary.get("overview") or "N/D"
             action_items = summary.get("action_items") or "Nessuno"
             keywords   = ", ".join(summary.get("keywords") or []) or "N/D"
-            participants = ", ".join(p.get("displayName") or p.get("email", "?") for p in (t.get("participants") or []))
+            attendees = t.get("meeting_attendees") or []
+            participants = ", ".join(
+                a.get("displayName") or a.get("email", "?") for a in attendees
+            ) if attendees else ", ".join(t.get("participants") or []) or "N/D"
             duration_min = int(t.get("duration") or 0) // 60
             date_str = ""
             if t.get("date"):
@@ -1072,15 +1087,16 @@ class ToolExecutor:
             results = []
             for search_term in [s for s in [nome_str, azienda, email_dom] if s]:
                 gql = """
-                query SearchTranscripts($title: String) {
-                  transcripts(filter: { title: $title }) {
+                query SearchTranscripts($title: String, $limit: Int) {
+                  transcripts(title: $title, limit: $limit) {
                     id title date duration
-                    participants { displayName email }
+                    participants
+                    meeting_attendees { displayName email }
                     summary { overview }
                   }
                 }
                 """
-                data = await self._fireflies_gql(gql, {"title": search_term})
+                data = await self._fireflies_gql(gql, {"title": search_term, "limit": 10})
                 for t in (data.get("transcripts") or []):
                     if t["id"] not in {r["id"] for r in results}:
                         results.append(t)
@@ -1104,7 +1120,10 @@ class ToolExecutor:
                         date_str = _dt.fromtimestamp(int(t["date"]) / 1000).strftime("%d/%m/%Y") if str(t["date"]).isdigit() else str(t["date"])[:10]
                     except Exception:
                         date_str = str(t.get("date", ""))[:10]
-                participants = ", ".join(p.get("displayName") or p.get("email", "?") for p in (t.get("participants") or []))
+                attendees = t.get("meeting_attendees") or []
+                participants = ", ".join(
+                    a.get("displayName") or a.get("email", "?") for a in attendees
+                ) if attendees else ", ".join(t.get("participants") or []) or "N/D"
                 overview = (t.get("summary") or {}).get("overview") or ""
                 lines.append(
                     f"- **{t.get('title','?')}** | {date_str} | ID: `{t['id']}`\n"
@@ -1122,16 +1141,17 @@ class ToolExecutor:
         try:
             # Fetch parallelo: trascrizioni Fireflies + lead pipeline
             gql = """
-            query GetTranscripts {
-              transcripts(limit: %d) {
+            query GetTranscripts($limit: Int) {
+              transcripts(limit: $limit) {
                 id title date duration
                 organizer_email
-                participants { displayName email }
+                participants
+                meeting_attendees { displayName email }
                 summary { overview action_items }
               }
             }
-            """ % limit
-            transcripts_task = self._fireflies_gql(gql)
+            """
+            transcripts_task = self._fireflies_gql(gql, {"limit": limit})
             leads_task = self._get("/api/leads")
 
             transcripts_data, leads_data = await asyncio.gather(
@@ -1154,7 +1174,10 @@ class ToolExecutor:
                         date_str = _dt.fromtimestamp(int(t["date"]) / 1000).strftime("%d/%m/%Y") if str(t["date"]).isdigit() else str(t["date"])[:10]
                     except Exception:
                         date_str = str(t.get("date", ""))[:10]
-                participants = [p.get("displayName") or p.get("email", "?") for p in (t.get("participants") or [])]
+                attendees = t.get("meeting_attendees") or []
+                participants = [
+                    a.get("displayName") or a.get("email", "?") for a in attendees
+                ] if attendees else list(t.get("participants") or [])
                 compact_transcripts.append({
                     "id": t["id"],
                     "title": t.get("title", "?"),
@@ -1280,14 +1303,14 @@ class Agent:
         call_params: Dict[str, Any],
         retry: int = 3,
     ) -> Any:
-        """Chiama l'API Anthropic con retry esponenziale su rate limit."""
+        """Chiama l'API Anthropic (async) con retry esponenziale su rate limit."""
         for attempt in range(retry):
             try:
-                return client.messages.create(**call_params)
+                return await client.messages.create(**call_params)
             except _anthropic_lib.RateLimitError as e:
                 if attempt < retry - 1:
                     wait = 2 ** (attempt + 1)
-                    print(f"⚠️  Rate limit, retry {attempt+1}/{retry-1} tra {wait}s…")
+                    print(f"Rate limit, retry {attempt+1}/{retry-1} tra {wait}s…")
                     await asyncio.sleep(wait)
                 else:
                     raise e
@@ -1303,13 +1326,14 @@ class Agent:
                 "error": "no_api_key",
             }
 
-        client = _anthropic_lib.Anthropic(api_key=api_key)
-        # Filtra i messaggi della storia: prendi solo role/content (compatibilità Anthropic)
+        client = _anthropic_lib.AsyncAnthropic(api_key=api_key)
+        # Prendi solo role/content (compatibilità Anthropic) e limita a 20 messaggi recenti
+        # per ridurre i token e velocizzare la risposta
         clean_history = [
             {"role": m["role"], "content": m["content"]}
             for m in history
             if m.get("role") in ("user", "assistant") and m.get("content")
-        ]
+        ][-20:]
         messages = clean_history + [{"role": "user", "content": message}]
         tools_used: List[str] = []
 
@@ -1317,7 +1341,7 @@ class Agent:
             for _ in range(MAX_TOOL_ITERATIONS):
                 call_params: Dict[str, Any] = {
                     "model": _model(),
-                    "max_tokens": 4096,
+                    "max_tokens": 2000,
                     "system": self._system_prompt(),
                     "tools": self.config["tools"],
                     "messages": messages,

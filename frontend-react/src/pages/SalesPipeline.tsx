@@ -22,6 +22,7 @@ import PipelineTimeline from '../components/pipeline/PipelineTimeline';
 import PipelineKPIBar from '../components/pipeline/PipelineKPIBar';
 import PipelineSearch, { type SearchState } from '../components/pipeline/PipelineSearch';
 import PipelineAnalytics from '../components/pipeline/PipelineAnalytics';
+import AiInsightsPanel from '../components/pipeline/AiInsightsPanel';
 import { useAuth } from '../hooks/useAuth';
 import toast from 'react-hot-toast';
 import s from '../components/pipeline/pipeline.module.css';
@@ -29,7 +30,7 @@ import s from '../components/pipeline/pipeline.module.css';
 // ─── SVG Icons ────────────────────────────────────────────────────────────────
 
 const IconBoard = () => (
-  <svg width="18" height="18" viewBox="0 0 20 20" fill="currentColor">
+  <svg width="14" height="14" viewBox="0 0 20 20" fill="currentColor">
     <rect x="2" y="3" width="4" height="14" rx="1"/>
     <rect x="8" y="3" width="4" height="10" rx="1"/>
     <rect x="14" y="3" width="4" height="12" rx="1"/>
@@ -37,7 +38,7 @@ const IconBoard = () => (
 );
 
 const IconList = () => (
-  <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+  <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
     <line x1="4" y1="6"  x2="16" y2="6"/>
     <line x1="4" y1="10" x2="16" y2="10"/>
     <line x1="4" y1="14" x2="16" y2="14"/>
@@ -45,26 +46,34 @@ const IconList = () => (
 );
 
 const IconChart = () => (
-  <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+  <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
     <polyline points="3,15 7,9 11,12 17,5"/>
   </svg>
 );
 
+const IconFilter = () => (
+  <svg width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+    <line x1="3" y1="6"  x2="17" y2="6"/>
+    <line x1="6" y1="10" x2="14" y2="10"/>
+    <line x1="9" y1="14" x2="11" y2="14"/>
+  </svg>
+);
+
 const IconSettings = () => (
-  <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
-    <circle cx="10" cy="10" r="3"/>
+  <svg width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+    <circle cx="10" cy="10" r="2.5"/>
     <path d="M10 2v2M10 16v2M2 10h2M16 10h2M4.22 4.22l1.42 1.42M14.36 14.36l1.42 1.42M4.22 15.78l1.42-1.42M14.36 5.64l1.42-1.42"/>
   </svg>
 );
 
 const IconPlus = () => (
-  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+  <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
     <line x1="8" y1="2" x2="8" y2="14"/><line x1="2" y1="8" x2="14" y2="8"/>
   </svg>
 );
 
 const IconDownload = () => (
-  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+  <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
     <path d="M8 2v8M5 7l3 3 3-3"/><line x1="2" y1="13" x2="14" y2="13"/>
   </svg>
 );
@@ -83,13 +92,13 @@ const ListView: React.FC<ListViewProps> = ({ leads, stages }) => {
   const [sortKey, setSortKey] = useState<string>('created_at');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 
-  const stageMap = useMemo(() => new Map(stages.map(s => [s.key, s])), [stages]);
+  const stageMap = useMemo(() => new Map(stages.map(st => [st.key, st])), [stages]);
 
   const sorted = useMemo(() => {
     return [...leads].sort((a, b) => {
-      let va: any = (a as any)[sortKey] ?? '';
-      let vb: any = (b as any)[sortKey] ?? '';
-      if (sortKey === 'deal_value') { va = va || 0; vb = vb || 0; }
+      let va: string | number = ((a as unknown) as Record<string, string | number>)[sortKey] ?? '';
+      let vb: string | number = ((b as unknown) as Record<string, string | number>)[sortKey] ?? '';
+      if (sortKey === 'deal_value') { va = (va as number) || 0; vb = (vb as number) || 0; }
       if (typeof va === 'string') va = va.toLowerCase();
       if (typeof vb === 'string') vb = vb.toLowerCase();
       if (va < vb) return sortDir === 'asc' ? -1 : 1;
@@ -128,7 +137,7 @@ const ListView: React.FC<ListViewProps> = ({ leads, stages }) => {
           {sorted.map(lead => {
             const stage = stageMap.get(lead.stage);
             const score = lead.lead_score ?? 0;
-            const scoreColor = score >= 70 ? '#1a7f37' : score >= 40 ? '#a85f00' : '#c0392b';
+            const scoreColor = score >= 70 ? '#16a34a' : score >= 40 ? '#d97706' : '#dc2626';
             return (
               <tr
                 key={lead.id}
@@ -136,20 +145,18 @@ const ListView: React.FC<ListViewProps> = ({ leads, stages }) => {
                 onClick={() => navigate(`/pipeline/lead/${lead.id}`)}
               >
                 <td className={s.listTd}>
-                  <strong style={{ fontSize: '0.83rem' }}>
-                    {lead.azienda || 'N/D'}
-                  </strong>
+                  <strong style={{ fontSize: '0.83rem' }}>{lead.azienda || 'N/D'}</strong>
                 </td>
-                <td className={s.listTd} style={{ color: '#6d7175', fontSize: '0.8rem' }}>
+                <td className={s.listTd} style={{ color: '#6b7280', fontSize: '0.8rem' }}>
                   {[lead.first_name, lead.last_name].filter(Boolean).join(' ') || lead.email}
                 </td>
-                <td className={s.listTd} style={{ fontSize: '0.78rem', color: '#6d7175' }}>
+                <td className={s.listTd} style={{ fontSize: '0.78rem', color: '#6b7280' }}>
                   {lead.email}
                 </td>
                 <td className={s.listTd}>
                   <span className={s.stagePillSmall}>{stage?.label || lead.stage}</span>
                 </td>
-                <td className={s.listTd} style={{ fontSize: '0.78rem', color: '#6d7175' }}>
+                <td className={s.listTd} style={{ fontSize: '0.78rem', color: '#6b7280' }}>
                   {lead.source_channel || '—'}
                 </td>
                 <td className={s.listTd}>
@@ -160,7 +167,7 @@ const ListView: React.FC<ListViewProps> = ({ leads, stages }) => {
                     ? `€${Math.round(lead.deal_value > 10000 ? lead.deal_value / 100 : lead.deal_value).toLocaleString('it-IT')}`
                     : '—'}
                 </td>
-                <td className={s.listTd} style={{ fontSize: '0.78rem', color: '#8c9196' }}>
+                <td className={s.listTd} style={{ fontSize: '0.78rem', color: '#9ca3af' }}>
                   {new Date(lead.created_at).toLocaleDateString('it-IT')}
                 </td>
               </tr>
@@ -168,7 +175,7 @@ const ListView: React.FC<ListViewProps> = ({ leads, stages }) => {
           })}
           {sorted.length === 0 && (
             <tr>
-              <td colSpan={8} style={{ padding: '32px', textAlign: 'center', color: '#8c9196', fontSize: '0.85rem' }}>
+              <td colSpan={8} style={{ padding: '32px', textAlign: 'center', color: '#9ca3af', fontSize: '0.85rem' }}>
                 Nessun lead trovato
               </td>
             </tr>
@@ -199,6 +206,8 @@ const SalesPipeline: React.FC = () => {
   const [search, setSearch] = useState<SearchState>({ query: '', filters: [] });
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showAiInsights, setShowAiInsights] = useState(false);
+  const [showFilterDropdown, setShowFilterDropdown] = useState(false);
 
   // Drag & Drop
   const [draggingLeadId, setDraggingLeadId] = useState<string | null>(null);
@@ -216,30 +225,16 @@ const SalesPipeline: React.FC = () => {
   const [newSourceChannel, setNewSourceChannel] = useState('');
   const [newAssignedTo, setNewAssignedTo] = useState('');
 
-  // ── Data fetching ───────────────────────────────────────────────────────────
+  // ── AI Insights count ─────────────────────────────────────────────────────────
 
-  const fetchLeads = useCallback(async () => {
-    try {
-      setLoading(true);
-      const data = await salesApi.getLeads();
-      setLeads(data);
-    } catch {
-      toast.error('Errore caricamento pipeline');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const aiInsightsCount = useMemo(() => {
+    return leads.filter(l =>
+      !['cliente', 'trattativa_persa', 'scartato', 'archiviato'].includes(l.stage) &&
+      (l.lead_score ?? 0) < 40
+    ).length;
+  }, [leads]);
 
-  useEffect(() => {
-    salesApi.getStages().then(setStages).catch(() => {});
-    salesApi.getLeadTags().then(setLeadTags).catch(() => {});
-    salesApi.getPipelineUsers().then(setPipelineUsers).catch(() => {});
-    salesApi.getSourceChannels().then(d => setSourceChannels(d.channels)).catch(() => {});
-    salesApi.getMonthlyValue().then(setMonthlyData).catch(() => {});
-    fetchLeads();
-  }, [fetchLeads]);
-
-  // ── Filtering ───────────────────────────────────────────────────────────────
+  // ── Filtering ─────────────────────────────────────────────────────────────────
 
   const filteredLeads = useMemo(() => {
     return leads.filter(lead => {
@@ -268,7 +263,30 @@ const SalesPipeline: React.FC = () => {
     });
   }, [leads, search]);
 
-  // ── Drag & Drop ─────────────────────────────────────────────────────────────
+  // ── Data fetching ──────────────────────────────────────────────────────────────
+
+  const fetchLeads = useCallback(async () => {
+    try {
+      setLoading(true);
+      const data = await salesApi.getLeads();
+      setLeads(data);
+    } catch {
+      toast.error('Errore caricamento pipeline');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    salesApi.getStages().then(setStages).catch(() => {});
+    salesApi.getLeadTags().then(setLeadTags).catch(() => {});
+    salesApi.getPipelineUsers().then(setPipelineUsers).catch(() => {});
+    salesApi.getSourceChannels().then(d => setSourceChannels(d.channels)).catch(() => {});
+    salesApi.getMonthlyValue().then(setMonthlyData).catch(() => {});
+    fetchLeads();
+  }, [fetchLeads]);
+
+  // ── Drag & Drop ───────────────────────────────────────────────────────────────
 
   const handleDragStart = (e: React.DragEvent<HTMLDivElement>, id: string) => {
     setDraggingLeadId(id);
@@ -295,7 +313,7 @@ const SalesPipeline: React.FC = () => {
 
   const handleDragEnd = () => { setDraggingLeadId(null); setDragOverStageKey(null); };
 
-  // ── Move stage ──────────────────────────────────────────────────────────────
+  // ── Move stage ────────────────────────────────────────────────────────────────
 
   const handleMoveStage = useCallback(async (lead: Lead, newStage: string) => {
     const prev = lead.stage;
@@ -312,7 +330,7 @@ const SalesPipeline: React.FC = () => {
     setLeads(updated);
   }, []);
 
-  // ── Create lead ─────────────────────────────────────────────────────────────
+  // ── Create lead ───────────────────────────────────────────────────────────────
 
   const resetCreateForm = () => {
     setNewLeadEmail(''); setNewLeadFirstName(''); setNewLeadLastName('');
@@ -340,74 +358,26 @@ const SalesPipeline: React.FC = () => {
       setShowCreateModal(false);
       resetCreateForm();
       fetchLeads();
-    } catch (e: any) {
-      toast.error(e.message || 'Errore creazione lead');
+    } catch (e: unknown) {
+      toast.error((e as Error).message || 'Errore creazione lead');
     }
   };
 
-  // ── Sidebar tooltip ─────────────────────────────────────────────────────────
-
-  const SidebarButton: React.FC<{
-    viewMode: ViewMode;
-    icon: React.ReactNode;
-    label: string;
-  }> = ({ viewMode, icon, label }) => (
-    <button
-      className={`${s.sidebarBtn}${view === viewMode ? ' ' + s.active : ''}`}
-      onClick={() => setView(viewMode)}
-      title={label}
-    >
-      {icon}
-    </button>
-  );
-
-  // ── Render ──────────────────────────────────────────────────────────────────
+  // ── Render ────────────────────────────────────────────────────────────────────
 
   return (
     <div className={`${s.root} ${s.shell}`}>
 
-      {/* Mini Sidebar */}
-      <nav className={s.miniSidebar}>
-        <SidebarButton viewMode="timeline" icon={<IconBoard />} label="Timeline (kanban)" />
-        <SidebarButton viewMode="list"     icon={<IconList />}  label="Lista lead" />
-        <SidebarButton viewMode="analytics" icon={<IconChart />} label="Analytics" />
-        <div className={s.sidebarSep} />
-        <button
-          className={s.sidebarBtn}
-          onClick={() => setShowSettings(true)}
-          title="Impostazioni pipeline"
-        >
-          <IconSettings />
-        </button>
-      </nav>
+      {/* Page title */}
+      <div className={s.pageHeader}>
+        <h1 className={s.pageTitle}>Sales Pipeline</h1>
+      </div>
 
-      {/* Content */}
-      <div className={s.content}>
+      {/* KPI bar — 4 card sempre visibili */}
+      <PipelineKPIBar leads={leads} monthlyData={monthlyData} />
 
-        {/* Top bar */}
-        <div className={s.topBar}>
-          <span className={s.topBarTitle}>Pipeline Sales</span>
-          <span className={s.topBarCount}>{filteredLeads.length}</span>
-          <div className={s.topBarSpacer} />
-          <button
-            style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'none', border: '1px solid #e1e3e5', borderRadius: 6, padding: '5px 10px', cursor: 'pointer', fontSize: '0.78rem', color: '#6d7175', fontFamily: 'inherit' }}
-            onClick={() => salesApi.downloadLeadsCsv()}
-            title="Esporta CSV"
-          >
-            <IconDownload /> CSV
-          </button>
-          <button
-            style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#005bd3', border: 'none', borderRadius: 6, padding: '5px 12px', cursor: 'pointer', fontSize: '0.82rem', color: '#fff', fontWeight: 600, fontFamily: 'inherit' }}
-            onClick={() => setShowCreateModal(true)}
-          >
-            <IconPlus /> Nuovo lead
-          </button>
-        </div>
-
-        {/* KPI Bar */}
-        <PipelineKPIBar leads={leads} monthlyData={monthlyData} />
-
-        {/* Search */}
+      {/* Toolbar */}
+      <div className={s.toolbar}>
         <PipelineSearch
           stages={stages}
           leadTags={leadTags}
@@ -417,13 +387,82 @@ const SalesPipeline: React.FC = () => {
           onChange={setSearch}
           totalShown={filteredLeads.length}
           totalAll={leads.length}
+          showFilterDropdown={showFilterDropdown}
+          onCloseFilterDropdown={() => setShowFilterDropdown(false)}
         />
 
-        {/* Views */}
+        <div className={s.toolbarRight}>
+          {/* View switcher */}
+          <div className={s.viewSwitcher}>
+            <button
+              className={`${s.viewBtn}${view === 'timeline' ? ' ' + s.viewBtnActive : ''}`}
+              onClick={() => setView('timeline')}
+            >
+              <IconBoard /> Kanban
+            </button>
+            <button
+              className={`${s.viewBtn}${view === 'list' ? ' ' + s.viewBtnActive : ''}`}
+              onClick={() => setView('list')}
+            >
+              <IconList /> List
+            </button>
+            <button
+              className={`${s.viewBtn}${view === 'analytics' ? ' ' + s.viewBtnActive : ''}`}
+              onClick={() => setView('analytics')}
+            >
+              <IconChart /> Analytics
+            </button>
+          </div>
+
+          <div className={s.toolbarSep} />
+
+          <button
+            className={s.filterBtn}
+            onClick={() => setShowSettings(true)}
+            title="Impostazioni Pipeline"
+          >
+            <IconSettings /> Impostazioni
+          </button>
+
+          <button
+            className={`${s.filterBtn}${showFilterDropdown ? ' ' + s.viewBtnActive : ''}`}
+            onClick={() => setShowFilterDropdown(p => !p)}
+          >
+            <IconFilter />
+            Filter
+            {search.filters.length > 0 && (
+              <span className={s.insightBadge} style={{ background: '#6b7280' }}>
+                {search.filters.length}
+              </span>
+            )}
+          </button>
+
+          <button
+            className={s.aiInsightBtn}
+            onClick={() => setShowAiInsights(p => !p)}
+          >
+            ✦ AI Insight
+            {aiInsightsCount > 0 && (
+              <span className={s.insightBadge}>{aiInsightsCount}</span>
+            )}
+          </button>
+
+          <button className={s.filterBtn} onClick={() => salesApi.downloadLeadsCsv()} title="Esporta CSV">
+            <IconDownload /> CSV
+          </button>
+
+          <button className={s.newDealBtn} onClick={() => setShowCreateModal(true)}>
+            <IconPlus /> New Deal
+          </button>
+        </div>
+      </div>
+
+      {/* Content */}
+      <div className={s.content}>
         {loading ? (
-          <div className={s.empty} style={{ flex: 1 }}>
+          <div className={s.empty} style={{ flex: 1, justifyContent: 'center' }}>
             <Spinner size="large" />
-            <span>Caricamento pipeline...</span>
+            <span style={{ color: '#9ca3af', fontSize: '0.85rem' }}>Caricamento pipeline...</span>
           </div>
         ) : view === 'timeline' ? (
           <PipelineTimeline
@@ -446,6 +485,14 @@ const SalesPipeline: React.FC = () => {
           <PipelineAnalytics leads={leads} stages={stages} monthlyData={monthlyData} />
         )}
       </div>
+
+      {/* AI Insights Panel */}
+      {showAiInsights && (
+        <AiInsightsPanel
+          leads={filteredLeads}
+          onClose={() => setShowAiInsights(false)}
+        />
+      )}
 
       {/* Create Lead Modal */}
       <Modal
@@ -495,7 +542,7 @@ const SalesPipeline: React.FC = () => {
             />
             <Select
               label="Stage iniziale"
-              options={[{ label: 'Primo stage (default)', value: '' }, ...stages.map(s => ({ label: s.label, value: s.key }))]}
+              options={[{ label: 'Primo stage (default)', value: '' }, ...stages.map(st => ({ label: st.label, value: st.key }))]}
               value={newLeadStage}
               onChange={setNewLeadStage}
             />
@@ -508,7 +555,11 @@ const SalesPipeline: React.FC = () => {
       <PipelineSettingsModal
         open={showSettings}
         onClose={() => setShowSettings(false)}
-        onUpdate={() => { salesApi.getStages().then(setStages).catch(() => {}); fetchLeads(); salesApi.getLeadTags().then(setLeadTags).catch(() => {}); }}
+        onUpdate={() => {
+          salesApi.getStages().then(setStages).catch(() => {});
+          fetchLeads();
+          salesApi.getLeadTags().then(setLeadTags).catch(() => {});
+        }}
       />
     </div>
   );

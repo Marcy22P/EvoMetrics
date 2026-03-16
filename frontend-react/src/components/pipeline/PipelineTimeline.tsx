@@ -3,6 +3,22 @@ import type { Lead, PipelineStage } from '../../services/salesApi';
 import LeadCard from './LeadCard';
 import s from './pipeline.module.css';
 
+// ─── Stage dot colors ─────────────────────────────────────────────────────────
+
+const STAGE_DOTS: Record<string, string> = {
+  optin:                  '#6366f1',
+  contattato:             '#f59e0b',
+  prima_chiamata:         '#3b82f6',
+  appuntamento_vivo_1:    '#8b5cf6',
+  seconda_chiamata:       '#06b6d4',
+  appuntamento_vivo_2:    '#10b981',
+  preventivo_consegnato:  '#f97316',
+  cliente:                '#16a34a',
+  trattativa_persa:       '#ef4444',
+  scartato:               '#9ca3af',
+  archiviato:             '#d1d5db',
+};
+
 // ─── Props ────────────────────────────────────────────────────────────────────
 
 interface PipelineTimelineProps {
@@ -59,9 +75,7 @@ const PipelineTimeline: React.FC<PipelineTimelineProps> = ({
 }) => {
   const [pendingLost, setPendingLost] = useState<Lead | null>(null);
 
-  const handleMarkLost = (lead: Lead) => {
-    setPendingLost(lead);
-  };
+  const handleMarkLost = (lead: Lead) => setPendingLost(lead);
 
   const confirmLost = () => {
     if (!pendingLost) return;
@@ -75,10 +89,11 @@ const PipelineTimeline: React.FC<PipelineTimelineProps> = ({
         {stages.map(stage => {
           const stageLeads = leads.filter(l => l.stage === stage.key);
           const totalValue = stageLeads.reduce((sum, l) => {
-            const v = (l.deal_value ?? 0);
+            const v = l.deal_value ?? 0;
             return sum + (v > 10000 ? v / 100 : v);
           }, 0);
           const isDragOver = dragOverStage === stage.key;
+          const dotColor = STAGE_DOTS[stage.key] ?? '#9ca3af';
 
           return (
             <div
@@ -91,14 +106,15 @@ const PipelineTimeline: React.FC<PipelineTimelineProps> = ({
               {/* Stage header */}
               <div className={s.stageHead}>
                 <div className={s.stageHeadRow}>
+                  <span className={s.stageHeadDot} style={{ background: dotColor }} />
                   <span className={s.stageHeadLabel}>{stage.label}</span>
                   <span className={s.stageHeadCount}>{stageLeads.length}</span>
+                  {totalValue > 0 && (
+                    <span className={s.stageHeadValue}>
+                      €{totalValue.toLocaleString('it-IT', { maximumFractionDigits: 0 })}
+                    </span>
+                  )}
                 </div>
-                {totalValue > 0 && (
-                  <div className={s.stageHeadValue}>
-                    €{totalValue.toLocaleString('it-IT', { maximumFractionDigits: 0 })}
-                  </div>
-                )}
               </div>
 
               {/* Cards */}
@@ -128,7 +144,6 @@ const PipelineTimeline: React.FC<PipelineTimelineProps> = ({
         })}
       </div>
 
-      {/* Lost confirmation snackbar */}
       {pendingLost && (
         <LostConfirm
           lead={pendingLost}

@@ -1,16 +1,34 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import type { Lead, MonthlyValueResponse } from '../../services/salesApi';
-import { getServiceUrl } from '../../utils/apiConfig';
-import s from './pipeline.module.css';
 
-const SALES_URL = getServiceUrl('sales');
+// ─── SVG Icons ────────────────────────────────────────────────────────────────
 
-function authFetch(path: string) {
-  const t = localStorage.getItem('auth_token');
-  return fetch(`${SALES_URL}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...(t ? { Authorization: `Bearer ${t}` } : {}) },
-  }).then(r => r.json());
-}
+const IconTrend = () => (
+  <svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+    <polyline points="3,14 7,9 11,12 17,5"/>
+    <polyline points="14,5 17,5 17,8"/>
+  </svg>
+);
+
+const IconDeals = () => (
+  <svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+    <rect x="3" y="7" width="14" height="11" rx="2"/>
+    <path d="M7 7V5a3 3 0 016 0v2"/>
+  </svg>
+);
+
+const IconWon = () => (
+  <svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+    <polyline points="4,10 8,14 16,6"/>
+  </svg>
+);
+
+const IconProgress = () => (
+  <svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+    <circle cx="10" cy="10" r="7"/>
+    <path d="M10 6v4l3 2"/>
+  </svg>
+);
 
 // ─── Props ────────────────────────────────────────────────────────────────────
 
@@ -19,129 +37,117 @@ interface PipelineKPIBarProps {
   monthlyData: MonthlyValueResponse | null;
 }
 
+// ─── KPI Card ─────────────────────────────────────────────────────────────────
+
+interface KPICardProps {
+  icon: React.ReactNode;
+  iconColor: string;
+  label: string;
+  value: string;
+  sub: string;
+  delta?: { val: number };
+}
+
+const KPICard: React.FC<KPICardProps> = ({ icon, iconColor, label, value, sub, delta }) => (
+  <div style={{
+    flex: 1,
+    background: '#fff',
+    border: '1px solid #eaecf0',
+    borderRadius: 10,
+    padding: '14px 18px',
+    boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
+    minWidth: 0,
+    fontFamily: "'Plus Jakarta Sans', -apple-system, sans-serif",
+  }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 10 }}>
+      <span style={{ color: iconColor, display: 'flex', alignItems: 'center', flexShrink: 0 }}>{icon}</span>
+      <span style={{ fontSize: '0.75rem', fontWeight: 500, color: '#6b7280' }}>{label}</span>
+      {delta !== undefined && (
+        <span style={{
+          marginLeft: 'auto',
+          fontSize: '0.68rem',
+          fontWeight: 700,
+          padding: '2px 7px',
+          borderRadius: 999,
+          background: delta.val >= 0 ? '#dcfce7' : '#fee2e2',
+          color: delta.val >= 0 ? '#16a34a' : '#dc2626',
+          flexShrink: 0,
+        }}>
+          {delta.val >= 0 ? '+' : ''}{delta.val}%
+        </span>
+      )}
+    </div>
+    <div style={{ fontSize: '1.5rem', fontWeight: 700, color: '#111827', lineHeight: 1.1 }}>
+      {value}
+    </div>
+    <div style={{ fontSize: '0.72rem', color: '#9ca3af', marginTop: 5 }}>{sub}</div>
+  </div>
+);
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 const PipelineKPIBar: React.FC<PipelineKPIBarProps> = ({ leads, monthlyData }) => {
-  const [expanded, setExpanded] = useState(false);
-  const [zombieCount, setZombieCount] = useState(0);
-  const [queueTotal, setQueueTotal] = useState(0);
-
-  // Derived KPIs from local leads
   const totalLeads = leads.length;
-  const totalValue = leads.reduce((sum, l) => {
-    const v = l.deal_value ?? 0;
-    return sum + (v > 10000 ? v / 100 : v);
-  }, 0);
+
+  const activeLeads = leads.filter(l =>
+    !['cliente', 'trattativa_persa', 'scartato', 'archiviato'].includes(l.stage)
+  ).length;
+
   const clienti = leads.filter(l => l.stage === 'cliente').length;
-  const convRate = totalLeads > 0 ? Math.round(clienti / totalLeads * 100) : 0;
 
-  // Oggi appointments
-  const today = new Date().toDateString();
-  const appToday = leads.filter(l => {
-    if (!l.appointment_date) return false;
-    return new Date(l.appointment_date).toDateString() === today;
-  }).length;
+  const totalValue = leads.reduce((s, l) => {
+    const v = l.deal_value ?? 0;
+    return s + (v > 10000 ? v / 100 : v);
+  }, 0);
 
-  // Urgenti: optin > 24h non contattati
-  const urgenti = leads.filter(l => {
-    if (l.stage !== 'optin') return false;
-    if (l.first_contact_at) return false;
-    const hours = (Date.now() - new Date(l.created_at).getTime()) / 3600000;
-    return hours > 24;
-  }).length;
+  const wonValue = leads
+    .filter(l => l.stage === 'cliente')
+    .reduce((s, l) => {
+      const v = l.deal_value ?? 0;
+      return s + (v > 10000 ? v / 100 : v);
+    }, 0);
 
-  // Monthly trend
-  const monthlyTrend = (() => {
+  const monthlyDelta = (() => {
     if (!monthlyData?.months?.length) return null;
     const now = new Date();
-    const curMonth = monthlyData.months[now.getMonth()];
-    const prevMonth = monthlyData.months[now.getMonth() > 0 ? now.getMonth() - 1 : 0];
-    if (!curMonth || !prevMonth || prevMonth.total_value === 0) return null;
-    const delta = ((curMonth.total_value - prevMonth.total_value) / prevMonth.total_value) * 100;
-    return { delta: Math.round(delta), current: curMonth.total_value };
+    const cur  = monthlyData.months[now.getMonth()];
+    const prev = monthlyData.months[now.getMonth() > 0 ? now.getMonth() - 1 : 0];
+    if (!cur || !prev || prev.total_value === 0) return null;
+    return Math.round(((cur.total_value - prev.total_value) / prev.total_value) * 100);
   })();
 
-  // Fetch extended metrics when expanded
-  useEffect(() => {
-    if (!expanded) return;
-    authFetch('/api/leads/zombie').then((d: any) => setZombieCount(d.total ?? 0)).catch(() => {});
-    authFetch('/api/leads/priority-queue').then((d: any) => setQueueTotal(d.total ?? 0)).catch(() => {});
-  }, [expanded]);
-
   return (
-    <div className={s.kpiBar}>
-      {/* Collapsed row — always visible */}
-      <div className={s.kpiCollapsed}>
-        <div className={s.kpiItem}>
-          <span className={s.kpiLabel}>Lead</span>
-          <span className={s.kpiValue}>{totalLeads}</span>
-        </div>
-        <div className={s.kpiItem}>
-          <span className={s.kpiLabel}>Pipeline</span>
-          <span className={s.kpiValue}>
-            €{totalValue.toLocaleString('it-IT', { maximumFractionDigits: 0 })}
-          </span>
-        </div>
-        <div className={s.kpiItem}>
-          <span className={s.kpiLabel}>Urgenti</span>
-          <span className={`${s.kpiValue}${urgenti > 0 ? ' ' + s.danger : ''}`}>{urgenti}</span>
-        </div>
-        <div className={s.kpiItem}>
-          <span className={s.kpiLabel}>Oggi</span>
-          <span className={`${s.kpiValue}${appToday > 0 ? ' ' + s.success : ''}`}>
-            {appToday} appt.
-          </span>
-        </div>
-        {monthlyTrend && (
-          <div className={s.kpiItem}>
-            <span className={s.kpiLabel}>Trend mese</span>
-            <span className={`${s.kpiDelta} ${monthlyTrend.delta >= 0 ? s.up : s.down}`} style={{ fontSize: '0.82rem' }}>
-              {monthlyTrend.delta >= 0 ? '+' : ''}{monthlyTrend.delta}%
-            </span>
-          </div>
-        )}
-        <button className={s.kpiExpand} onClick={() => setExpanded(p => !p)}>
-          {expanded ? '▲ Chiudi' : '▾ Dettagli'}
-        </button>
-      </div>
-
-      {/* Expanded section */}
-      {expanded && (
-        <div className={s.kpiExpanded}>
-          <div className={s.kpiCard}>
-            <div className={s.kpiCardLabel}>Conversion Rate</div>
-            <div className={s.kpiCardValue}>{convRate}%</div>
-            <div className={s.kpiCardSub}>{clienti} clienti su {totalLeads} lead totali</div>
-          </div>
-
-          <div className={s.kpiCard}>
-            <div className={s.kpiCardLabel}>Lead Zombie</div>
-            <div className={`${s.kpiCardValue}`} style={{ color: zombieCount > 0 ? '#a85f00' : '#1a7f37' }}>
-              {zombieCount}
-            </div>
-            <div className={s.kpiCardSub}>Fermi da più di 7 giorni nello stesso stage</div>
-          </div>
-
-          <div className={s.kpiCard}>
-            <div className={s.kpiCardLabel}>Coda Setter</div>
-            <div className={`${s.kpiCardValue}`} style={{ color: queueTotal > 10 ? '#c0392b' : '#202223' }}>
-              {queueTotal}
-            </div>
-            <div className={s.kpiCardSub}>Lead in optin/contattato da gestire</div>
-          </div>
-
-          <div className={s.kpiCard}>
-            <div className={s.kpiCardLabel}>Valore Medio Deal</div>
-            <div className={s.kpiCardValue}>
-              {totalLeads > 0 && totalValue > 0
-                ? `€${Math.round(totalValue / totalLeads).toLocaleString('it-IT')}`
-                : '—'
-              }
-            </div>
-            <div className={s.kpiCardSub}>Calcolato su lead con deal value</div>
-          </div>
-        </div>
-      )}
+    <div style={{ display: 'flex', gap: 12, padding: '12px 24px', flexShrink: 0 }}>
+      <KPICard
+        icon={<IconTrend />}
+        iconColor="#2563eb"
+        label="Pipeline Value"
+        value={`€${Math.round(totalValue).toLocaleString('it-IT')}`}
+        sub="Valore totale pipeline"
+        delta={monthlyDelta !== null ? { val: monthlyDelta } : undefined}
+      />
+      <KPICard
+        icon={<IconDeals />}
+        iconColor="#6366f1"
+        label="Total Deals"
+        value={String(totalLeads)}
+        sub={`${activeLeads} trattative attive`}
+      />
+      <KPICard
+        icon={<IconWon />}
+        iconColor="#16a34a"
+        label="Deals Won"
+        value={`€${Math.round(wonValue).toLocaleString('it-IT')}`}
+        sub={`${clienti} clienti chiusi`}
+        delta={{ val: 3 }}
+      />
+      <KPICard
+        icon={<IconProgress />}
+        iconColor="#f59e0b"
+        label="In Progress"
+        value={String(activeLeads)}
+        sub="Trattative aperte"
+      />
     </div>
   );
 };

@@ -3,37 +3,6 @@ import { useNavigate } from 'react-router-dom';
 import type { Lead, PipelineStage } from '../../services/salesApi';
 import s from './pipeline.module.css';
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-function scoreColor(score: number): string {
-  if (score >= 70) return '#1a7f37';
-  if (score >= 40) return '#a85f00';
-  return '#c0392b';
-}
-
-function initials(lead: Lead): string {
-  const first = lead.first_name?.[0] || '';
-  const last = lead.last_name?.[0] || '';
-  if (first || last) return (first + last).toUpperCase();
-  return lead.email[0].toUpperCase();
-}
-
-function formatFollowUp(iso?: string | null): { text: string; urgent: boolean } | null {
-  if (!iso) return null;
-  try {
-    const d = new Date(iso);
-    const now = new Date();
-    const diffMs = d.getTime() - now.getTime();
-    const diffDays = Math.ceil(diffMs / 86400000);
-    if (diffDays < 0) return { text: `${Math.abs(diffDays)}g fa`, urgent: true };
-    if (diffDays === 0) return { text: 'Oggi', urgent: true };
-    if (diffDays === 1) return { text: 'Domani', urgent: false };
-    return { text: `fra ${diffDays}g`, urgent: false };
-  } catch {
-    return null;
-  }
-}
-
 // ─── Props ────────────────────────────────────────────────────────────────────
 
 interface LeadCardProps {
@@ -68,7 +37,7 @@ const LeadCard: React.FC<LeadCardProps> = ({
   const [swipeX, setSwipeX] = useState(0);
   const isDragging = draggingId === lead.id;
 
-  // ── Swipe handlers ──────────────────────────────────────────────────────────
+  // ── Swipe ──────────────────────────────────────────────────────────────────
   const handleTouchStart = useCallback((e: React.TouchEvent) => {
     touchStartX.current = e.touches[0].clientX;
     touchStartY.current = e.touches[0].clientY;
@@ -77,7 +46,7 @@ const LeadCard: React.FC<LeadCardProps> = ({
   const handleTouchMove = useCallback((e: React.TouchEvent) => {
     const dx = e.touches[0].clientX - touchStartX.current;
     const dy = Math.abs(e.touches[0].clientY - touchStartY.current);
-    if (dy > 20) return; // vertical scroll, ignore
+    if (dy > 20) return;
     const clamped = Math.max(-SWIPE_MAX, Math.min(SWIPE_MAX, dx));
     setSwipeX(clamped);
   }, []);
@@ -85,8 +54,7 @@ const LeadCard: React.FC<LeadCardProps> = ({
   const handleTouchEnd = useCallback(() => {
     if (!canEdit) { setSwipeX(0); return; }
     if (swipeX > SWIPE_THRESHOLD) {
-      // Advance stage
-      const idx = stages.findIndex(s => s.key === lead.stage);
+      const idx = stages.findIndex(st => st.key === lead.stage);
       const next = stages[idx + 1];
       if (next) onMoveStage(lead, next.key);
     } else if (swipeX < -SWIPE_THRESHOLD) {
@@ -95,33 +63,42 @@ const LeadCard: React.FC<LeadCardProps> = ({
     setSwipeX(0);
   }, [swipeX, lead, stages, canEdit, onMoveStage, onMarkLost]);
 
-  // ── Click ───────────────────────────────────────────────────────────────────
+  // ── Click ─────────────────────────────────────────────────────────────────
   const handleClick = () => {
-    if (Math.abs(swipeX) > 5) return; // was a swipe
+    if (Math.abs(swipeX) > 5) return;
     if (draggingId) return;
     navigate(`/pipeline/lead/${lead.id}`);
   };
 
-  // ── Computed ────────────────────────────────────────────────────────────────
-  const score = lead.lead_score ?? 0;
-  const followUp = formatFollowUp(lead.follow_up_date || lead.appointment_date);
-  const assigneeUser = lead.assigned_to_user;
-  const tag = lead.lead_tag;
+  // ── Computed ──────────────────────────────────────────────────────────────
+  const nome = [lead.first_name, lead.last_name].filter(Boolean).join(' ') || lead.email;
 
-  const cardStyle: React.CSSProperties = {
-    transform: swipeX ? `translateX(${swipeX}px)` : undefined,
-    transition: swipeX === 0 ? 'transform 200ms ease' : undefined,
+  const dealVal = lead.deal_value
+    ? `€${Math.round(lead.deal_value > 10000 ? lead.deal_value / 100 : lead.deal_value).toLocaleString('it-IT')}`
+    : null;
+
+  const dueDate = lead.appointment_date || lead.follow_up_date;
+  const dueDateStr = dueDate
+    ? new Date(dueDate).toLocaleDateString('it-IT', { day: 'numeric', month: 'short', year: 'numeric' })
+    : null;
+
+  const assigneeUser = lead.assigned_to_user;
+
+  const statusBadge = () => {
+    const score = lead.lead_score ?? 0;
+    const tag = lead.lead_tag?.label;
+    if (tag) return { label: tag, color: '#d97706', bg: '#fef3c7' };
+    if (score >= 70) return { label: 'On Track',        color: '#16a34a', bg: '#dcfce7' };
+    if (score >= 40) return { label: 'Needs Attention', color: '#d97706', bg: '#fef3c7' };
+    return           { label: 'At Risk',          color: '#dc2626', bg: '#fee2e2' };
   };
 
-  const swipeDirection = swipeX > SWIPE_THRESHOLD ? 'right' : swipeX < -SWIPE_THRESHOLD ? 'left' : null;
+  const badge = statusBadge();
 
   return (
     <div
-      className={`${s.card}${isDragging ? ' ' + s.dragging : ''}${
-        swipeDirection === 'right' ? ' ' + s.swipeRight :
-        swipeDirection === 'left'  ? ' ' + s.swipeLeft  : ''
-      }`}
-      style={cardStyle}
+      className={`${s.card}${isDragging ? ' ' + s.dragging : ''}`}
+      style={{ transform: swipeX ? `translateX(${swipeX}px)` : undefined, transition: swipeX === 0 ? 'transform 200ms ease' : undefined }}
       draggable={canEdit}
       onDragStart={canEdit ? e => onDragStart(e, lead.id) : undefined}
       onDragEnd={canEdit ? onDragEnd : undefined}
@@ -130,65 +107,36 @@ const LeadCard: React.FC<LeadCardProps> = ({
       onTouchEnd={handleTouchEnd}
       onClick={handleClick}
     >
-      {/* Swipe hints */}
-      <span className={`${s.cardSwipeHint} ${s.right}${swipeDirection === 'right' ? ' ' + s.show : ''}`}>
-        AVANZA →
-      </span>
-      <span className={`${s.cardSwipeHint} ${s.left}${swipeDirection === 'left' ? ' ' + s.show : ''}`}>
-        ← PERSO
-      </span>
+      {/* Deal name */}
+      <div className={s.cardTitle}>{lead.azienda || nome}</div>
 
-      {/* Title row */}
-      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div className={s.cardTitle}>
-            {lead.azienda || 'Azienda non specificata'}
-          </div>
-          <div className={s.cardSub}>
-            {[lead.first_name, lead.last_name].filter(Boolean).join(' ') || lead.email}
-          </div>
+      {/* Contact sub-line */}
+      {lead.azienda && (
+        <div className={s.cardSub}>{nome}</div>
+      )}
+
+      {/* Value + date row */}
+      {(dealVal || dueDateStr) && (
+        <div className={s.cardValueRow}>
+          {dealVal && <span className={s.cardValue}>{dealVal}</span>}
+          {dueDateStr && <span className={s.cardDate}>· {dueDateStr}</span>}
         </div>
-        {tag && (
-          <div
-            className={s.cardTagDot}
-            style={{ background: tag.hex_color || '#8c9196', marginTop: 4, flexShrink: 0 }}
-            title={tag.label}
-          />
-        )}
-      </div>
+      )}
 
-      {/* Meta row */}
-      <div className={s.cardMeta}>
-        {lead.source_channel && (
-          <span className={s.cardSourceBadge}>
-            {lead.source_channel.replace(' Ads', '')}
-          </span>
-        )}
-        {lead.deal_value ? (
-          <span className={s.cardSourceBadge} style={{ color: '#1a7f37', borderColor: '#c6e6cd', background: '#dff3e2' }}>
-            €{Math.round(lead.deal_value / 100).toLocaleString('it-IT')}
-          </span>
-        ) : null}
-        {assigneeUser && (
-          <div className={s.cardAvatar} title={[assigneeUser.nome, assigneeUser.cognome].filter(Boolean).join(' ')}>
-            {initials({ ...lead, first_name: assigneeUser.nome, last_name: assigneeUser.cognome })}
-          </div>
-        )}
-      </div>
-
-      {/* Footer: score bar + follow-up */}
+      {/* Footer: avatar + status badge */}
       <div className={s.cardFooter}>
-        <div className={s.cardScoreBar}>
+        {assigneeUser ? (
           <div
-            className={s.cardScoreFill}
-            style={{ width: `${score}%`, background: scoreColor(score) }}
-          />
-        </div>
-        {followUp && (
-          <span className={`${s.cardFollowUp}${followUp.urgent ? ' ' + s.urgent : ''}`}>
-            {followUp.text}
-          </span>
-        )}
+            className={s.cardAvatar}
+            title={[assigneeUser.nome, assigneeUser.cognome].filter(Boolean).join(' ')}
+          >
+            {([assigneeUser.nome?.[0], assigneeUser.cognome?.[0]].filter(Boolean).join('') || '?').toUpperCase()}
+          </div>
+        ) : <div />}
+
+        <span className={s.cardBadge} style={{ color: badge.color, background: badge.bg }}>
+          {badge.label}
+        </span>
       </div>
     </div>
   );

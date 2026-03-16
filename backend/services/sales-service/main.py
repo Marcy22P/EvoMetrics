@@ -32,271 +32,179 @@ app.add_middleware(
 # Dependency DB
 _db_initialized = False
 
+def _run_db_migrations() -> None:
+    """
+    Esegue le migrazioni schema usando una connessione diretta dall'engine
+    (NON attraverso la Session ORM) per evitare UnboundExecutionError con
+    SQLAlchemy 1.4 + Python 3.14 durante operazioni DDL.
+    """
+    from database import Base, engine
+    from sqlalchemy import text
+
+    def get_columns(conn, table: str):
+        try:
+            rows = conn.execute(text(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = :t AND table_schema = current_schema()"
+            ), {"t": table}).fetchall()
+            return {r[0] for r in rows}
+        except Exception:
+            try:
+                rows = conn.execute(text(f"PRAGMA table_info({table})")).fetchall()
+                return {r[1] for r in rows}
+            except Exception:
+                return set()
+
+    def table_exists(conn, name: str) -> bool:
+        try:
+            result = conn.execute(text(
+                "SELECT COUNT(*) FROM information_schema.tables "
+                "WHERE table_name = :t AND table_schema = current_schema()"
+            ), {"t": name}).scalar()
+            return (result or 0) > 0
+        except Exception:
+            try:
+                conn.execute(text(f"SELECT 1 FROM {name} LIMIT 1"))
+                return True
+            except Exception:
+                return False
+
+    def add_col(conn, col: str, definition: str):
+        try:
+            conn.execute(text(f"ALTER TABLE leads ADD COLUMN IF NOT EXISTS {col} {definition}"))
+        except Exception:
+            try:
+                conn.execute(text(f"ALTER TABLE leads ADD COLUMN {col} {definition}"))
+            except Exception as e:
+                err = str(e).lower()
+                if 'already exists' not in err and 'duplicate column' not in err:
+                    print(f"⚠️ Errore aggiunta colonna {col}: {e}")
+
+    # ── Crea tabelle se non esistono ─────────────────────────────────────────
+    with engine.begin() as conn:
+        Base.metadata.create_all(conn)
+
+    # ── Migrazioni incrementali (colonne V1/V2/V3) ───────────────────────────
+    with engine.begin() as conn:
+        if not table_exists(conn, 'leads'):
+            return
+
+        columns = get_columns(conn, 'leads')
+
+        # Rimuovi colonna legacy 'nome'
+        if 'nome' in columns:
+            try:
+                conn.execute(text("ALTER TABLE leads ALTER COLUMN nome DROP NOT NULL"))
+            except Exception:
+                pass
+            try:
+                conn.execute(text("ALTER TABLE leads DROP COLUMN nome CASCADE"))
+            except Exception:
+                pass
+
+        # Colonne base V1
+        for col, defn in [
+            ('first_name', 'TEXT'), ('last_name', 'TEXT'), ('phone', 'TEXT'),
+            ('email', 'TEXT'), ('notes', 'TEXT'), ('azienda', 'TEXT'),
+        ]:
+            if col not in columns:
+                add_col(conn, col, defn)
+
+        # Colonna stage: converte ENUM → TEXT se necessario
+        if 'stage' in columns:
+            try:
+                stage_type = conn.execute(text(
+                    "SELECT data_type FROM information_schema.columns "
+                    "WHERE table_name='leads' AND column_name='stage' AND table_schema=current_schema()"
+                )).scalar() or ''
+                if 'USER-DEFINED' in stage_type.upper() or 'ENUM' in stage_type.upper():
+                    rows = conn.execute(text("SELECT id, stage FROM leads")).fetchall()
+                    conn.execute(text("ALTER TABLE leads DROP COLUMN stage CASCADE"))
+                    conn.execute(text("ALTER TABLE leads ADD COLUMN stage TEXT DEFAULT 'optin'"))
+                    for row in rows:
+                        conn.execute(text("UPDATE leads SET stage=:s WHERE id=:i"),
+                                     {"s": str(row[1] or 'optin'), "i": row[0]})
+            except Exception:
+                pass
+        else:
+            add_col(conn, 'stage', "TEXT DEFAULT 'optin'")
+
+        # Colonne V2
+        for col, defn in [
+            ('response_status',      "TEXT DEFAULT 'pending'"),
+            ('structured_notes',     "JSONB DEFAULT '[]'"),
+            ('lead_tag_id',          'INTEGER'),
+            ('deal_value',           'INTEGER'),
+            ('deal_currency',        "VARCHAR(3) DEFAULT 'EUR'"),
+            ('deal_services',        'JSONB'),
+            ('linked_preventivo_id', 'VARCHAR(50)'),
+            ('linked_contratto_id',  'VARCHAR(50)'),
+            ('source_channel',       'VARCHAR(50)'),
+            ('assigned_to_user_id',  'VARCHAR(50)'),
+        ]:
+            if col not in columns:
+                add_col(conn, col, defn)
+
+        # Colonne V3 — refresh colonne prima di controllare
+        columns = get_columns(conn, 'leads')
+        for col, defn in [
+            ('stage_entered_at',       'TIMESTAMP'),
+            ('first_contact_at',       'TIMESTAMP'),
+            ('first_appointment_at',   'TIMESTAMP'),
+            ('last_activity_at',       'TIMESTAMP'),
+            ('no_show_count',          'INTEGER DEFAULT 0'),
+            ('follow_up_count',        'INTEGER DEFAULT 0'),
+            ('consapevolezza',         'VARCHAR(50)'),
+            ('obiettivo_cliente',      'VARCHAR(50)'),
+            ('pacchetto_consigliato',  'VARCHAR(50)'),
+            ('budget_indicativo',      'VARCHAR(50)'),
+            ('setter_id',              'VARCHAR(50)'),
+            ('appointment_date',       'TIMESTAMP'),
+            ('follow_up_date',         'TIMESTAMP'),
+            ('trattativa_persa_reason','VARCHAR(100)'),
+            ('lead_score',             'INTEGER DEFAULT 0'),
+        ]:
+            if col not in columns:
+                add_col(conn, col, defn)
+
+    # ── Seeding lead_tags di default ─────────────────────────────────────────
+    with engine.begin() as conn:
+        if table_exists(conn, 'lead_tags'):
+            tag_cols = get_columns(conn, 'lead_tags')
+            if 'hex_color' not in tag_cols:
+                try:
+                    conn.execute(text(
+                        "ALTER TABLE lead_tags ADD COLUMN IF NOT EXISTS hex_color VARCHAR(7)"
+                    ))
+                except Exception:
+                    pass
+            count = conn.execute(text("SELECT COUNT(*) FROM lead_tags")).scalar() or 0
+            if count == 0:
+                for label, color, idx in [
+                    ("Fissato calendly", "success", 0),
+                    ("Non fissato",      "warning",  1),
+                    ("Da richiamare",    "info",     2),
+                    ("Non interessato",  "critical", 3),
+                    ("Non ha budget",    "attention",4),
+                    ("Squalificato",     "base",     5),
+                ]:
+                    conn.execute(text(
+                        "INSERT INTO lead_tags (label, color, index, is_system) "
+                        "VALUES (:l, :c, :i, :s)"
+                    ), {"l": label, "c": color, "i": idx, "s": False})
+
+
 def get_db():
     global _db_initialized
     db = SessionLocal()
     try:
-        # Se non inizializzato, prova a creare le tabelle al primo accesso
         if not _db_initialized:
             try:
-                from database import Base, engine
-                from sqlalchemy import text, inspect
-                inspector = inspect(engine)
-                
-                # Crea le tabelle se non esistono
-                Base.metadata.create_all(bind=engine)
-                
-                # Aggiungi colonne mancanti se la tabella leads esiste già
-                existing_tables = inspector.get_table_names()
-                if 'leads' in existing_tables:
-                    columns = [col['name'] for col in inspector.get_columns('leads')]
-                    
-                    # Rimuovi colonna "nome" legacy se esiste (sostituita da first_name/last_name)
-                    if 'nome' in columns:
-                        print("🔄 Rimozione colonna legacy 'nome' (lazy init)...")
-                        try:
-                            # Prima rendi nullable se non lo è già
-                            db.execute(text("ALTER TABLE leads ALTER COLUMN nome DROP NOT NULL"))
-                        except Exception:
-                            pass  # Potrebbe già essere nullable o non avere constraint
-                        
-                        try:
-                            # Poi elimina la colonna
-                            db.execute(text("ALTER TABLE leads DROP COLUMN nome CASCADE"))
-                            db.commit()
-                            print("✅ Colonna legacy 'nome' rimossa (lazy init).")
-                        except Exception as e:
-                            print(f"⚠️ Errore rimozione colonna 'nome': {e}")
-                            db.rollback()
-                    
-                    # Aggiungi first_name se mancante
-                    if 'first_name' not in columns:
-                        try:
-                            db.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS first_name TEXT"))
-                            db.commit()
-                            print("✅ Colonna first_name aggiunta (lazy init)")
-                        except Exception:
-                            try:
-                                db.execute(text("ALTER TABLE leads ADD COLUMN first_name TEXT"))
-                                db.commit()
-                                print("✅ Colonna first_name aggiunta (lazy init)")
-                            except Exception as e:
-                                print(f"⚠️ Errore aggiunta first_name: {e}")
-                                db.rollback()
-                    
-                    # Aggiungi last_name se mancante
-                    if 'last_name' not in columns:
-                        try:
-                            db.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS last_name TEXT"))
-                            db.commit()
-                            print("✅ Colonna last_name aggiunta (lazy init)")
-                        except Exception:
-                            try:
-                                db.execute(text("ALTER TABLE leads ADD COLUMN last_name TEXT"))
-                                db.commit()
-                                print("✅ Colonna last_name aggiunta (lazy init)")
-                            except Exception as e:
-                                print(f"⚠️ Errore aggiunta last_name: {e}")
-                                db.rollback()
-                    
-                    # Aggiungi phone se mancante
-                    if 'phone' not in columns:
-                        try:
-                            db.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS phone TEXT"))
-                            db.commit()
-                            print("✅ Colonna phone aggiunta (lazy init)")
-                        except Exception:
-                            try:
-                                db.execute(text("ALTER TABLE leads ADD COLUMN phone TEXT"))
-                                db.commit()
-                                print("✅ Colonna phone aggiunta (lazy init)")
-                            except Exception as e:
-                                print(f"⚠️ Errore aggiunta phone: {e}")
-                                db.rollback()
-                    
-                    # Aggiungi email se mancante
-                    if 'email' not in columns:
-                        try:
-                            db.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS email TEXT UNIQUE"))
-                            db.commit()
-                            print("✅ Colonna email aggiunta (lazy init)")
-                        except Exception:
-                            try:
-                                db.execute(text("ALTER TABLE leads ADD COLUMN email TEXT"))
-                                try:
-                                    db.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS leads_email_key ON leads(email)"))
-                                except Exception:
-                                    pass
-                                db.commit()
-                                print("✅ Colonna email aggiunta (lazy init)")
-                            except Exception as e:
-                                print(f"⚠️ Errore aggiunta email: {e}")
-                                db.rollback()
-                    
-                    # Aggiungi notes se mancante
-                    if 'notes' not in columns:
-                        try:
-                            db.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS notes TEXT"))
-                            db.commit()
-                            print("✅ Colonna notes aggiunta (lazy init)")
-                        except Exception:
-                            try:
-                                db.execute(text("ALTER TABLE leads ADD COLUMN notes TEXT"))
-                                db.commit()
-                                print("✅ Colonna notes aggiunta (lazy init)")
-                            except Exception as e:
-                                print(f"⚠️ Errore aggiunta notes: {e}")
-                                db.rollback()
-                    
-                    # Aggiungi azienda se mancante
-                    if 'azienda' not in columns:
-                        try:
-                            db.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS azienda TEXT"))
-                            db.commit()
-                            print("✅ Colonna azienda aggiunta (lazy init)")
-                        except Exception:
-                            try:
-                                db.execute(text("ALTER TABLE leads ADD COLUMN azienda TEXT"))
-                                db.commit()
-                                print("✅ Colonna azienda aggiunta (lazy init)")
-                            except Exception as e:
-                                print(f"⚠️ Errore aggiunta azienda: {e}")
-                                db.rollback()
-                    
-                    # Gestisci colonna stage: se esiste come ENUM, convertila a TEXT
-                    if 'stage' in columns:
-                        # Verifica se è un ENUM
-                        stage_col = next((col for col in inspector.get_columns('leads') if col['name'] == 'stage'), None)
-                        if stage_col:
-                            col_type = stage_col.get('type')
-                            col_type_str = str(col_type)
-                            type_name = type(col_type).__name__ if col_type else ''
-                            
-                            # Rileva ENUM in vari modi
-                            is_enum = (
-                                'ENUM' in col_type_str.upper() or 
-                                'enum' in col_type_str.lower() or
-                                'ENUM' in type_name.upper() or
-                                'EnumType' in type_name
-                            )
-                            
-                            if is_enum:
-                                print("🔄 Conversione colonna stage da ENUM a TEXT (lazy init)...")
-                                try:
-                                    # Salva valori esistenti PRIMA di eliminare la colonna
-                                    existing_values = db.execute(text("SELECT id, stage FROM leads")).fetchall()
-                                    print(f"📊 Trovati {len(existing_values)} lead da preservare durante conversione (lazy init)")
-                                    
-                                    # Rimuovi ENUM e ricrea come TEXT
-                                    db.execute(text("ALTER TABLE leads DROP COLUMN stage CASCADE"))
-                                    db.execute(text("ALTER TABLE leads ADD COLUMN stage TEXT DEFAULT 'optin'"))
-                                    
-                                    # Ripristina valori
-                                    for row in existing_values:
-                                        stage_value = str(row[1]) if row[1] else 'optin'
-                                        db.execute(
-                                            text("UPDATE leads SET stage = :stage WHERE id = :id"),
-                                            {"stage": stage_value, "id": row[0]}
-                                        )
-                                    db.commit()
-                                    print(f"✅ Colonna stage convertita da ENUM a TEXT (lazy init, {len(existing_values)} lead preservati)")
-                                except Exception as e:
-                                    print(f"⚠️ Errore conversione stage: {e}")
-                                    import traceback
-                                    traceback.print_exc()
-                                    db.rollback()
-                    else:
-                        # Aggiungi stage se mancante
-                        try:
-                            db.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS stage TEXT DEFAULT 'optin'"))
-                            db.commit()
-                            print("✅ Colonna stage aggiunta (lazy init)")
-                        except Exception:
-                            try:
-                                db.execute(text("ALTER TABLE leads ADD COLUMN stage TEXT DEFAULT 'optin'"))
-                                db.commit()
-                                print("✅ Colonna stage aggiunta (lazy init)")
-                            except Exception as e:
-                                print(f"⚠️ Errore aggiunta stage: {e}")
-                                db.rollback()
-                    
-                    # Aggiungi response_status se mancante
-                    if 'response_status' not in columns:
-                        try:
-                            db.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS response_status TEXT DEFAULT 'pending'"))
-                            db.commit()
-                            print("✅ Colonna response_status aggiunta (lazy init)")
-                        except Exception:
-                            try:
-                                db.execute(text("ALTER TABLE leads ADD COLUMN response_status TEXT DEFAULT 'pending'"))
-                                db.commit()
-                                print("✅ Colonna response_status aggiunta (lazy init)")
-                            except Exception as e:
-                                print(f"⚠️ Errore aggiunta response_status: {e}")
-                                db.rollback()
-                    
-                    # Aggiungi structured_notes se mancante (JSON per note strutturate)
-                    if 'structured_notes' not in columns:
-                        try:
-                            db.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS structured_notes JSONB DEFAULT '[]'"))
-                            db.commit()
-                            print("✅ Colonna structured_notes aggiunta (lazy init)")
-                        except Exception:
-                            try:
-                                db.execute(text("ALTER TABLE leads ADD COLUMN structured_notes JSONB DEFAULT '[]'"))
-                                db.commit()
-                                print("✅ Colonna structured_notes aggiunta (lazy init)")
-                            except Exception as fallback_e:
-                                # Fallback per SQLite che non ha JSONB
-                                try:
-                                    db.execute(text("ALTER TABLE leads ADD COLUMN structured_notes TEXT DEFAULT '[]'"))
-                                    db.commit()
-                                    print("✅ Colonna structured_notes aggiunta come TEXT (lazy init)")
-                                except Exception as e:
-                                    print(f"⚠️ Errore aggiunta structured_notes: {e}")
-                                    db.rollback()
-                    
-                    # Aggiungi lead_tag_id se mancante (nuovo sistema tag)
-                    if 'lead_tag_id' not in columns:
-                        try:
-                            db.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS lead_tag_id INTEGER"))
-                            db.commit()
-                            print("✅ Colonna lead_tag_id aggiunta (lazy init)")
-                        except Exception:
-                            try:
-                                db.execute(text("ALTER TABLE leads ADD COLUMN lead_tag_id INTEGER"))
-                                db.commit()
-                                print("✅ Colonna lead_tag_id aggiunta (lazy init)")
-                            except Exception as e:
-                                print(f"⚠️ Errore aggiunta lead_tag_id: {e}")
-                                db.rollback()
-                
-                # Seeding lead_tags se la tabella è vuota (refresh inspector per vedere tabelle appena create)
-                updated_tables = inspector.get_table_names()
-                if 'lead_tags' in updated_tables:
-                    tags_count = db.execute(text("SELECT COUNT(*) FROM lead_tags")).scalar()
-                    if tags_count == 0:
-                        print("🌱 Seeding default lead tags (lazy init)...")
-                        default_tags = [
-                            ("Fissato calendly", "success", 0),
-                            ("Non fissato", "warning", 1),
-                            ("Da richiamare", "info", 2),
-                            ("Non interessato", "critical", 3),
-                            ("Non ha budget", "attention", 4),
-                            ("Squalificato", "base", 5),
-                        ]
-                        for label, color, index in default_tags:
-                            db.execute(text(
-                                "INSERT INTO lead_tags (label, color, index, is_system) VALUES (:label, :color, :index, :is_system)"
-                            ), {"label": label, "color": color, "index": index, "is_system": False})
-                        db.commit()
-                        print("✅ Default lead tags seeded (lazy init)")
-                
+                _run_db_migrations()
                 _db_initialized = True
-                print("✅ Database Sales inizializzato al primo accesso")
+                print("✅ Database Sales inizializzato.")
             except Exception as e:
-                print(f"⚠️ Errore inizializzazione database al primo accesso: {e}")
-                # Continua comunque, potrebbe essere un problema temporaneo
+                print(f"⚠️ Errore inizializzazione database: {e}")
         yield db
     finally:
         db.close()
