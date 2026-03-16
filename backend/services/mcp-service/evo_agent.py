@@ -23,7 +23,7 @@ import json
 import os
 import sys
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 import httpx
 
@@ -142,6 +142,63 @@ SALES_TOOLS: List[Dict] = [
         "name": "get_appointments_today",
         "description": "Appuntamenti fissati oggi e nei prossimi 2 giorni, con dettaglio lead, pacchetto consigliato e venditore assegnato.",
         "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "search_fireflies_transcripts",
+        "description": "Cerca trascrizioni di chiamate in Fireflies per nome, azienda o parola chiave. Restituisce id, titolo, data, summary e partecipanti delle trascrizioni trovate.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Nome, azienda o parola chiave da cercare nelle trascrizioni"},
+                "limit": {"type": "integer", "description": "Numero massimo di risultati (default 5)"},
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "get_fireflies_transcript",
+        "description": "Recupera il dettaglio completo di una trascrizione Fireflies: summary, action items, key topics, sentiment, durata.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "transcript_id": {"type": "string", "description": "ID univoco della trascrizione Fireflies"},
+            },
+            "required": ["transcript_id"],
+        },
+    },
+    {
+        "name": "match_lead_to_transcripts",
+        "description": "Cerca in Fireflies le trascrizioni correlate a uno specifico lead della pipeline (per nome, cognome, azienda ed email). Restituisce le trascrizioni candidate con un punteggio di match.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "lead_id": {"type": "string", "description": "ID del lead nella pipeline"},
+            },
+            "required": ["lead_id"],
+        },
+    },
+    {
+        "name": "bulk_fetch_for_enrichment",
+        "description": "Recupera in parallelo le ultime trascrizioni Fireflies e tutti i lead della pipeline per permettere il matching bulk. Usare quando l'utente chiede di arricchire i lead con le trascrizioni esistenti.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "limit": {"type": "integer", "description": "Numero massimo di trascrizioni da recuperare (default 20)"},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "update_lead_notes",
+        "description": "Aggiunge una nota strutturata a un lead, tipicamente con i dati estratti da una trascrizione Fireflies.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "lead_id": {"type": "string", "description": "ID del lead"},
+                "note_content": {"type": "string", "description": "Testo della nota da aggiungere"},
+            },
+            "required": ["lead_id", "note_content"],
+        },
     },
 ]
 
@@ -341,66 +398,15 @@ Sii orientato alla relazione e alla soddisfazione del cliente.""",
     },
 }
 
-# ─── MCP Server Configurations ────────────────────────────────────────────────
+# ─── Fireflies GraphQL ────────────────────────────────────────────────────────
+
+_FIREFLIES_GQL_URL = "https://api.fireflies.ai/graphql"
 
 def _fireflies_token() -> Optional[str]:
     return os.environ.get("FIREFLIES_API_KEY")
 
-def _slack_token() -> Optional[str]:
-    return os.environ.get("SLACK_BOT_TOKEN")
-
-# Mapping agente → MCP server disponibili
-# Solo i server con token configurato vengono attivati (graceful degradation)
-_AGENT_MCP_SERVERS: Dict[str, List[Dict]] = {
-    "orchestrator": [],  # riceve l'unione di tutti i server degli altri agenti
-    "sales": [
-        {
-            "name": "fireflies",
-            "url": "https://api.fireflies.ai/mcp",
-            "token_fn": _fireflies_token,
-        }
-    ],
-    "ops": [],      # Slack → Sprint 3
-    "finance": [],
-    "clients": [
-        {
-            "name": "fireflies",
-            "url": "https://api.fireflies.ai/mcp",
-            "token_fn": _fireflies_token,
-        }
-    ],
-}
-
-def _build_mcp_servers(agent_id: str) -> List[Dict]:
-    """
-    Costruisce la lista mcp_servers da passare all'API Anthropic.
-    Se agent_id == 'orchestrator', unisce tutti i server unici di tutti gli agenti.
-    Include SOLO i server con token effettivamente configurato.
-    """
-    if agent_id == "orchestrator":
-        seen: set = set()
-        configs: List[Dict] = []
-        for agent_cfgs in _AGENT_MCP_SERVERS.values():
-            for cfg in agent_cfgs:
-                if cfg["name"] not in seen:
-                    seen.add(cfg["name"])
-                    configs.append(cfg)
-    else:
-        configs = _AGENT_MCP_SERVERS.get(agent_id, [])
-
-    result = []
-    for cfg in configs:
-        token = cfg["token_fn"]()
-        if token:
-            result.append({
-                "type": "url",
-                "url": cfg["url"],
-                "name": cfg["name"],
-                "authorization_token": token,
-            })
-        else:
-            print(f"⚠️  MCP '{cfg['name']}' non attivato per '{agent_id}': token mancante")
-    return result
+# (MCP remoto Fireflies rimosso: https://api.fireflies.ai/mcp non esiste.
+#  Usiamo direttamente la GraphQL API di Fireflies via tool interni.)
 
 
 # ─── HTTP Tool Executor ────────────────────────────────────────────────────────
@@ -935,6 +941,269 @@ class ToolExecutor:
         except Exception as e:
             return f"Errore appuntamenti: {e}"
 
+    # ─── Fireflies GraphQL tools ───────────────────────────────────────────────
+
+    async def _fireflies_gql(self, query: str, variables: Optional[Dict] = None) -> Dict:
+        """Chiama la GraphQL API di Fireflies con il token configurato."""
+        token = _fireflies_token()
+        if not token:
+            raise RuntimeError("FIREFLIES_API_KEY non configurata nelle env var.")
+        payload = {"query": query}
+        if variables:
+            payload["variables"] = variables
+        async with httpx.AsyncClient(timeout=20) as client:
+            resp = await client.post(
+                _FIREFLIES_GQL_URL,
+                json=payload,
+                headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            if "errors" in data:
+                raise RuntimeError(f"Fireflies GraphQL errors: {data['errors']}")
+            return data.get("data", {})
+
+    async def search_fireflies_transcripts(self, query: str, limit: int = 5) -> str:
+        try:
+            gql = """
+            query SearchTranscripts($title: String) {
+              transcripts(filter: { title: $title }) {
+                id
+                title
+                date
+                duration
+                summary { overview action_items keywords }
+                organizer_email
+                participants { displayName email }
+              }
+            }
+            """
+            data = await self._fireflies_gql(gql, {"title": query})
+            transcripts = data.get("transcripts") or []
+            transcripts = transcripts[:limit]
+            if not transcripts:
+                return f"Nessuna trascrizione trovata per la ricerca: '{query}'."
+            lines = [f"**{len(transcripts)} trascrizioni trovate per '{query}'**\n"]
+            for t in transcripts:
+                date_str = ""
+                if t.get("date"):
+                    try:
+                        from datetime import datetime as _dt
+                        date_str = _dt.fromtimestamp(int(t["date"]) / 1000).strftime("%d/%m/%Y") if str(t["date"]).isdigit() else str(t["date"])[:10]
+                    except Exception:
+                        date_str = str(t.get("date", ""))[:10]
+                participants = ", ".join(p.get("displayName") or p.get("email", "?") for p in (t.get("participants") or []))
+                summary = (t.get("summary") or {}).get("overview") or ""
+                lines.append(
+                    f"- **{t.get('title','?')}** | {date_str} | ID: `{t['id']}`\n"
+                    f"  Partecipanti: {participants or 'N/D'}\n"
+                    + (f"  Sintesi: {summary[:200]}..." if len(summary) > 200 else f"  Sintesi: {summary}" if summary else "")
+                )
+            return "\n".join(lines)
+        except RuntimeError as e:
+            return f"Fireflies non disponibile: {e}"
+        except Exception as e:
+            return f"Errore ricerca trascrizioni Fireflies: {e}"
+
+    async def get_fireflies_transcript(self, transcript_id: str) -> str:
+        try:
+            gql = """
+            query GetTranscript($id: String!) {
+              transcript(id: $id) {
+                id
+                title
+                date
+                duration
+                organizer_email
+                participants { displayName email }
+                summary { overview action_items keywords }
+                sentences { raw_words speaker_id speaker_name }
+              }
+            }
+            """
+            data = await self._fireflies_gql(gql, {"id": transcript_id})
+            t = data.get("transcript")
+            if not t:
+                return f"Trascrizione `{transcript_id}` non trovata."
+            summary = t.get("summary") or {}
+            overview   = summary.get("overview") or "N/D"
+            action_items = summary.get("action_items") or "Nessuno"
+            keywords   = ", ".join(summary.get("keywords") or []) or "N/D"
+            participants = ", ".join(p.get("displayName") or p.get("email", "?") for p in (t.get("participants") or []))
+            duration_min = int(t.get("duration") or 0) // 60
+            date_str = ""
+            if t.get("date"):
+                try:
+                    from datetime import datetime as _dt
+                    date_str = _dt.fromtimestamp(int(t["date"]) / 1000).strftime("%d/%m/%Y %H:%M") if str(t["date"]).isdigit() else str(t["date"])[:16]
+                except Exception:
+                    date_str = str(t.get("date", ""))[:16]
+            return (
+                f"## Trascrizione: {t.get('title','?')}\n"
+                f"**Data**: {date_str} | **Durata**: {duration_min} min\n"
+                f"**Partecipanti**: {participants}\n\n"
+                f"**Sintesi**:\n{overview}\n\n"
+                f"**Action items**:\n{action_items}\n\n"
+                f"**Keywords**: {keywords}"
+            )
+        except RuntimeError as e:
+            return f"Fireflies non disponibile: {e}"
+        except Exception as e:
+            return f"Errore dettaglio trascrizione Fireflies: {e}"
+
+    async def match_lead_to_transcripts(self, lead_id: str) -> str:
+        try:
+            # Recupera il lead dalla pipeline
+            all_leads = await self._get("/api/leads")
+            lead = None
+            for l in (all_leads if isinstance(all_leads, list) else []):
+                if l.get("id", "").startswith(lead_id) or l.get("id") == lead_id:
+                    lead = l
+                    break
+            if not lead:
+                return f"Lead `{lead_id[:8]}` non trovato nella pipeline."
+
+            nome      = [lead.get("first_name"), lead.get("last_name")]
+            azienda   = lead.get("azienda") or ""
+            email_dom = (lead.get("email") or "").split("@")[0]
+            nome_str  = " ".join(n for n in nome if n)
+
+            # Cerca per nome completo e poi per azienda
+            results = []
+            for search_term in [s for s in [nome_str, azienda, email_dom] if s]:
+                gql = """
+                query SearchTranscripts($title: String) {
+                  transcripts(filter: { title: $title }) {
+                    id title date duration
+                    participants { displayName email }
+                    summary { overview }
+                  }
+                }
+                """
+                data = await self._fireflies_gql(gql, {"title": search_term})
+                for t in (data.get("transcripts") or []):
+                    if t["id"] not in {r["id"] for r in results}:
+                        results.append(t)
+
+            if not results:
+                return (
+                    f"Nessuna trascrizione trovata per il lead **{nome_str or lead.get('email')}** "
+                    f"({azienda or 'azienda N/D'}). "
+                    f"Termini cercati: {', '.join(s for s in [nome_str, azienda, email_dom] if s)}"
+                )
+
+            lines = [
+                f"**{len(results)} trascrizioni correlate a {nome_str or lead.get('email')} ({azienda})**\n",
+                f"Lead ID: `{lead['id'][:8]}` | Stage: {lead.get('stage')} | Score: {lead.get('lead_score', 0)}\n",
+            ]
+            for t in results[:8]:
+                date_str = ""
+                if t.get("date"):
+                    try:
+                        from datetime import datetime as _dt
+                        date_str = _dt.fromtimestamp(int(t["date"]) / 1000).strftime("%d/%m/%Y") if str(t["date"]).isdigit() else str(t["date"])[:10]
+                    except Exception:
+                        date_str = str(t.get("date", ""))[:10]
+                participants = ", ".join(p.get("displayName") or p.get("email", "?") for p in (t.get("participants") or []))
+                overview = (t.get("summary") or {}).get("overview") or ""
+                lines.append(
+                    f"- **{t.get('title','?')}** | {date_str} | ID: `{t['id']}`\n"
+                    f"  Partecipanti: {participants}\n"
+                    + (f"  {overview[:150]}..." if len(overview) > 150 else f"  {overview}" if overview else "")
+                )
+            lines.append(f"\nUsa `get_fireflies_transcript` con l'ID per il dettaglio completo.")
+            return "\n".join(lines)
+        except RuntimeError as e:
+            return f"Fireflies non disponibile: {e}"
+        except Exception as e:
+            return f"Errore match lead-trascrizioni: {e}"
+
+    async def bulk_fetch_for_enrichment(self, limit: int = 20) -> str:
+        try:
+            # Fetch parallelo: trascrizioni Fireflies + lead pipeline
+            gql = """
+            query GetTranscripts {
+              transcripts(limit: %d) {
+                id title date duration
+                organizer_email
+                participants { displayName email }
+                summary { overview action_items }
+              }
+            }
+            """ % limit
+            transcripts_task = self._fireflies_gql(gql)
+            leads_task = self._get("/api/leads")
+
+            transcripts_data, leads_data = await asyncio.gather(
+                transcripts_task, leads_task, return_exceptions=True
+            )
+
+            if isinstance(transcripts_data, Exception):
+                return f"Errore fetch trascrizioni Fireflies: {transcripts_data}"
+
+            transcripts = (transcripts_data.get("transcripts") or []) if isinstance(transcripts_data, dict) else []
+            leads = leads_data if isinstance(leads_data, list) else []
+
+            # Compatta i dati per ridurre token
+            compact_transcripts = []
+            for t in transcripts:
+                date_str = ""
+                if t.get("date"):
+                    try:
+                        from datetime import datetime as _dt
+                        date_str = _dt.fromtimestamp(int(t["date"]) / 1000).strftime("%d/%m/%Y") if str(t["date"]).isdigit() else str(t["date"])[:10]
+                    except Exception:
+                        date_str = str(t.get("date", ""))[:10]
+                participants = [p.get("displayName") or p.get("email", "?") for p in (t.get("participants") or [])]
+                compact_transcripts.append({
+                    "id": t["id"],
+                    "title": t.get("title", "?"),
+                    "date": date_str,
+                    "participants": participants,
+                    "overview": ((t.get("summary") or {}).get("overview") or "")[:200],
+                })
+
+            compact_leads = [
+                {
+                    "id": l["id"],
+                    "nome": f"{l.get('first_name', '')} {l.get('last_name', '')}".strip() or l.get("email", "?"),
+                    "azienda": l.get("azienda") or "",
+                    "email": l.get("email", ""),
+                    "stage": l.get("stage", ""),
+                    "score": l.get("lead_score", 0),
+                }
+                for l in leads
+                if l.get("stage") not in ("trattativa_persa", "scartato", "archiviato")
+            ]
+
+            output = json.dumps({
+                "transcripts_count": len(compact_transcripts),
+                "leads_count": len(compact_leads),
+                "transcripts": compact_transcripts,
+                "leads": compact_leads,
+            }, ensure_ascii=False, indent=2)
+
+            return (
+                f"**Dati per enrichment bulk**\n"
+                f"- Trascrizioni Fireflies: {len(compact_transcripts)}\n"
+                f"- Lead attivi in pipeline: {len(compact_leads)}\n\n"
+                f"Analizza i dati seguenti e identifica i match per nome/azienda/email. "
+                f"Poi presenta all'utente i match trovati prima di aggiornare i lead.\n\n"
+                f"```json\n{output}\n```"
+            )
+        except RuntimeError as e:
+            return f"Fireflies non disponibile: {e}"
+        except Exception as e:
+            return f"Errore bulk fetch: {e}"
+
+    async def update_lead_notes(self, lead_id: str, note_content: str) -> str:
+        """Aggiunge una nota strutturata a un lead (usato dopo match Fireflies)."""
+        try:
+            result = await self._post(f"/api/leads/{lead_id}/notes", {"content": note_content})
+            return f"Nota aggiunta al lead `{lead_id[:8]}`. Total note: {result.get('total_notes', '?')}."
+        except Exception as e:
+            return f"Errore aggiunta nota al lead `{lead_id[:8]}`: {e}"
+
     async def execute(self, name: str, args: Dict) -> str:
         """Dispatch universale: chiama il metodo corrispondente al tool name."""
         dispatch = {
@@ -959,6 +1228,12 @@ class ToolExecutor:
             "get_zombie_leads": lambda: self.get_zombie_leads(args.get("days", 7)),
             "get_priority_queue": lambda: self.get_priority_queue(),
             "get_appointments_today": lambda: self.get_appointments_today(),
+            # Fireflies tools
+            "search_fireflies_transcripts": lambda: self.search_fireflies_transcripts(args["query"], args.get("limit", 5)),
+            "get_fireflies_transcript":     lambda: self.get_fireflies_transcript(args["transcript_id"]),
+            "match_lead_to_transcripts":    lambda: self.match_lead_to_transcripts(args["lead_id"]),
+            "bulk_fetch_for_enrichment":    lambda: self.bulk_fetch_for_enrichment(args.get("limit", 20)),
+            "update_lead_notes":            lambda: self.update_lead_notes(args["lead_id"], args["note_content"]),
         }
         fn = dispatch.get(name)
         if fn is None:
@@ -999,57 +1274,23 @@ class Agent:
             "- Lingua: italiano"
         )
 
-    async def _call_api(
+    async def _call_with_retry(
         self,
         client: Any,
         call_params: Dict[str, Any],
-        has_mcp: bool,
-        mcp_servers: List[Dict],
         retry: int = 3,
-    ) -> Tuple[Any, bool]:
-        """
-        Chiama l'API Anthropic con retry esponenziale su rate limit (429).
-        Se un MCP server non è raggiungibile, esegue automatic fallback senza MCP.
-        Ritorna (response, mcp_was_active).
-        """
+    ) -> Any:
+        """Chiama l'API Anthropic con retry esponenziale su rate limit."""
         for attempt in range(retry):
             try:
-                if has_mcp:
-                    mcp_toolsets = [
-                        {"type": "mcp_toolset", "mcp_server_name": s["name"]}
-                        for s in mcp_servers
-                    ]
-                    params = dict(call_params)
-                    params["tools"] = self.config["tools"] + mcp_toolsets
-                    params["mcp_servers"] = mcp_servers
-                    return client.beta.messages.create(
-                        **params,
-                        betas=["mcp-client-2025-11-20"],
-                    ), True
-                else:
-                    return client.messages.create(**call_params), False
+                return client.messages.create(**call_params)
             except _anthropic_lib.RateLimitError as e:
                 if attempt < retry - 1:
-                    wait = 2 ** (attempt + 1)  # 2s, 4s, 8s
-                    print(f"⚠️  Rate limit hit, retry {attempt+1}/{retry-1} tra {wait}s…")
+                    wait = 2 ** (attempt + 1)
+                    print(f"⚠️  Rate limit, retry {attempt+1}/{retry-1} tra {wait}s…")
                     await asyncio.sleep(wait)
                 else:
                     raise e
-            except _anthropic_lib.BadRequestError as e:
-                err_msg = str(e)
-                # Se l'errore è causato da un MCP server non raggiungibile → fallback senza MCP
-                if has_mcp and (
-                    "Connection error" in err_msg
-                    or "Failed to connect to MCP" in err_msg
-                    or "socket connection broken" in err_msg
-                    or "Connection reset" in err_msg
-                ):
-                    names = [s["name"] for s in mcp_servers]
-                    print(f"⚠️  MCP server non raggiungibile ({names}), fallback a tool interni")
-                    has_mcp = False  # disabilita per i prossimi retry
-                    mcp_servers = []
-                    continue
-                raise e
         raise RuntimeError("Unreachable")
 
     async def chat(self, message: str, history: List[Dict]) -> Dict[str, Any]:
@@ -1063,10 +1304,14 @@ class Agent:
             }
 
         client = _anthropic_lib.Anthropic(api_key=api_key)
-        messages = list(history) + [{"role": "user", "content": message}]
+        # Filtra i messaggi della storia: prendi solo role/content (compatibilità Anthropic)
+        clean_history = [
+            {"role": m["role"], "content": m["content"]}
+            for m in history
+            if m.get("role") in ("user", "assistant") and m.get("content")
+        ]
+        messages = clean_history + [{"role": "user", "content": message}]
         tools_used: List[str] = []
-        mcp_servers = _build_mcp_servers(self.config["id"])
-        has_mcp = len(mcp_servers) > 0
 
         try:
             for _ in range(MAX_TOOL_ITERATIONS):
@@ -1078,10 +1323,7 @@ class Agent:
                     "messages": messages,
                 }
 
-                response, mcp_active = await self._call_api(
-                    client, call_params, has_mcp, mcp_servers
-                )
-                active_mcp_names = [s["name"] for s in mcp_servers] if mcp_active else []
+                response = await self._call_with_retry(client, call_params)
 
                 if response.stop_reason == "tool_use":
                     tool_results = []
@@ -1102,7 +1344,6 @@ class Agent:
                         "response": text,
                         "tools_used": tools_used,
                         "agent_id": self.config["id"],
-                        "mcp_servers_active": active_mcp_names,
                         "error": None,
                     }
 
@@ -1110,7 +1351,6 @@ class Agent:
                 "response": "Troppe iterazioni di tool calling. Riprova con una richiesta più specifica.",
                 "tools_used": tools_used,
                 "agent_id": self.config["id"],
-                "mcp_servers_active": [s["name"] for s in mcp_servers],
                 "error": "max_iterations",
             }
 
@@ -1118,16 +1358,15 @@ class Agent:
             return {
                 "response": (
                     "Limite di token per minuto raggiunto (30k tokens/min). "
-                    "La richiesta era troppo grande per essere elaborata in un singolo turno.\n\n"
+                    "La richiesta era troppo grande.\n\n"
                     "**Suggerimenti:**\n"
-                    "- Spezza la richiesta in parti più piccole (es. elabora 20 lead alla volta)\n"
+                    "- Spezza la richiesta in parti più piccole\n"
                     "- Aspetta 60 secondi e riprova\n"
                     "- Per operazioni massive usa frasi come: "
                     "_\"Analizza i primi 10 lead con trascrizioni Fireflies\"_"
                 ),
                 "tools_used": tools_used,
                 "agent_id": self.config["id"],
-                "mcp_servers_active": [s["name"] for s in mcp_servers],
                 "error": "rate_limit",
             }
         except _anthropic_lib.BadRequestError as e:
@@ -1135,7 +1374,6 @@ class Agent:
                 "response": f"Richiesta non valida: {e}",
                 "tools_used": tools_used,
                 "agent_id": self.config["id"],
-                "mcp_servers_active": [],
                 "error": "bad_request",
             }
         except Exception as e:
@@ -1143,7 +1381,6 @@ class Agent:
                 "response": f"Errore imprevisto: {e}",
                 "tools_used": tools_used,
                 "agent_id": self.config["id"],
-                "mcp_servers_active": [s["name"] for s in mcp_servers],
                 "error": "unexpected",
             }
 

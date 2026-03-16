@@ -4,19 +4,19 @@ overview: "Tre interventi: (1) fix del bug conversazioni passate — manca l'end
 todos:
   - id: fix-conv-backend
     content: "Backend: aggiungere GET /api/mcp/evo-agent/conversations/{id} che restituisce id, title, messages[], agent_id"
-    status: pending
+    status: completed
   - id: fix-conv-frontend
     content: "Frontend: sostituire onClick conversazione con openConversation() che fetcha i messaggi e li popola nello stato"
-    status: pending
+    status: completed
   - id: fix-memory
     content: "Backend: aggiungere agent_id ai messaggi salvati in agent_conversations.messages"
-    status: pending
+    status: completed
   - id: fireflies-tools
     content: "evo_agent.py: rimuovere MCP remoto Fireflies, aggiungere 4 tool interni GraphQL: search_transcripts, get_transcript, match_lead_to_transcripts, bulk_fetch_for_enrichment"
-    status: pending
+    status: completed
   - id: fireflies-webhook
     content: "Backend: nuovo endpoint POST /api/mcp/fireflies-webhook per automazione proattiva (classify → match lead → update notes → create follow-up task)"
-    status: pending
+    status: completed
 isProject: false
 ---
 

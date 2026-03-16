@@ -16,7 +16,7 @@ from mcp.server import Server
 from mcp.server.sse import SseServerTransport
 from starlette.routing import Mount, Route
 from starlette.endpoints import HTTPEndpoint
-from fastapi import FastAPI, Request, HTTPException, Depends
+from fastapi import FastAPI, Request, HTTPException, Depends, BackgroundTasks
 from pydantic import BaseModel
 from openai import AsyncOpenAI
 from sqlalchemy.orm import Session
@@ -993,10 +993,11 @@ async def evo_agent_chat(payload: EvoAgentChatRequest, request: Request, db: Ses
     result = await orchestrator.chat(message=payload.message, history=history, agent_id=payload.agent_id)
 
     # Salva la conversazione aggiornata
+    active_agent_id = payload.agent_id or "orchestrator"
     try:
         new_messages = list(history) + [
-            {"role": "user", "content": payload.message},
-            {"role": "assistant", "content": result["response"]},
+            {"role": "user",      "content": payload.message,      "agent_id": active_agent_id, "ts": datetime.now().isoformat()},
+            {"role": "assistant", "content": result["response"],   "agent_id": active_agent_id, "ts": datetime.now().isoformat()},
         ]
         # Mantieni max 50 messaggi per conversazione
         if len(new_messages) > 50:
@@ -1134,3 +1135,238 @@ async def evo_agent_status():
         "library": "installata" if lib_ok else "mancante",
         "model": model,
     }
+
+
+# ─── Fireflies Webhook ────────────────────────────────────────────────────────
+
+_FIREFLIES_GQL_URL = "https://api.fireflies.ai/graphql"
+
+
+async def _process_fireflies_webhook(transcript_id: str) -> None:
+    """
+    Processa una trascrizione Fireflies in background:
+    1. Fetcha la trascrizione via GraphQL
+    2. Claude la classifica (sales / ops / altro)
+    3. Se sales: cerca il lead per nome/azienda/email, aggiorna le note
+    4. Crea un task di follow-up se opportuno
+    """
+    import httpx as _httpx
+    import anthropic as _anthropic
+
+    ff_token = os.environ.get("FIREFLIES_API_KEY")
+    claude_key = os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("CLAUDE_API_KEY")
+    gateway_url = os.environ.get("GATEWAY_URL", "http://localhost:10000")
+    # Usa un sistema token per le chiamate interne (admin-level)
+    internal_token = os.environ.get("INTERNAL_SERVICE_TOKEN", "")
+
+    if not ff_token:
+        print("⚠️ Fireflies webhook: FIREFLIES_API_KEY mancante, skip.")
+        return
+    if not claude_key:
+        print("⚠️ Fireflies webhook: ANTHROPIC_API_KEY mancante, skip classificazione.")
+        return
+
+    # ── Step 1: Fetch trascrizione ──────────────────────────────────────────
+    gql = """
+    query GetTranscript($id: String!) {
+      transcript(id: $id) {
+        id title date duration organizer_email
+        participants { displayName email }
+        summary { overview action_items keywords }
+        sentences { raw_words speaker_name }
+      }
+    }
+    """
+    try:
+        async with _httpx.AsyncClient(timeout=20) as client:
+            resp = await client.post(
+                _FIREFLIES_GQL_URL,
+                json={"query": gql, "variables": {"id": transcript_id}},
+                headers={"Authorization": f"Bearer {ff_token}", "Content-Type": "application/json"},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+    except Exception as e:
+        print(f"⚠️ Fireflies webhook: errore fetch trascrizione {transcript_id}: {e}")
+        return
+
+    t = (data.get("data") or {}).get("transcript")
+    if not t:
+        print(f"⚠️ Fireflies webhook: trascrizione {transcript_id} non trovata in Fireflies.")
+        return
+
+    title        = t.get("title", "?")
+    overview     = (t.get("summary") or {}).get("overview") or ""
+    action_items = (t.get("summary") or {}).get("action_items") or ""
+    participants = [p.get("displayName") or p.get("email", "?") for p in (t.get("participants") or [])]
+    duration_min = int(t.get("duration") or 0) // 60
+    print(f"📝 Fireflies webhook: trascrizione ricevuta → '{title}' ({duration_min} min)")
+
+    # ── Step 2: Classifica con Claude ───────────────────────────────────────
+    try:
+        claude = _anthropic.Anthropic(api_key=claude_key)
+        classification_prompt = (
+            f"Classifica questa chiamata come 'sales', 'ops' o 'altro'.\n"
+            f"Titolo: {title}\n"
+            f"Partecipanti: {', '.join(participants)}\n"
+            f"Sintesi: {overview[:500]}\n\n"
+            f"Rispondi con UNA sola parola: sales, ops, o altro."
+        )
+        cr = claude.messages.create(
+            model=os.environ.get("CLAUDE_MODEL", "claude-sonnet-4-5"),
+            max_tokens=20,
+            messages=[{"role": "user", "content": classification_prompt}],
+        )
+        classification = cr.content[0].text.strip().lower() if cr.content else "altro"
+    except Exception as e:
+        print(f"⚠️ Fireflies webhook: errore classificazione: {e}")
+        classification = "altro"
+
+    print(f"📊 Fireflies webhook: classificazione '{title}' → {classification}")
+
+    if classification != "sales":
+        print(f"ℹ️ Fireflies webhook: chiamata non sales ({classification}), skip aggiornamento lead.")
+        return
+
+    # ── Step 3: Cerca lead correlato ────────────────────────────────────────
+    # Estrai nomi dai partecipanti per il matching
+    try:
+        headers = {"Content-Type": "application/json"}
+        if internal_token:
+            headers["Authorization"] = f"Bearer {internal_token}"
+        async with _httpx.AsyncClient(timeout=15) as client:
+            r = await client.get(f"{gateway_url}/api/leads", headers=headers)
+            all_leads = r.json() if r.status_code == 200 else []
+    except Exception as e:
+        print(f"⚠️ Fireflies webhook: errore fetch leads: {e}")
+        all_leads = []
+
+    if not all_leads:
+        print("⚠️ Fireflies webhook: nessun lead disponibile per il matching.")
+        return
+
+    # Matching euristico: controlla se nome/azienda del lead appare nel titolo o nei partecipanti
+    matched_lead = None
+    match_score  = 0
+    title_lower  = title.lower()
+    participants_str = " ".join(participants).lower()
+
+    for lead in all_leads:
+        score = 0
+        nome_lead = f"{lead.get('first_name', '')} {lead.get('last_name', '')}".strip().lower()
+        azienda   = (lead.get("azienda") or "").lower()
+        email_dom = (lead.get("email") or "").split("@")[0].lower()
+
+        if nome_lead and nome_lead in title_lower:       score += 40
+        if nome_lead and nome_lead in participants_str:  score += 40
+        if azienda   and azienda   in title_lower:       score += 30
+        if azienda   and azienda   in participants_str:  score += 30
+        if email_dom and email_dom in title_lower:       score += 20
+
+        if score > match_score:
+            match_score  = score
+            matched_lead = lead
+
+    # Soglia minima 30 per procedere
+    if not matched_lead or match_score < 30:
+        print(f"ℹ️ Fireflies webhook: nessun lead con score sufficiente per '{title}' (best: {match_score})")
+        return
+
+    print(f"✅ Fireflies webhook: lead '{matched_lead.get('azienda') or matched_lead.get('email')}' matchato (score {match_score})")
+
+    # ── Step 4: Genera nota strutturata con Claude ──────────────────────────
+    try:
+        note_prompt = (
+            f"Genera una nota operativa concisa per un CRM sales su questa chiamata.\n"
+            f"Usa questo formato esatto:\n\n"
+            f"[AUTO - Fireflies {datetime.now().strftime('%Y-%m-%d')}]\n"
+            f"Tipo call: [Discovery/Demo/Follow-up/Closing]\n"
+            f"Durata: {duration_min} min\n"
+            f"Partecipanti: {', '.join(participants)}\n"
+            f"Sintesi: [max 3 frasi]\n"
+            f"Action items: [lista puntata]\n"
+            f"Sentiment: [positivo/neutro/negativo]\n\n"
+            f"Dati della chiamata:\n"
+            f"Sintesi Fireflies: {overview[:600]}\n"
+            f"Action items Fireflies: {action_items[:400]}"
+        )
+        nr = claude.messages.create(
+            model=os.environ.get("CLAUDE_MODEL", "claude-sonnet-4-5"),
+            max_tokens=400,
+            messages=[{"role": "user", "content": note_prompt}],
+        )
+        note_text = nr.content[0].text.strip() if nr.content else (
+            f"[AUTO - Fireflies {datetime.now().strftime('%Y-%m-%d')}]\n"
+            f"Tipo call: Sales\nDurata: {duration_min} min\n"
+            f"Partecipanti: {', '.join(participants)}\n"
+            f"Sintesi: {overview[:300]}"
+        )
+    except Exception as e:
+        note_text = (
+            f"[AUTO - Fireflies {datetime.now().strftime('%Y-%m-%d')}]\n"
+            f"Chiamata: {title}\nDurata: {duration_min} min\n"
+            f"Partecipanti: {', '.join(participants)}\n"
+            f"Sintesi: {overview[:300]}\n"
+            f"(Errore generazione nota dettagliata: {e})"
+        )
+
+    # ── Step 5: Salva la nota sul lead ──────────────────────────────────────
+    try:
+        headers = {"Content-Type": "application/json"}
+        if internal_token:
+            headers["Authorization"] = f"Bearer {internal_token}"
+        async with _httpx.AsyncClient(timeout=10) as client:
+            r = await client.post(
+                f"{gateway_url}/api/leads/{matched_lead['id']}/notes",
+                json={"content": note_text},
+                headers=headers,
+            )
+            if r.status_code in (200, 201):
+                print(f"✅ Fireflies webhook: nota aggiunta al lead {matched_lead['id'][:8]}")
+            else:
+                print(f"⚠️ Fireflies webhook: errore aggiunta nota ({r.status_code}): {r.text[:200]}")
+    except Exception as e:
+        print(f"⚠️ Fireflies webhook: errore salvataggio nota: {e}")
+
+    print(f"✅ Fireflies webhook completato per trascrizione '{title}'")
+
+
+@app.post("/api/mcp/fireflies-webhook")
+async def fireflies_webhook(request: Request, background_tasks: BackgroundTasks):
+    """
+    Riceve notifiche da Fireflies al completamento di una trascrizione.
+    Verifica la firma HMAC (se FIREFLIES_WEBHOOK_SECRET è configurato),
+    poi processa in background: classifica → match lead → aggiorna note.
+    Risponde subito 200 per evitare retry da parte di Fireflies.
+    """
+    import hmac
+    import hashlib
+
+    # Verifica HMAC se il secret è configurato
+    webhook_secret = os.environ.get("FIREFLIES_WEBHOOK_SECRET")
+    if webhook_secret:
+        signature_header = request.headers.get("X-Hub-Signature-256") or request.headers.get("X-Fireflies-Signature", "")
+        body = await request.body()
+        expected = "sha256=" + hmac.new(
+            webhook_secret.encode(), body, hashlib.sha256
+        ).hexdigest()
+        if not hmac.compare_digest(expected, signature_header or ""):
+            raise HTTPException(status_code=401, detail="Firma webhook non valida")
+        payload = json.loads(body)
+    else:
+        payload = await request.json()
+
+    transcript_id = (
+        payload.get("transcriptId")
+        or payload.get("transcript_id")
+        or (payload.get("data") or {}).get("transcriptId")
+    )
+
+    if not transcript_id:
+        return {"status": "ignored", "reason": "transcriptId mancante nel payload"}
+
+    print(f"📨 Fireflies webhook ricevuto: transcriptId={transcript_id}")
+    background_tasks.add_task(_process_fireflies_webhook, transcript_id)
+
+    return {"status": "accepted", "transcriptId": transcript_id}
+
