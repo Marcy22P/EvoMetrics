@@ -1467,8 +1467,11 @@ class EvoAgentOrchestrator:
 # ─── Helpers ───────────────────────────────────────────────────────────────────
 
 def _base_url() -> str:
-    return (
-        os.environ.get("BASE_URL")
-        or os.environ.get("GATEWAY_URL")
-        or "http://localhost:10000"
-    ).rstrip("/")
+    # Usa SEMPRE localhost per le chiamate interne del gateway unificato.
+    # Chiamare l'URL esterno (GATEWAY_URL) causa 403 su Render perché il proxy
+    # blocca richieste self-referenziali come potenziale SSRF.
+    # INTERNAL_API_URL permette di sovrascrivere esplicitamente solo se necessario.
+    if os.environ.get("INTERNAL_API_URL"):
+        return os.environ["INTERNAL_API_URL"].rstrip("/")
+    port = os.environ.get("PORT", "10000")
+    return f"http://localhost:{port}"

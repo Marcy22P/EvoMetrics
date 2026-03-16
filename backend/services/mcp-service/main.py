@@ -1155,7 +1155,9 @@ async def _process_fireflies_webhook(transcript_id: str) -> None:
 
     ff_token = os.environ.get("FIREFLIES_API_KEY")
     claude_key = os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("CLAUDE_API_KEY")
-    gateway_url = os.environ.get("GATEWAY_URL", "http://localhost:10000")
+    # Usa sempre localhost per le chiamate interne: evita 403 da proxy Render su richieste self-ref
+    _port = os.environ.get("PORT", "10000")
+    gateway_url = os.environ.get("INTERNAL_API_URL") or f"http://localhost:{_port}"
     # Usa un sistema token per le chiamate interne (admin-level)
     internal_token = os.environ.get("INTERNAL_SERVICE_TOKEN", "")
 
