@@ -425,28 +425,24 @@ class ToolExecutor:
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
         }
-        # Client persistente: riusa le connessioni TCP tra tool call consecutive
-        # evitando l'overhead di handshake per ogni richiesta interna
-        self._client = httpx.AsyncClient(
-            timeout=30.0,
-            headers=self._headers,
-            limits=httpx.Limits(max_keepalive_connections=10, max_connections=20),
-        )
 
     async def _get(self, path: str, params: Optional[Dict] = None) -> Any:
-        r = await self._client.get(f"{self.base_url}{path}", params=params or {})
-        r.raise_for_status()
-        return r.json()
+        async with httpx.AsyncClient(timeout=30.0) as c:
+            r = await c.get(f"{self.base_url}{path}", headers=self._headers, params=params or {})
+            r.raise_for_status()
+            return r.json()
 
     async def _post(self, path: str, body: Dict) -> Any:
-        r = await self._client.post(f"{self.base_url}{path}", json=body)
-        r.raise_for_status()
-        return r.json()
+        async with httpx.AsyncClient(timeout=30.0) as c:
+            r = await c.post(f"{self.base_url}{path}", headers=self._headers, json=body)
+            r.raise_for_status()
+            return r.json()
 
     async def _put(self, path: str, body: Dict) -> Any:
-        r = await self._client.put(f"{self.base_url}{path}", json=body)
-        r.raise_for_status()
-        return r.json()
+        async with httpx.AsyncClient(timeout=30.0) as c:
+            r = await c.put(f"{self.base_url}{path}", headers=self._headers, json=body)
+            r.raise_for_status()
+            return r.json()
 
     # ── Tool implementations ────────────────────────────────────────────────
 
@@ -664,6 +660,15 @@ class ToolExecutor:
                 uid = str(u.get("id", ""))
                 lines.append(f"- **{nome}** (ID:{uid}) — {job}{' | ' + email if email else ''}")
             return "\n".join(lines)
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 403:
+                # Permesso users:read mancante — endpoint richiede ruolo admin o permesso esplicito
+                return (
+                    "Non ho il permesso di elencare gli utenti (richiesto: users:read). "
+                    "Per assegnare un lead, specifica direttamente il nome dell'utente e "
+                    "usa update_lead con il campo assigned_to."
+                )
+            return f"Errore utenti: {e}"
         except Exception as e:
             return f"Errore utenti: {e}"
 
@@ -959,12 +964,12 @@ class ToolExecutor:
         payload: Dict[str, Any] = {"query": query}
         if variables:
             payload["variables"] = variables
-        # Riusa il client persistente del ToolExecutor per evitare handshake TCP
-        resp = await self._client.post(
-            _FIREFLIES_GQL_URL,
-            json=payload,
-            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-        )
+        async with httpx.AsyncClient(timeout=30.0) as c:
+            resp = await c.post(
+                _FIREFLIES_GQL_URL,
+                json=payload,
+                headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            )
         resp.raise_for_status()
         data = resp.json()
         if "errors" in data:
