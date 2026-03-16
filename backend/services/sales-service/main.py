@@ -712,7 +712,23 @@ def get_leads(stage: str = None, db: Session = Depends(get_db)):
             "assigned_to_user": None,
             "created_at": lead.created_at,
             "updated_at": lead.updated_at,
-            "lead_tag": None
+            "lead_tag": None,
+            # V3: campi operativi sales
+            "stage_entered_at": getattr(lead, 'stage_entered_at', None),
+            "first_contact_at": getattr(lead, 'first_contact_at', None),
+            "first_appointment_at": getattr(lead, 'first_appointment_at', None),
+            "last_activity_at": getattr(lead, 'last_activity_at', None),
+            "no_show_count": getattr(lead, 'no_show_count', 0) or 0,
+            "follow_up_count": getattr(lead, 'follow_up_count', 0) or 0,
+            "consapevolezza": getattr(lead, 'consapevolezza', None),
+            "obiettivo_cliente": getattr(lead, 'obiettivo_cliente', None),
+            "pacchetto_consigliato": getattr(lead, 'pacchetto_consigliato', None),
+            "budget_indicativo": getattr(lead, 'budget_indicativo', None),
+            "setter_id": getattr(lead, 'setter_id', None),
+            "appointment_date": getattr(lead, 'appointment_date', None),
+            "follow_up_date": getattr(lead, 'follow_up_date', None),
+            "trattativa_persa_reason": getattr(lead, 'trattativa_persa_reason', None),
+            "lead_score": getattr(lead, 'lead_score', 0) or 0,
         }
         
         # Recupera il tag se presente
@@ -922,6 +938,34 @@ def create_workflow_tasks_for_stage_change(lead_id: str, new_stage: str, previou
     finally:
         db.close()
 
+def _calculate_lead_score(lead, update_data: dict) -> int:
+    """Calcola lead score 0-100 basandosi sui fattori di qualificazione."""
+    score = 50
+
+    source = update_data.get('source_channel') or getattr(lead, 'source_channel', None)
+    source_scores = {
+        'Referral': 30, 'Passaparola': 30,
+        'Google Ads': 15, 'Sito Web': 15, 'Organico': 15,
+        'Meta Ads': 10, 'ClickFunnels': 5,
+        'TikTok Ads': 5, 'Evento': 10,
+    }
+    score += source_scores.get(source or '', 0)
+
+    consapevolezza = update_data.get('consapevolezza') or getattr(lead, 'consapevolezza', None)
+    score += {'stallo': 20, 'negativa': 10, 'inconsapevole': 0}.get(consapevolezza or '', 0)
+
+    budget = update_data.get('budget_indicativo') or getattr(lead, 'budget_indicativo', None)
+    if budget and budget not in ('non definito', '', None):
+        score += 15
+
+    no_show = update_data.get('no_show_count')
+    if no_show is None:
+        no_show = getattr(lead, 'no_show_count', 0) or 0
+    score -= (no_show * 15)
+
+    return max(0, min(100, score))
+
+
 @app.put("/api/leads/{lead_id}", response_model=Lead)
 def update_lead(lead_id: str, lead_in: LeadUpdate, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     """
@@ -930,33 +974,50 @@ def update_lead(lead_id: str, lead_in: LeadUpdate, background_tasks: BackgroundT
     lead = db.query(LeadModel).filter(LeadModel.id == lead_id).first()
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
-    
-    # Salva lo stage precedente se stiamo cambiando lo stage
+
     previous_stage = lead.stage
     stage_changed = False
-    
+
     update_data = lead_in.dict(exclude_unset=True)
+
+    # AUTO-LOGIC: stage change → aggiorna stage_entered_at
+    if 'stage' in update_data and update_data['stage'] != previous_stage:
+        stage_changed = True
+        update_data['stage_entered_at'] = datetime.datetime.utcnow()
+        print(f"📊 Stage change: {previous_stage} → {update_data['stage']} per lead {lead_id[:8]}")
+
+    # AUTO-LOGIC: aggiorna sempre last_activity_at
+    update_data['last_activity_at'] = datetime.datetime.utcnow()
+
+    # AUTO-LOGIC: no_show incrementa il contatore
+    if update_data.get('response_status') == 'no_show':
+        current_count = getattr(lead, 'no_show_count', 0) or 0
+        update_data['no_show_count'] = current_count + 1
+
+    # AUTO-LOGIC: ricalcola lead_score se cambiano i fattori rilevanti
+    score_fields = {'source_channel', 'consapevolezza', 'budget_indicativo', 'no_show_count'}
+    if score_fields & set(update_data.keys()):
+        update_data['lead_score'] = _calculate_lead_score(lead, update_data)
+
     for key, value in update_data.items():
-        if value is not None:
-            if key == "stage" and value != previous_stage:
-                stage_changed = True
-                print(f"🔄 Lead {lead_id}: Stage cambiato da '{previous_stage}' a '{value}'")
-            # Serializza deal_services se presente
+        if value is not None or key in ('stage_entered_at', 'first_contact_at',
+                                         'first_appointment_at', 'last_activity_at',
+                                         'appointment_date', 'follow_up_date',
+                                         'trattativa_persa_reason'):
             if key == "deal_services" and isinstance(value, list):
                 value = [{"name": s.get("name", s.name) if hasattr(s, "name") else s.get("name", ""), "price": s.get("price", 0)} for s in value]
-            setattr(lead, key, value)
-    
-    # Aggiorna updated_at
+            if hasattr(lead, key):
+                setattr(lead, key, value)
+
     lead.updated_at = datetime.datetime.utcnow()
-        
+
     db.commit()
     db.refresh(lead)
-    
-    # Se lo stage è cambiato, triggera workflow in background
+
     if stage_changed and lead.stage:
         print(f"🚀 Trigger workflow per lead {lead_id}: stage '{previous_stage}' -> '{lead.stage}'")
         background_tasks.add_task(create_workflow_tasks_for_stage_change, lead_id, lead.stage, previous_stage)
-    
+
     return lead
 
 @app.delete("/api/leads/{lead_id}")
@@ -1451,6 +1512,153 @@ def export_leads_csv(db: Session = Depends(get_db)):
 
 
 # Health check
+# ─── ENDPOINT OTTIMIZZATI PER SALES AGENT ─────────────────────────────────────
+
+@app.get("/api/leads/zombie")
+def get_zombie_leads(days: int = 7, db: Session = Depends(get_db)):
+    """Lead fermi nello stesso stage attivo da più di X giorni."""
+    cutoff = datetime.datetime.utcnow() - timedelta(days=days)
+    leads = db.query(LeadModel).filter(
+        LeadModel.stage.notin_(["cliente", "trattativa_persa", "scartato", "archiviato"]),
+        LeadModel.stage_entered_at < cutoff,
+        LeadModel.stage_entered_at != None,
+    ).order_by(LeadModel.stage_entered_at.asc()).all()
+
+    result = []
+    for lead in leads:
+        days_stuck = (datetime.datetime.utcnow() - lead.stage_entered_at).days if lead.stage_entered_at else None
+        result.append({
+            "id": lead.id,
+            "nome": f"{lead.first_name or ''} {lead.last_name or ''}".strip() or lead.email,
+            "azienda": lead.azienda,
+            "stage": lead.stage,
+            "giorni_nello_stage": days_stuck,
+            "last_activity_at": lead.last_activity_at,
+            "lead_score": getattr(lead, 'lead_score', 0) or 0,
+            "assigned_to_user_id": getattr(lead, 'assigned_to_user_id', None),
+        })
+    return {"zombie_leads": result, "total": len(result), "threshold_days": days}
+
+
+@app.get("/api/leads/priority-queue")
+def get_priority_queue(db: Session = Depends(get_db)):
+    """Coda lead prioritizzata per il setter, ordinata per lead_score desc."""
+    leads = db.query(LeadModel).filter(
+        LeadModel.stage.in_(["optin", "contattato"])
+    ).order_by(
+        LeadModel.lead_score.desc(),
+        LeadModel.created_at.asc(),
+    ).limit(20).all()
+
+    now = datetime.datetime.utcnow()
+    result = []
+    for lead in leads:
+        ore_da_optin = None
+        if lead.created_at:
+            ore_da_optin = round((now - lead.created_at).total_seconds() / 3600, 1)
+        result.append({
+            "id": lead.id,
+            "nome": f"{lead.first_name or ''} {lead.last_name or ''}".strip() or lead.email,
+            "azienda": lead.azienda,
+            "email": lead.email,
+            "phone": lead.phone,
+            "stage": lead.stage,
+            "lead_score": getattr(lead, 'lead_score', 0) or 0,
+            "source_channel": getattr(lead, 'source_channel', None),
+            "ore_da_optin": ore_da_optin,
+            "urgente": (ore_da_optin > 24) if ore_da_optin is not None else False,
+            "consapevolezza": getattr(lead, 'consapevolezza', None),
+            "budget_indicativo": getattr(lead, 'budget_indicativo', None),
+            "no_show_count": getattr(lead, 'no_show_count', 0) or 0,
+            "follow_up_count": getattr(lead, 'follow_up_count', 0) or 0,
+        })
+    return {"queue": result, "total": len(result)}
+
+
+@app.get("/api/leads/appointments-today")
+def get_appointments_today(db: Session = Depends(get_db)):
+    """Lead con appuntamento fissato oggi o nei prossimi 2 giorni."""
+    now = datetime.datetime.utcnow()
+    two_days_later = now + timedelta(days=2)
+
+    leads = db.query(LeadModel).filter(
+        LeadModel.appointment_date != None,
+        LeadModel.appointment_date >= now,
+        LeadModel.appointment_date <= two_days_later,
+    ).order_by(LeadModel.appointment_date.asc()).all()
+
+    result = []
+    for lead in leads:
+        result.append({
+            "id": lead.id,
+            "nome": f"{lead.first_name or ''} {lead.last_name or ''}".strip() or lead.email,
+            "azienda": lead.azienda,
+            "phone": lead.phone,
+            "stage": lead.stage,
+            "appointment_date": lead.appointment_date,
+            "pacchetto_consigliato": getattr(lead, 'pacchetto_consigliato', None),
+            "assigned_to_user_id": getattr(lead, 'assigned_to_user_id', None),
+            "setter_id": getattr(lead, 'setter_id', None),
+        })
+    return {"appointments": result, "total": len(result)}
+
+
+@app.get("/api/pipeline/metrics")
+def get_pipeline_metrics(db: Session = Depends(get_db)):
+    """Metriche aggregate della pipeline: KPI operativi in un'unica chiamata."""
+    from sqlalchemy import func
+    now = datetime.datetime.utcnow()
+
+    total_leads = db.query(LeadModel).count()
+
+    stage_counts = db.query(LeadModel.stage, func.count(LeadModel.id)).group_by(LeadModel.stage).all()
+    by_stage = {s: c for s, c in stage_counts}
+
+    cutoff_24h = now - timedelta(hours=24)
+    optin_urgenti = db.query(LeadModel).filter(
+        LeadModel.stage == "optin",
+        LeadModel.created_at < cutoff_24h,
+        LeadModel.first_contact_at == None,
+    ).count()
+
+    cutoff_7d = now - timedelta(days=7)
+    zombie_count = db.query(LeadModel).filter(
+        LeadModel.stage.notin_(["cliente", "trattativa_persa", "scartato", "archiviato"]),
+        LeadModel.stage_entered_at != None,
+        LeadModel.stage_entered_at < cutoff_7d,
+    ).count()
+
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    today_end = now.replace(hour=23, minute=59, second=59, microsecond=999999)
+    appointments_today = db.query(LeadModel).filter(
+        LeadModel.appointment_date != None,
+        LeadModel.appointment_date >= today_start,
+        LeadModel.appointment_date <= today_end,
+    ).count()
+
+    clienti = by_stage.get("cliente", 0)
+    conversion_rate = round(clienti / total_leads * 100, 1) if total_leads > 0 else 0
+
+    source_counts = db.query(LeadModel.source_channel, func.count(LeadModel.id)).group_by(LeadModel.source_channel).all()
+    by_source = {(s or "Non specificato"): c for s, c in source_counts}
+
+    return {
+        "snapshot": {
+            "total_leads": total_leads,
+            "by_stage": by_stage,
+            "by_source": by_source,
+            "clienti_totali": clienti,
+            "conversion_rate_pct": conversion_rate,
+        },
+        "alerts": {
+            "optin_urgenti_24h": optin_urgenti,
+            "lead_zombie_7d": zombie_count,
+            "appuntamenti_oggi": appointments_today,
+        },
+        "timestamp": now.isoformat(),
+    }
+
+
 @app.get("/health")
 def health_check():
     return {"status": "healthy", "service": "sales-service"}

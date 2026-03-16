@@ -40,6 +40,7 @@ import CalendarCallback from './pages/CalendarCallback'
 // SettingsTasks ora è integrato in Settings.tsx
 import Settings from './pages/Settings'
 import SalesPipeline from './pages/SalesPipeline'
+import LeadDetailPage from './pages/LeadDetailPage'
 import EvoAgentPage from './pages/EvoAgentPage'
 // import TeamCollaborators from './pages/TeamCollaborators' // Used internally by Team.tsx
 import ShopifyLayout from './components/Layout/ShopifyLayout' // Nuovo Layout Polaris
@@ -212,6 +213,11 @@ const AppRoutes: React.FC = () => {
         <Route path="/sales" element={
           <RequirePermission perm="clienti:read">
             <SalesPipeline />
+          </RequirePermission>
+        } />
+        <Route path="/pipeline/lead/:leadId" element={
+          <RequirePermission perm="clienti:read">
+            <LeadDetailPage />
           </RequirePermission>
         } />
 

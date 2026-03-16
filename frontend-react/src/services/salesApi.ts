@@ -124,6 +124,22 @@ export interface Lead {
   assigned_to_user?: PipelineUser;
   created_at: string;
   updated_at: string;
+  // V3 fields
+  stage_entered_at?: string;
+  first_contact_at?: string;
+  first_appointment_at?: string;
+  last_activity_at?: string;
+  no_show_count?: number;
+  follow_up_count?: number;
+  consapevolezza?: string;
+  obiettivo_cliente?: string;
+  pacchetto_consigliato?: string;
+  budget_indicativo?: string;
+  setter_id?: string;
+  appointment_date?: string;
+  follow_up_date?: string;
+  trattativa_persa_reason?: string;
+  lead_score?: number;
 }
 
 export interface LeadCreate {
@@ -162,6 +178,22 @@ export interface LeadUpdatePayload {
   linked_contratto_id?: string | null;
   source_channel?: string | null;
   assigned_to_user_id?: string | null;
+  // V3 fields
+  stage_entered_at?: string | null;
+  first_contact_at?: string | null;
+  first_appointment_at?: string | null;
+  last_activity_at?: string | null;
+  no_show_count?: number | null;
+  follow_up_count?: number | null;
+  consapevolezza?: string | null;
+  obiettivo_cliente?: string | null;
+  pacchetto_consigliato?: string | null;
+  budget_indicativo?: string | null;
+  setter_id?: string | null;
+  appointment_date?: string | null;
+  follow_up_date?: string | null;
+  trattativa_persa_reason?: string | null;
+  lead_score?: number | null;
 }
 
 export const salesApi = {

@@ -976,7 +976,7 @@ async def evo_agent_chat(payload: EvoAgentChatRequest, request: Request, db: Ses
         conversation = AgentConversation(
             id=str(_uuid.uuid4()),
             user_id=user.get("id"),
-            channel=payload.channel,
+            channel=payload.agent_id or payload.channel,
             messages=[],
             title=payload.message[:60],
         )
@@ -1064,6 +1064,32 @@ async def list_evo_agent_conversations(request: Request, db: Session = Depends(g
         ]
     except Exception:
         return []
+
+
+@app.get("/api/mcp/evo-agent/conversations/{conv_id}")
+async def get_evo_agent_conversation(conv_id: str, request: Request, db: Session = Depends(get_db)):
+    """Restituisce i messaggi di una singola conversazione EvoAgent."""
+    user = _get_evo_agent_user(request)
+    AgentConversation = _AgentConversation
+    try:
+        conv = db.query(AgentConversation).filter(
+            AgentConversation.id == conv_id,
+            AgentConversation.user_id == user["id"],
+        ).first()
+        if not conv:
+            raise HTTPException(status_code=404, detail="Conversazione non trovata")
+        return {
+            "id": conv.id,
+            "title": conv.title or "Conversazione",
+            "channel": conv.channel,
+            "agent_id": conv.channel or "orchestrator",
+            "messages": conv.messages or [],
+            "updated_at": conv.updated_at.isoformat() if conv.updated_at else None,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.delete("/api/mcp/evo-agent/conversations/{conv_id}")

@@ -18,6 +18,7 @@ L'orchestratore sceglie l'agente giusto (o usa tutti) e aggrega le risposte.
 Tutti i tool call usano il JWT dell'utente → auth + permessi preservati.
 """
 
+import asyncio
 import json
 import os
 import sys
@@ -115,6 +116,32 @@ SALES_TOOLS: List[Dict] = [
             "properties": {"year": {"type": "integer", "description": "Anno (default anno corrente)"}},
             "required": [],
         },
+    },
+    {
+        "name": "get_pipeline_metrics",
+        "description": "KPI completi della pipeline in una sola chiamata: lead per stage, alert urgenti (optin >24h non contattati, zombie >7gg), appuntamenti oggi, tasso di conversione, lead per fonte.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "get_zombie_leads",
+        "description": "Lead fermi nello stesso stage attivo da troppi giorni (default >7gg). Identifica pipeline bloccata e lead da riattivare.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "days": {"type": "integer", "description": "Soglia giorni (default 7)"},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "get_priority_queue",
+        "description": "Coda lead prioritizzata per il setter: lead in optin/contattato ordinati per lead_score e urgenza. Include ore da optin, consapevolezza, budget.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "get_appointments_today",
+        "description": "Appuntamenti fissati oggi e nei prossimi 2 giorni, con dettaglio lead, pacchetto consigliato e venditore assegnato.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
     },
 ]
 
@@ -789,7 +816,6 @@ class ToolExecutor:
 
     async def get_servizi_catalog(self) -> str:
         try:
-            # Import diretto dal modulo data.py nella stessa directory
             _dir = os.path.dirname(os.path.abspath(__file__))
             if _dir not in sys.path:
                 sys.path.insert(0, _dir)
@@ -803,6 +829,111 @@ class ToolExecutor:
             return "\n".join(lines)
         except Exception as e:
             return f"Errore catalogo: {e}"
+
+    async def get_pipeline_metrics(self) -> str:
+        try:
+            data = await self._get("/api/pipeline/metrics")
+            snap = data.get("snapshot", {})
+            alerts = data.get("alerts", {})
+
+            lines = ["## Pipeline Metrics\n"]
+
+            optin_u = alerts.get("optin_urgenti_24h", 0)
+            zombie = alerts.get("lead_zombie_7d", 0)
+            appt = alerts.get("appuntamenti_oggi", 0)
+
+            if optin_u > 0:
+                lines.append(f"**{optin_u} lead in optin da >24h non contattati** — priorità setter oggi")
+            if zombie > 0:
+                lines.append(f"**{zombie} lead zombie** (fermi >7gg in stage attivo)")
+            if appt > 0:
+                lines.append(f"**{appt} appuntamenti oggi**")
+            if not any([optin_u, zombie, appt]):
+                lines.append("Nessun alert critico.")
+
+            lines.append(f"\n**Lead totali**: {snap.get('total_leads', 0)}")
+            clienti = snap.get('clienti_totali', 0)
+            cr = snap.get('conversion_rate_pct', 0)
+            lines.append(f"**Clienti**: {clienti} ({cr}% conversion rate)")
+
+            by_stage = snap.get("by_stage", {})
+            if by_stage:
+                lines.append("\n**Per stage:**")
+                stage_order = ["optin","contattato","prima_chiamata","appuntamento_vivo_1",
+                               "seconda_chiamata","appuntamento_vivo_2","preventivo_consegnato",
+                               "cliente","trattativa_persa","scartato"]
+                for s in stage_order:
+                    if s in by_stage:
+                        lines.append(f"  - {s}: **{by_stage[s]}**")
+                for s, c in by_stage.items():
+                    if s not in stage_order:
+                        lines.append(f"  - {s}: **{c}**")
+
+            by_source = snap.get("by_source", {})
+            if by_source:
+                lines.append("\n**Per fonte (top 5):**")
+                for src, cnt in sorted(by_source.items(), key=lambda x: -x[1])[:5]:
+                    lines.append(f"  - {src}: {cnt}")
+
+            return "\n".join(lines)
+        except Exception as e:
+            return f"Errore metriche pipeline: {e}"
+
+    async def get_zombie_leads(self, days: int = 7) -> str:
+        try:
+            data = await self._get("/api/leads/zombie", {"days": days})
+            leads = data.get("zombie_leads", [])
+            if not leads:
+                return f"Nessun lead zombie (fermi >{days} giorni). Pipeline fluida."
+            lines = [f"**{len(leads)} lead zombie** (fermi >{days}gg in stage attivo)\n"]
+            for l in leads[:15]:
+                nome = l.get("nome") or "?"
+                stage = l.get("stage", "?")
+                giorni = l.get("giorni_nello_stage", "?")
+                score = l.get("lead_score", 0)
+                lines.append(f"- **{nome}** | stage: {stage} | {giorni}gg | score: {score} `{l['id'][:8]}`")
+            return "\n".join(lines)
+        except Exception as e:
+            return f"Errore zombie leads: {e}"
+
+    async def get_priority_queue(self) -> str:
+        try:
+            data = await self._get("/api/leads/priority-queue")
+            queue = data.get("queue", [])
+            if not queue:
+                return "Nessun lead in coda setter (optin/contattato vuoti)."
+            lines = [f"**Coda setter — {len(queue)} lead da gestire**\n"]
+            for l in queue[:10]:
+                urgente = "[URGENTE] " if l.get("urgente") else ""
+                nome = l.get("nome") or l.get("email") or "?"
+                ore = l.get("ore_da_optin")
+                ore_str = f"{ore}h fa" if ore is not None else "?"
+                score = l.get("lead_score", 0)
+                budget = l.get("budget_indicativo") or "N/D"
+                fonte = l.get("source_channel") or "N/D"
+                lines.append(
+                    f"- {urgente}**{nome}** | score: {score} | {ore_str} | "
+                    f"fonte: {fonte} | budget: {budget} `{l['id'][:8]}`"
+                )
+            return "\n".join(lines)
+        except Exception as e:
+            return f"Errore priority queue: {e}"
+
+    async def get_appointments_today(self) -> str:
+        try:
+            data = await self._get("/api/leads/appointments-today")
+            appts = data.get("appointments", [])
+            if not appts:
+                return "Nessun appuntamento nelle prossime 48 ore."
+            lines = [f"**{len(appts)} appuntamenti nelle prossime 48h**\n"]
+            for a in appts:
+                nome = a.get("nome") or "?"
+                dt = str(a.get("appointment_date", ""))[:16].replace("T", " ")
+                pacchetto = a.get("pacchetto_consigliato") or "da definire"
+                lines.append(f"- **{nome}** | {dt} | pacchetto: {pacchetto} `{a['id'][:8]}`")
+            return "\n".join(lines)
+        except Exception as e:
+            return f"Errore appuntamenti: {e}"
 
     async def execute(self, name: str, args: Dict) -> str:
         """Dispatch universale: chiama il metodo corrispondente al tool name."""
@@ -824,6 +955,10 @@ class ToolExecutor:
             "get_all_clients": lambda: self.get_all_clients(),
             "get_client_overview": lambda: self.get_client_overview(args["client_id"]),
             "get_servizi_catalog": lambda: self.get_servizi_catalog(),
+            "get_pipeline_metrics": lambda: self.get_pipeline_metrics(),
+            "get_zombie_leads": lambda: self.get_zombie_leads(args.get("days", 7)),
+            "get_priority_queue": lambda: self.get_priority_queue(),
+            "get_appointments_today": lambda: self.get_appointments_today(),
         }
         fn = dispatch.get(name)
         if fn is None:
@@ -864,6 +999,59 @@ class Agent:
             "- Lingua: italiano"
         )
 
+    async def _call_api(
+        self,
+        client: Any,
+        call_params: Dict[str, Any],
+        has_mcp: bool,
+        mcp_servers: List[Dict],
+        retry: int = 3,
+    ) -> Tuple[Any, bool]:
+        """
+        Chiama l'API Anthropic con retry esponenziale su rate limit (429).
+        Se un MCP server non è raggiungibile, esegue automatic fallback senza MCP.
+        Ritorna (response, mcp_was_active).
+        """
+        for attempt in range(retry):
+            try:
+                if has_mcp:
+                    mcp_toolsets = [
+                        {"type": "mcp_toolset", "mcp_server_name": s["name"]}
+                        for s in mcp_servers
+                    ]
+                    params = dict(call_params)
+                    params["tools"] = self.config["tools"] + mcp_toolsets
+                    params["mcp_servers"] = mcp_servers
+                    return client.beta.messages.create(
+                        **params,
+                        betas=["mcp-client-2025-11-20"],
+                    ), True
+                else:
+                    return client.messages.create(**call_params), False
+            except _anthropic_lib.RateLimitError as e:
+                if attempt < retry - 1:
+                    wait = 2 ** (attempt + 1)  # 2s, 4s, 8s
+                    print(f"⚠️  Rate limit hit, retry {attempt+1}/{retry-1} tra {wait}s…")
+                    await asyncio.sleep(wait)
+                else:
+                    raise e
+            except _anthropic_lib.BadRequestError as e:
+                err_msg = str(e)
+                # Se l'errore è causato da un MCP server non raggiungibile → fallback senza MCP
+                if has_mcp and (
+                    "Connection error" in err_msg
+                    or "Failed to connect to MCP" in err_msg
+                    or "socket connection broken" in err_msg
+                    or "Connection reset" in err_msg
+                ):
+                    names = [s["name"] for s in mcp_servers]
+                    print(f"⚠️  MCP server non raggiungibile ({names}), fallback a tool interni")
+                    has_mcp = False  # disabilita per i prossimi retry
+                    mcp_servers = []
+                    continue
+                raise e
+        raise RuntimeError("Unreachable")
+
     async def chat(self, message: str, history: List[Dict]) -> Dict[str, Any]:
         api_key = _anthropic_key()
         if not _ANTHROPIC_AVAILABLE or not api_key:
@@ -880,60 +1068,84 @@ class Agent:
         mcp_servers = _build_mcp_servers(self.config["id"])
         has_mcp = len(mcp_servers) > 0
 
-        for _ in range(MAX_TOOL_ITERATIONS):
-            call_params: Dict[str, Any] = {
-                "model": _model(),
-                "max_tokens": 4096,
-                "system": self._system_prompt(),
-                "tools": self.config["tools"],
-                "messages": messages,
-            }
-
-            if has_mcp:
-                # Ogni MCP server deve essere referenziato nei tools tramite mcp_toolset
-                mcp_toolsets = [
-                    {"type": "mcp_toolset", "mcp_server_name": s["name"]}
-                    for s in mcp_servers
-                ]
-                call_params["tools"] = self.config["tools"] + mcp_toolsets
-                call_params["mcp_servers"] = mcp_servers
-                response = client.beta.messages.create(
-                    **call_params,
-                    betas=["mcp-client-2025-11-20"],
-                )
-            else:
-                response = client.messages.create(**call_params)
-
-            if response.stop_reason == "tool_use":
-                tool_results = []
-                for block in response.content:
-                    if block.type == "tool_use":
-                        tools_used.append(block.name)
-                        result_text = await self.executor.execute(block.name, block.input)
-                        tool_results.append({
-                            "type": "tool_result",
-                            "tool_use_id": block.id,
-                            "content": result_text,
-                        })
-                messages.append({"role": "assistant", "content": response.content})
-                messages.append({"role": "user", "content": tool_results})
-            else:
-                text = "".join(b.text for b in response.content if hasattr(b, "text"))
-                return {
-                    "response": text,
-                    "tools_used": tools_used,
-                    "agent_id": self.config["id"],
-                    "mcp_servers_active": [s["name"] for s in mcp_servers],
-                    "error": None,
+        try:
+            for _ in range(MAX_TOOL_ITERATIONS):
+                call_params: Dict[str, Any] = {
+                    "model": _model(),
+                    "max_tokens": 4096,
+                    "system": self._system_prompt(),
+                    "tools": self.config["tools"],
+                    "messages": messages,
                 }
 
-        return {
-            "response": "Troppe iterazioni di tool calling. Riprova con una richiesta più specifica.",
-            "tools_used": tools_used,
-            "agent_id": self.config["id"],
-            "mcp_servers_active": [s["name"] for s in mcp_servers],
-            "error": "max_iterations",
-        }
+                response, mcp_active = await self._call_api(
+                    client, call_params, has_mcp, mcp_servers
+                )
+                active_mcp_names = [s["name"] for s in mcp_servers] if mcp_active else []
+
+                if response.stop_reason == "tool_use":
+                    tool_results = []
+                    for block in response.content:
+                        if block.type == "tool_use":
+                            tools_used.append(block.name)
+                            result_text = await self.executor.execute(block.name, block.input)
+                            tool_results.append({
+                                "type": "tool_result",
+                                "tool_use_id": block.id,
+                                "content": result_text,
+                            })
+                    messages.append({"role": "assistant", "content": response.content})
+                    messages.append({"role": "user", "content": tool_results})
+                else:
+                    text = "".join(b.text for b in response.content if hasattr(b, "text"))
+                    return {
+                        "response": text,
+                        "tools_used": tools_used,
+                        "agent_id": self.config["id"],
+                        "mcp_servers_active": active_mcp_names,
+                        "error": None,
+                    }
+
+            return {
+                "response": "Troppe iterazioni di tool calling. Riprova con una richiesta più specifica.",
+                "tools_used": tools_used,
+                "agent_id": self.config["id"],
+                "mcp_servers_active": [s["name"] for s in mcp_servers],
+                "error": "max_iterations",
+            }
+
+        except _anthropic_lib.RateLimitError:
+            return {
+                "response": (
+                    "Limite di token per minuto raggiunto (30k tokens/min). "
+                    "La richiesta era troppo grande per essere elaborata in un singolo turno.\n\n"
+                    "**Suggerimenti:**\n"
+                    "- Spezza la richiesta in parti più piccole (es. elabora 20 lead alla volta)\n"
+                    "- Aspetta 60 secondi e riprova\n"
+                    "- Per operazioni massive usa frasi come: "
+                    "_\"Analizza i primi 10 lead con trascrizioni Fireflies\"_"
+                ),
+                "tools_used": tools_used,
+                "agent_id": self.config["id"],
+                "mcp_servers_active": [s["name"] for s in mcp_servers],
+                "error": "rate_limit",
+            }
+        except _anthropic_lib.BadRequestError as e:
+            return {
+                "response": f"Richiesta non valida: {e}",
+                "tools_used": tools_used,
+                "agent_id": self.config["id"],
+                "mcp_servers_active": [],
+                "error": "bad_request",
+            }
+        except Exception as e:
+            return {
+                "response": f"Errore imprevisto: {e}",
+                "tools_used": tools_used,
+                "agent_id": self.config["id"],
+                "mcp_servers_active": [s["name"] for s in mcp_servers],
+                "error": "unexpected",
+            }
 
 
 # ─── Orchestratore ─────────────────────────────────────────────────────────────

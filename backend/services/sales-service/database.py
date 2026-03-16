@@ -123,6 +123,23 @@ class Lead(Base):
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 
+    # ─── V3: campi operativi sales ────────────────────────────────────────────
+    stage_entered_at = Column(DateTime, nullable=True)
+    first_contact_at = Column(DateTime, nullable=True)
+    first_appointment_at = Column(DateTime, nullable=True)
+    last_activity_at = Column(DateTime, nullable=True)
+    no_show_count = Column(Integer, default=0, nullable=True)
+    follow_up_count = Column(Integer, default=0, nullable=True)
+    consapevolezza = Column(String(50), nullable=True)
+    obiettivo_cliente = Column(String(50), nullable=True)
+    pacchetto_consigliato = Column(String(50), nullable=True)
+    budget_indicativo = Column(String(50), nullable=True)
+    setter_id = Column(String(50), nullable=True)
+    appointment_date = Column(DateTime, nullable=True)
+    follow_up_date = Column(DateTime, nullable=True)
+    trattativa_persa_reason = Column(String(100), nullable=True)
+    lead_score = Column(Integer, default=0, nullable=True)
+
 def init_db():
     """
     Inizializza il database con retry per gestire database in sleep mode.
@@ -366,6 +383,37 @@ def init_db():
                                 print(f"✅ V2: Colonna {col_name} aggiunta.")
                             except Exception as e:
                                 print(f"⚠️ V2: Errore aggiunta {col_name}: {e}")
+                                db.rollback()
+
+                    # ─── MIGRAZIONI V3: campi operativi sales ─────────────────
+                    v3_columns = {
+                        'stage_entered_at':      "ALTER TABLE leads ADD COLUMN IF NOT EXISTS stage_entered_at TIMESTAMP",
+                        'first_contact_at':      "ALTER TABLE leads ADD COLUMN IF NOT EXISTS first_contact_at TIMESTAMP",
+                        'first_appointment_at':  "ALTER TABLE leads ADD COLUMN IF NOT EXISTS first_appointment_at TIMESTAMP",
+                        'last_activity_at':      "ALTER TABLE leads ADD COLUMN IF NOT EXISTS last_activity_at TIMESTAMP",
+                        'no_show_count':         "ALTER TABLE leads ADD COLUMN IF NOT EXISTS no_show_count INTEGER DEFAULT 0",
+                        'follow_up_count':       "ALTER TABLE leads ADD COLUMN IF NOT EXISTS follow_up_count INTEGER DEFAULT 0",
+                        'consapevolezza':        "ALTER TABLE leads ADD COLUMN IF NOT EXISTS consapevolezza VARCHAR(50)",
+                        'obiettivo_cliente':     "ALTER TABLE leads ADD COLUMN IF NOT EXISTS obiettivo_cliente VARCHAR(50)",
+                        'pacchetto_consigliato': "ALTER TABLE leads ADD COLUMN IF NOT EXISTS pacchetto_consigliato VARCHAR(50)",
+                        'budget_indicativo':     "ALTER TABLE leads ADD COLUMN IF NOT EXISTS budget_indicativo VARCHAR(50)",
+                        'setter_id':             "ALTER TABLE leads ADD COLUMN IF NOT EXISTS setter_id VARCHAR(50)",
+                        'appointment_date':      "ALTER TABLE leads ADD COLUMN IF NOT EXISTS appointment_date TIMESTAMP",
+                        'follow_up_date':        "ALTER TABLE leads ADD COLUMN IF NOT EXISTS follow_up_date TIMESTAMP",
+                        'trattativa_persa_reason': "ALTER TABLE leads ADD COLUMN IF NOT EXISTS trattativa_persa_reason VARCHAR(100)",
+                        'lead_score':            "ALTER TABLE leads ADD COLUMN IF NOT EXISTS lead_score INTEGER DEFAULT 0",
+                    }
+                    # Aggiorna la lista colonne prima di verificare V3
+                    columns = [col['name'] for col in inspector.get_columns('leads')]
+                    for col_name, sql in v3_columns.items():
+                        if col_name not in columns:
+                            print(f"🔄 V3: Aggiungo colonna {col_name}...")
+                            try:
+                                db.execute(text(sql))
+                                db.commit()
+                                print(f"✅ V3: Colonna {col_name} aggiunta.")
+                            except Exception as e:
+                                print(f"⚠️ V3: Errore aggiunta {col_name}: {e}")
                                 db.rollback()
                 
                 # V2: hex_color per lead_tags

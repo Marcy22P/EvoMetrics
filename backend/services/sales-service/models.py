@@ -80,6 +80,15 @@ SOURCE_CHANNEL_OPTIONS = [
     "ClickFunnels", "Email Marketing", "Evento", "Altro",
 ]
 
+# V3: valori validi per i nuovi campi operativi
+CONSAPEVOLEZZA_OPTIONS = ["inconsapevole", "negativa", "stallo"]
+OBIETTIVO_OPTIONS = ["notorieta", "considerazione", "vendite", "contatti", "profitto", "fidelizzazione"]
+PACCHETTO_OPTIONS = ["base", "startup", "performance", "all_inc", "analisi", "lancio_brand"]
+TRATTATIVA_PERSA_REASONS = [
+    "non_ha_budget", "concorrenza", "non_target",
+    "timing", "nessuna_risposta", "progetto_rinviato", "altro",
+]
+
 class LeadBase(BaseModel):
     email: str
     first_name: Optional[str] = None
@@ -99,6 +108,22 @@ class LeadBase(BaseModel):
     linked_contratto_id: Optional[str] = None
     source_channel: Optional[str] = None
     assigned_to_user_id: Optional[str] = None
+    # V3: campi operativi sales
+    stage_entered_at: Optional[datetime] = None
+    first_contact_at: Optional[datetime] = None
+    first_appointment_at: Optional[datetime] = None
+    last_activity_at: Optional[datetime] = None
+    no_show_count: Optional[int] = 0
+    follow_up_count: Optional[int] = 0
+    consapevolezza: Optional[str] = None
+    obiettivo_cliente: Optional[str] = None
+    pacchetto_consigliato: Optional[str] = None
+    budget_indicativo: Optional[str] = None
+    setter_id: Optional[str] = None
+    appointment_date: Optional[datetime] = None
+    follow_up_date: Optional[datetime] = None
+    trattativa_persa_reason: Optional[str] = None
+    lead_score: Optional[int] = 0
 
 class LeadCreate(LeadBase):
     clickfunnels_data: Optional[Dict[str, Any]] = None
@@ -121,6 +146,22 @@ class LeadUpdate(BaseModel):
     linked_contratto_id: Optional[str] = None
     source_channel: Optional[str] = None
     assigned_to_user_id: Optional[str] = None
+    # V3: campi operativi sales
+    stage_entered_at: Optional[datetime] = None
+    first_contact_at: Optional[datetime] = None
+    first_appointment_at: Optional[datetime] = None
+    last_activity_at: Optional[datetime] = None
+    no_show_count: Optional[int] = None
+    follow_up_count: Optional[int] = None
+    consapevolezza: Optional[str] = None
+    obiettivo_cliente: Optional[str] = None
+    pacchetto_consigliato: Optional[str] = None
+    budget_indicativo: Optional[str] = None
+    setter_id: Optional[str] = None
+    appointment_date: Optional[datetime] = None
+    follow_up_date: Optional[datetime] = None
+    trattativa_persa_reason: Optional[str] = None
+    lead_score: Optional[int] = None
 
 class Lead(LeadBase):
     id: str

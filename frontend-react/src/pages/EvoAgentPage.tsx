@@ -201,6 +201,31 @@ const EvoAgentPage: React.FC = () => {
     startNew();
   }, [startNew]);
 
+  const openConversation = useCallback(async (id: string) => {
+    if (convId === id) return;
+    setMessages([]);
+    setBriefing(null);
+    setConvId(id);
+    try {
+      const data = await apiFetch(`/api/mcp/evo-agent/conversations/${id}`);
+      const agentId = data.agent_id || data.channel || 'orchestrator';
+      setActiveAgent(agentId);
+      const msgs: Message[] = (data.messages || [])
+        .filter((m: any) => m.role === 'user' || m.role === 'assistant')
+        .map((m: any, i: number) => ({
+          id: `hist-${id}-${i}`,
+          role: m.role as 'user' | 'assistant',
+          content: typeof m.content === 'string' ? m.content : (m.content?.[0]?.text || ''),
+          tools_used: m.tools_used,
+          agent_id: agentId,
+        }));
+      setMessages(msgs);
+    } catch {
+      // Se il fetch fallisce, almeno la conv è selezionata — il prossimo messaggio
+      // sarà agganciato a questa conversazione
+    }
+  }, [convId]);
+
   const deleteConv = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     try {
@@ -335,7 +360,7 @@ const EvoAgentPage: React.FC = () => {
                   <button
                     key={c.id}
                     className={`ea-conv-btn${convId === c.id ? ' active' : ''}`}
-                    onClick={() => { setConvId(c.id); setMessages([]); setBriefing(null); }}
+                    onClick={() => openConversation(c.id)}
                   >
                     <span className="ea-conv-title">{c.title || 'Conversazione'}</span>
                     <button className="ea-conv-del" onClick={e => deleteConv(c.id, e)}>×</button>
@@ -350,7 +375,7 @@ const EvoAgentPage: React.FC = () => {
                   <button
                     key={c.id}
                     className={`ea-conv-btn${convId === c.id ? ' active' : ''}`}
-                    onClick={() => { setConvId(c.id); setMessages([]); setBriefing(null); }}
+                    onClick={() => openConversation(c.id)}
                   >
                     <span className="ea-conv-title">{c.title || 'Conversazione'}</span>
                     <button className="ea-conv-del" onClick={e => deleteConv(c.id, e)}>×</button>
