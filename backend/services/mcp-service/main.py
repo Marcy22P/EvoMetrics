@@ -991,12 +991,19 @@ async def evo_agent_chat(payload: EvoAgentChatRequest, request: Request, db: Ses
 
     # Processa con l'orchestratore
     orchestrator = EvoAgentOrchestrator(token=token, user=user)
-    result = await orchestrator.chat(
-        message=payload.message,
-        history=history,
-        agent_id=payload.agent_id,
-        context=payload.context,
-    )
+    try:
+        result = await orchestrator.chat(
+            message=payload.message,
+            history=history,
+            agent_id=payload.agent_id,
+            context=payload.context,
+        )
+    except TypeError:
+        # Fallback per versioni cached di EvoAgentOrchestrator senza i nuovi parametri
+        result = await orchestrator.chat(
+            message=payload.message,
+            history=history,
+        )
 
     # Salva la conversazione aggiornata
     active_agent_id = payload.agent_id or "orchestrator"
@@ -1141,6 +1148,48 @@ async def evo_agent_status():
         "library": "installata" if lib_ok else "mancante",
         "model": model,
     }
+
+
+# ─── AI Insights (endpoint leggero — senza DB, senza conversazione) ──────────
+
+@app.post("/api/mcp/ai-insights")
+async def ai_insights(request: Request):
+    """
+    Endpoint dedicato agli AI Insight della Sales Pipeline.
+    Chiama Claude direttamente — NON usa EvoAgentOrchestrator, NON crea
+    record conversazione nel DB, NON inquina la lista chat di EvoAgent.
+    """
+    try:
+        import anthropic as _anthropic
+    except ImportError:
+        raise HTTPException(status_code=503, detail="libreria anthropic non installata")
+
+    api_key = os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("CLAUDE_API_KEY") or ""
+    if not api_key:
+        raise HTTPException(status_code=503, detail="ANTHROPIC_API_KEY non configurata")
+
+    payload = await request.json()
+    prompt = payload.get("prompt", "")
+    if not prompt:
+        raise HTTPException(status_code=400, detail="prompt mancante")
+
+    model = os.environ.get("CLAUDE_MODEL") or "claude-sonnet-4-6"
+
+    client = _anthropic.AsyncAnthropic(api_key=api_key)
+    response = await client.messages.create(
+        model=model,
+        max_tokens=1000,
+        system=(
+            "Sei un sales analyst esperto. Analizza i lead forniti e restituisci "
+            "SOLO un JSON array (nessun testo prima o dopo) nel formato: "
+            '[{"lead_id":"...","name":"...","text":"insight breve","action":"azione concreta"}]. '
+            "Massimo 5 elementi. lead_id è i primi 8 caratteri dell'id. Lingua: italiano."
+        ),
+        messages=[{"role": "user", "content": prompt}],
+    )
+
+    text = response.content[0].text if response.content else ""
+    return {"response": text}
 
 
 # ─── AirCall REST helpers & endpoints ────────────────────────────────────────

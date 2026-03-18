@@ -80,20 +80,23 @@ async function fetchInsightsFromAi(leads: Lead[]): Promise<AiInsightEntry[]> {
   if (urgentLeads.length === 0) return [];
 
   const token = localStorage.getItem('auth_token');
-  const prompt = `Per questi lead dai 1 insight + 1 azione (JSON array [{lead_id,name,text,action}]):\n${
+  const prompt = `Analizza questi lead urgenti della sales pipeline e fornisci 1 insight + 1 azione per ognuno:\n${
     urgentLeads.map(l =>
-      `${l.id.slice(0, 8)} ${l.azienda || l.email} ${l.stage} score:${l.lead_score ?? 0}`
+      `ID:${l.id.slice(0, 8)} | ${l.azienda || [l.first_name, l.last_name].filter(Boolean).join(' ') || l.email} | Stage:${l.stage} | Score:${l.lead_score ?? 0}${l.deal_value ? ` | €${Math.round(l.deal_value / 100).toLocaleString('it-IT')}` : ''}`
     ).join('\n')
   }`;
 
-  const res = await fetch(`${GATEWAY}/api/mcp/evo-agent/chat`, {
+  // Endpoint dedicato: non usa EvoAgentOrchestrator, non crea conversazioni nel DB
+  const res = await fetch(`${GATEWAY}/api/mcp/ai-insights`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
-    body: JSON.stringify({ message: prompt, agent_id: 'sales', history: [] }),
+    body: JSON.stringify({ prompt }),
   });
+
+  if (!res.ok) throw new Error(`AI insights: ${res.status}`);
 
   const data = (await res.json()) as { response?: string };
   const text = data.response ?? '';
