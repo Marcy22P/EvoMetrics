@@ -2093,6 +2093,9 @@ _CALENDLY_AUTH_URL  = "https://auth.calendly.com/oauth/authorize"
 _CALENDLY_TOKEN_URL = "https://auth.calendly.com/oauth/token"
 _CALENDLY_API_BASE  = "https://api.calendly.com"
 
+# Storage temporaneo per PKCE code_verifier (single-tenant, keyed by state)
+_calendly_pkce_store: dict = {}
+
 
 def _get_calendly_token_from_db() -> Optional[dict]:
     """Recupera il token Calendly salvato nel DB."""
@@ -2186,27 +2189,47 @@ async def _get_valid_calendly_token() -> str:
 
 @app.get("/api/mcp/calendly/connect")
 async def calendly_connect(request: Request):
-    """Avvia il flusso OAuth con Calendly. Reindirizza l'utente alla pagina di autorizzazione."""
+    """Avvia il flusso OAuth con Calendly (PKCE - OAuth 2.1)."""
+    import base64, hashlib, secrets as _sec
+    from urllib.parse import urlencode
+    from starlette.responses import RedirectResponse
+
     client_id    = os.environ.get("CALENDLY_CLIENT_ID", "")
     redirect_uri = os.environ.get("CALENDLY_REDIRECT_URI", "https://www.evoluzioneimprese.com/api/mcp/calendly/callback")
     if not client_id:
         raise HTTPException(status_code=500, detail="CALENDLY_CLIENT_ID non configurato nel server.")
-    from urllib.parse import urlencode
-    from starlette.responses import RedirectResponse
+
+    # PKCE: genera code_verifier e code_challenge
+    code_verifier  = base64.urlsafe_b64encode(_sec.token_bytes(32)).rstrip(b"=").decode()
+    code_challenge = base64.urlsafe_b64encode(
+        hashlib.sha256(code_verifier.encode()).digest()
+    ).rstrip(b"=").decode()
+
+    # State per legare verifier al callback
+    state = _sec.token_urlsafe(16)
+    _calendly_pkce_store[state] = code_verifier
+
     params = {
-        "client_id": client_id,
-        "redirect_uri": redirect_uri,
-        "response_type": "code",
+        "client_id":             client_id,
+        "redirect_uri":          redirect_uri,
+        "response_type":         "code",
+        "code_challenge":        code_challenge,
+        "code_challenge_method": "S256",
+        "state":                 state,
     }
     auth_url = f"{_CALENDLY_AUTH_URL}?{urlencode(params)}"
     return RedirectResponse(url=auth_url)
 
 
 @app.get("/api/mcp/calendly/callback")
-async def calendly_callback(request: Request, code: Optional[str] = None, error: Optional[str] = None):
-    """Gestisce il callback OAuth di Calendly, scambia il code per i token e li salva."""
+async def calendly_callback(
+    request: Request,
+    code:  Optional[str] = None,
+    error: Optional[str] = None,
+    state: Optional[str] = None,
+):
+    """Gestisce il callback OAuth di Calendly (PKCE), scambia il code per i token e li salva."""
     from starlette.responses import HTMLResponse
-    frontend_url = os.environ.get("FRONTEND_URL", "https://www.evoluzioneimprese.com")
 
     if error:
         return HTMLResponse(
@@ -2222,15 +2245,22 @@ async def calendly_callback(request: Request, code: Optional[str] = None, error:
     client_secret = os.environ.get("CALENDLY_CLIENT_SECRET", "")
     redirect_uri  = os.environ.get("CALENDLY_REDIRECT_URI", "https://www.evoluzioneimprese.com/api/mcp/calendly/callback")
 
+    # Recupera code_verifier PKCE dallo store temporaneo
+    code_verifier = _calendly_pkce_store.pop(state, None) if state else None
+
+    token_payload: dict = {
+        "grant_type":   "authorization_code",
+        "code":         code,
+        "redirect_uri": redirect_uri,
+        "client_id":    client_id,
+        "client_secret": client_secret,
+    }
+    if code_verifier:
+        token_payload["code_verifier"] = code_verifier
+
     # Scambio code → tokens
     async with httpx.AsyncClient() as c:
-        r = await c.post(_CALENDLY_TOKEN_URL, data={
-            "grant_type": "authorization_code",
-            "code": code,
-            "redirect_uri": redirect_uri,
-            "client_id": client_id,
-            "client_secret": client_secret,
-        })
+        r = await c.post(_CALENDLY_TOKEN_URL, data=token_payload)
 
     if r.status_code != 200:
         return HTMLResponse(
