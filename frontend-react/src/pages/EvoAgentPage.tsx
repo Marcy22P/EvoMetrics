@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { getApiGatewayUrl } from '../utils/apiConfig';
 import './EvoAgent.css';
@@ -129,6 +129,11 @@ const IconSend = () => (
 const EvoAgentPage: React.FC = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+
+  // Contesto iniettato dalla pagina precedente (es. LeadDetailPage)
+  const navState = (location.state || {}) as { context?: string; agentId?: string };
+  const [injectedContext] = useState<string | null>(navState.context || null);
 
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
@@ -136,7 +141,7 @@ const EvoAgentPage: React.FC = () => {
   const [convId, setConvId] = useState<string | null>(null);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [agents, setAgents] = useState<AgentConfig[]>(DEFAULT_AGENTS);
-  const [activeAgent, setActiveAgent] = useState('orchestrator');
+  const [activeAgent, setActiveAgent] = useState(navState.agentId || 'orchestrator');
   const [briefing, setBriefing] = useState<{ text: string; time: string } | null>(null);
   const [briefingLoading, setBriefingLoading] = useState(false);
   const [configError, setConfigError] = useState('');
@@ -270,7 +275,13 @@ const EvoAgentPage: React.FC = () => {
     try {
       const d = await apiFetch('/api/mcp/evo-agent/chat', {
         method: 'POST',
-        body: JSON.stringify({ message: msg, conversation_id: convId, agent_id: activeAgent }),
+        body: JSON.stringify({
+          message: msg,
+          conversation_id: convId,
+          agent_id: activeAgent,
+          // Passa il contesto solo al primo messaggio della conversazione
+          context: !convId && injectedContext ? injectedContext : undefined,
+        }),
       });
 
       setConvId(d.conversation_id);
@@ -444,17 +455,48 @@ const EvoAgentPage: React.FC = () => {
             </div>
           )}
 
+          {/* Banner contesto iniettato da LeadDetailPage */}
+          {injectedContext && !hasContent && (
+            <div style={{
+              margin: '0 0 12px 0',
+              padding: '10px 14px',
+              background: 'linear-gradient(135deg, #eef2ff 0%, #f5f3ff 100%)',
+              border: '1px solid #c7d2fe',
+              borderRadius: 10,
+              fontSize: '0.8rem',
+              color: '#4338ca',
+            }}>
+              <div style={{ fontWeight: 700, marginBottom: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                  <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+                </svg>
+                Contesto attivo — l'agente conosce già questo lead
+              </div>
+              <pre style={{ margin: 0, fontFamily: 'inherit', fontSize: '0.78rem', whiteSpace: 'pre-wrap', color: '#3730a3' }}>
+                {injectedContext}
+              </pre>
+            </div>
+          )}
+
           {/* Welcome */}
           {!hasContent && (
             <div className="ea-welcome">
               <div className="ea-welcome-heading">
-                Ciao, {userName.split(' ')[0]}
+                {injectedContext ? `Cosa vuoi fare?` : `Ciao, ${userName.split(' ')[0]}`}
               </div>
               <div className="ea-welcome-sub">
-                {agent.name} — {agent.description.toLowerCase()}. Puoi chiedermi qualsiasi cosa sulla piattaforma.
+                {injectedContext
+                  ? `${agent.name} ha il contesto del lead. Chiedimi di analizzarlo, sincronizzarlo su AirCall, aggiornare le note o qualsiasi altra operazione.`
+                  : `${agent.name} — ${agent.description.toLowerCase()}. Puoi chiedermi qualsiasi cosa sulla piattaforma.`
+                }
               </div>
               <div className="ea-starters">
-                {starters.map(s => (
+                {(injectedContext ? [
+                  'Analizza questo lead',
+                  'Sincronizza su AirCall',
+                  'Riassumi lo storico chiamate',
+                  'Aggiorna le note',
+                ] : starters).map(s => (
                   <button key={s} className="ea-starter" onClick={() => sendMessage(s)}>
                     {s}
                   </button>

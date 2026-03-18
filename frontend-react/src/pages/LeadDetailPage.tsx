@@ -198,8 +198,17 @@ const LeadDetailPage: React.FC = () => {
   const [editConsap,     setEditConsap]     = useState('');
   const [editPacchetto,  setEditPacchetto]  = useState('');
   const [editBudget,     setEditBudget]     = useState('');
-  const [editFollowUp,   setEditFollowUp]   = useState('');
-  const [editAppDate,    setEditAppDate]    = useState('');
+  const [editFollowUp,     setEditFollowUp]     = useState('');
+  const [editAppDate,      setEditAppDate]      = useState('');
+  const [editSecondAppt,   setEditSecondAppt]   = useState('');
+  const [editContractDate, setEditContractDate] = useState('');
+
+  // AirCall sync + dial state
+  const [aircallSyncing, setAircallSyncing] = useState(false);
+  const [aircallDialing,  setAircallDialing]  = useState(false);
+
+  // Blocca blur-save quando l'utente sta cliccando VINTO/PERSO
+  const pendingActionRef = useRef(false);
 
   // Notes
   const [structuredNotes, setStructuredNotes] = useState<LeadNote[]>([]);
@@ -222,34 +231,47 @@ const LeadDetailPage: React.FC = () => {
     return { 'Content-Type': 'application/json', ...(t ? { Authorization: `Bearer ${t}` } : {}) };
   }
 
+  // Scroll to top quando si apre un lead
+  // Disabilita scroll restoration del browser e forza top con setTimeout per
+  // garantire l'esecuzione dopo tutti i cicli di render e la navigazione
+  useEffect(() => {
+    if ('scrollRestoration' in history) {
+      history.scrollRestoration = 'manual';
+    }
+    const id = setTimeout(() => {
+      window.scrollTo({ top: 0, behavior: 'instant' as ScrollBehavior });
+    }, 0);
+    return () => clearTimeout(id);
+  }, [leadId]);
+
   // ── Fetch ─────────────────────────────────────────────────────────────────
 
   useEffect(() => {
     if (!leadId) return;
     Promise.all([
-      salesApi.getLeads().then(all => all.find(l => l.id === leadId) || null),
+      salesApi.getLead(leadId),
       salesApi.getStages(),
       salesApi.getLeadTags(),
       salesApi.getPipelineUsers(),
     ]).then(([l, s, tg, u]) => {
-      if (l) {
-        setLead(l);
-        setEditFirstName(l.first_name || '');
-        setEditLastName(l.last_name   || '');
-        setEditPhone(l.phone          || '');
-        setEditAzienda(l.azienda      || '');
-        setEditNotes(l.notes          || '');
-        setEditDealValue(l.deal_value ? String(l.deal_value > 10000 ? l.deal_value / 100 : l.deal_value) : '');
-        setEditSource(l.source_channel        || '');
-        setEditAssigned(l.assigned_to_user_id || '');
-        setEditTag(l.lead_tag_id ? String(l.lead_tag_id) : '');
-        setEditConsap(l.consapevolezza          || '');
-        setEditPacchetto(l.pacchetto_consigliato|| '');
-        setEditBudget(l.budget_indicativo       || '');
-        setEditFollowUp(l.follow_up_date   ? l.follow_up_date.slice(0, 10)   : '');
-        setEditAppDate(l.appointment_date  ? l.appointment_date.slice(0, 10) : '');
-        setStructuredNotes(l.structured_notes || []);
-      }
+      setLead(l);
+      setEditFirstName(l.first_name || '');
+      setEditLastName(l.last_name   || '');
+      setEditPhone(l.phone          || '');
+      setEditAzienda(l.azienda      || '');
+      setEditNotes(l.notes          || '');
+      setEditDealValue(l.deal_value ? String(Math.round(l.deal_value / 100)) : '');
+      setEditSource(l.source_channel        || '');
+      setEditAssigned(l.assigned_to_user_id || '');
+      setEditTag(l.lead_tag_id ? String(l.lead_tag_id) : '');
+      setEditConsap(l.consapevolezza          || '');
+      setEditPacchetto(l.pacchetto_consigliato|| '');
+      setEditBudget(l.budget_indicativo       || '');
+      setEditFollowUp(l.follow_up_date         ? l.follow_up_date.slice(0, 10)         : '');
+      setEditAppDate(l.appointment_date        ? l.appointment_date.slice(0, 10)       : '');
+      setEditSecondAppt((l as any).second_appointment_date ? (l as any).second_appointment_date.slice(0, 10) : '');
+      setEditContractDate(l.contract_date ? l.contract_date.slice(0, 10) : '');
+      setStructuredNotes(l.structured_notes || []);
       setStages(s);
       setTags(tg);
       setUsers(u);
@@ -265,42 +287,94 @@ const LeadDetailPage: React.FC = () => {
 
   // ── Save ──────────────────────────────────────────────────────────────────
 
-  const save = useCallback(async (patch: LeadUpdatePayload) => {
-    if (!lead) return;
+  const save = useCallback(async (patch: LeadUpdatePayload): Promise<boolean> => {
+    if (!lead) return false;
     setSaving(true);
     try {
-      await salesApi.updateLead(lead.id, patch);
-      setLead(p => p ? { ...p, ...patch, lead_tag_id: patch.lead_tag_id ?? p.lead_tag_id } as Lead : p);
+      const updated = await salesApi.updateLead(lead.id, patch);
+      // Aggiorna solo il lead state (per header, stage, score) senza toccare i campi del form
+      setLead(updated);
+      return true;
     } catch {
       toast.error('Errore salvataggio');
+      return false;
     } finally {
       setSaving(false);
     }
   }, [lead]);
 
   const handleSaveAll = async () => {
-    await save({
+    const ok = await save({
       first_name:  editFirstName,
       last_name:   editLastName,
       phone:       editPhone,
       azienda:     editAzienda,
       notes:       editNotes,
-      deal_value:  editDealValue ? parseFloat(editDealValue) : null,
+      deal_value:  editDealValue ? Math.round(parseFloat(editDealValue) * 100) : null,
       source_channel:        editSource    || null,
       assigned_to_user_id:   editAssigned  || null,
       lead_tag_id:           editTag ? parseInt(editTag) : null,
       consapevolezza:        editConsap    || null,
       pacchetto_consigliato: editPacchetto || null,
       budget_indicativo:     editBudget    || null,
-      follow_up_date:        editFollowUp  || null,
-      appointment_date:      editAppDate   || null,
+      follow_up_date:             editFollowUp   || null,
+      appointment_date:           editAppDate    || null,
+      second_appointment_date:    editSecondAppt || null,
+      contract_date:              editContractDate || null,
     });
-    toast.success('Lead aggiornato');
+    if (ok) toast.success('Lead aggiornato');
   };
 
   const handleStageChange = (newStage: string) => {
+    pendingActionRef.current = false;
     save({ stage: newStage });
     setLead(p => p ? { ...p, stage: newStage } : p);
+  };
+
+  const handleAircallSync = async () => {
+    if (!lead || aircallSyncing) return;
+    setAircallSyncing(true);
+    try {
+      const res = await salesApi.pushLeadToAircall(lead.id);
+      setLead(prev => prev ? { ...prev, aircall_contact_id: res.aircall_contact_id } : prev);
+      const actionLabel = res.action === 'created' ? 'creato' : res.action === 'linked' ? 'collegato' : 'aggiornato';
+      toast.success(`Contatto AirCall ${actionLabel}: ${res.name}`);
+    } catch {
+      toast.error('Errore sincronizzazione AirCall');
+    } finally {
+      setAircallSyncing(false);
+    }
+  };
+
+  const handleAircallDial = async () => {
+    if (!lead || aircallDialing) return;
+    if (!lead.phone) {
+      toast.error('Nessun numero di telefono sul lead');
+      return;
+    }
+    setAircallDialing(true);
+    try {
+      const res = await salesApi.dialLead(lead.id);
+      toast.success(`Chiamata avviata su AirCall → ${res.phone}`);
+    } catch (err: unknown) {
+      const msg = (err as { message?: string })?.message || 'Errore avvio chiamata';
+      toast.error(msg);
+    } finally {
+      setAircallDialing(false);
+    }
+  };
+
+  const handleDeleteLead = async () => {
+    if (!lead) return;
+    const nome = lead.azienda || lead.email;
+    if (!window.confirm(`Eliminare definitivamente il lead "${nome}"?\n\nQuesta operazione non può essere annullata.`)) return;
+    try {
+      await salesApi.deleteLead(lead.id);
+      toast.success(`Lead "${nome}" eliminato`);
+      navigate('/sales');
+    } catch {
+      toast.error('Errore eliminazione lead');
+    }
   };
 
   // ── Notes ─────────────────────────────────────────────────────────────────
@@ -375,7 +449,7 @@ const LeadDetailPage: React.FC = () => {
   const daysInStage = lead?.stage_entered_at ? daysAgo(lead.stage_entered_at) : null;
   const nome = lead ? [lead.first_name, lead.last_name].filter(Boolean).join(' ') || lead.email : '';
   const dealVal = lead?.deal_value
-    ? `€${Math.round(lead.deal_value > 10000 ? lead.deal_value / 100 : lead.deal_value).toLocaleString('it-IT')}`
+    ? `€${Math.round(lead.deal_value / 100).toLocaleString('it-IT')}`
     : null;
 
   // ── Loading/error states ──────────────────────────────────────────────────
@@ -453,13 +527,103 @@ const LeadDetailPage: React.FC = () => {
 
           {/* Actions */}
           <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+            {/* Chiama via AirCall — visibile solo se il lead ha un telefono */}
+            {lead.phone && (
+              <button
+                onClick={handleAircallDial}
+                disabled={aircallDialing}
+                title={`Chiama ${lead.phone} via AirCall`}
+                style={{
+                  background: aircallDialing ? '#f0f9ff' : '#eff6ff',
+                  border: `1px solid ${T.accent}`,
+                  borderRadius: 6, padding: '5px 10px',
+                  cursor: aircallDialing ? 'wait' : 'pointer',
+                  fontSize: '0.78rem', fontWeight: 600,
+                  color: T.accent,
+                  fontFamily: T.font, display: 'flex', alignItems: 'center', gap: 4,
+                }}
+              >
+                {aircallDialing ? (
+                  <>
+                    <svg width="12" height="12" viewBox="0 0 20 20" fill="currentColor" style={{ animation: 'spin 1s linear infinite' }}>
+                      <path d="M2.7 1h4.2l1.3 4-2.1 1.2a11.5 11.5 0 005.7 5.7L13 9.8l4 1.3v4.2c0 1-1 1.7-2 1.5C5.4 15.5.5 10.6.2 3 0 2 .7 1 1.7 1z"/>
+                    </svg>
+                    Chiamata…
+                  </>
+                ) : (
+                  <>
+                    <svg width="12" height="12" viewBox="0 0 20 20" fill="currentColor">
+                      <path d="M2.7 1h4.2l1.3 4-2.1 1.2a11.5 11.5 0 005.7 5.7L13 9.8l4 1.3v4.2c0 1-1 1.7-2 1.5C5.4 15.5.5 10.6.2 3 0 2 .7 1 1.7 1z"/>
+                    </svg>
+                    Chiama
+                  </>
+                )}
+              </button>
+            )}
+
+            {/* AirCall sync */}
             <button
+              onClick={handleAircallSync}
+              disabled={aircallSyncing}
+              title={lead.aircall_contact_id ? `Collegato a AirCall (ID: ${lead.aircall_contact_id})` : 'Sincronizza su AirCall'}
+              style={{
+                background: lead.aircall_contact_id ? '#f0fdf4' : '#fff',
+                border: `1px solid ${lead.aircall_contact_id ? T.green : T.border}`,
+                borderRadius: 6, padding: '5px 10px',
+                cursor: aircallSyncing ? 'wait' : 'pointer',
+                fontSize: '0.78rem', fontWeight: 600,
+                color: lead.aircall_contact_id ? T.green : T.text2,
+                fontFamily: T.font, display: 'flex', alignItems: 'center', gap: 4,
+              }}
+            >
+              <svg width="12" height="12" viewBox="0 0 20 20" fill="currentColor">
+                <path d="M2.7 1h4.2l1.3 4-2.1 1.2a11.5 11.5 0 005.7 5.7L13 9.8l4 1.3v4.2c0 1-1 1.7-2 1.5C5.4 15.5.5 10.6.2 3 0 2 .7 1 1.7 1z"/>
+              </svg>
+              {aircallSyncing ? '...' : lead.aircall_contact_id ? 'AirCall ✓' : 'AirCall'}
+            </button>
+            {/* Analizza con EvoAgent — passa il lead come contesto */}
+            <button
+              onClick={() => {
+                if (!lead) return;
+                const ctx = [
+                  `Lead: ${lead.first_name || ''} ${lead.last_name || ''}`.trim(),
+                  lead.azienda ? `Azienda: ${lead.azienda}` : '',
+                  `ID: ${lead.id}`,
+                  `Stage: ${lead.stage}`,
+                  lead.phone ? `Tel: ${lead.phone}` : '',
+                  lead.email ? `Email: ${lead.email}` : '',
+                  lead.deal_value ? `Valore deal: €${(lead.deal_value / 100).toLocaleString('it-IT')}` : '',
+                  lead.source_channel ? `Fonte: ${lead.source_channel}` : '',
+                  lead.notes ? `Note: ${lead.notes}` : '',
+                  lead.aircall_contact_id ? `AirCall ID: ${lead.aircall_contact_id}` : 'Non ancora su AirCall',
+                ].filter(Boolean).join('\n');
+                navigate('/evo-agent', { state: { context: ctx, agentId: 'sales' } });
+              }}
+              title="Apri in EvoAgent con i dati di questo lead pre-caricati"
+              style={{
+                background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
+                border: 'none', borderRadius: 6, padding: '5px 10px',
+                cursor: 'pointer', fontSize: '0.78rem', fontWeight: 600,
+                color: '#fff', fontFamily: T.font,
+                display: 'flex', alignItems: 'center', gap: 4,
+              }}
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <path d="M12 2a10 10 0 1 0 10 10"/>
+                <path d="M22 2 12 12"/>
+                <path d="m16 2 6 6V2z"/>
+              </svg>
+              AI
+            </button>
+            <button
+              onMouseDown={() => { pendingActionRef.current = true; }}
               onClick={() => handleStageChange('trattativa_persa')}
               style={{ background: T.redL, border: `1px solid ${T.red}`, borderRadius: 6, padding: '5px 12px', cursor: 'pointer', fontSize: '0.78rem', fontWeight: 600, color: T.red, fontFamily: T.font }}
             >
               Perso
             </button>
             <button
+              onMouseDown={() => { pendingActionRef.current = true; }}
               onClick={() => handleStageChange('cliente')}
               style={{ background: T.greenL, border: `1px solid ${T.green}`, borderRadius: 6, padding: '5px 12px', cursor: 'pointer', fontSize: '0.78rem', fontWeight: 600, color: T.green, fontFamily: T.font }}
             >
@@ -472,6 +636,14 @@ const LeadDetailPage: React.FC = () => {
                 style={{ background: T.accent, border: 'none', borderRadius: 6, padding: '5px 14px', cursor: saving ? 'wait' : 'pointer', fontSize: '0.8rem', fontWeight: 600, color: '#fff', fontFamily: T.font }}
               >
                 {saving ? 'Salvo...' : 'Salva'}
+              </button>
+            )}
+            {canEdit && (
+              <button
+                onClick={handleDeleteLead}
+                style={{ background: 'none', border: '1px solid #fca5a5', borderRadius: 6, padding: '5px 12px', cursor: 'pointer', fontSize: '0.78rem', fontWeight: 500, color: T.red, fontFamily: T.font }}
+              >
+                Elimina
               </button>
             )}
           </div>
@@ -545,6 +717,8 @@ const LeadDetailPage: React.FC = () => {
           </FieldInput>
           <FieldInput label="Follow-up" value={editFollowUp} onChange={setEditFollowUp} disabled={!canEdit} type="date" />
           <FieldInput label="Appuntamento" value={editAppDate} onChange={setEditAppDate} disabled={!canEdit} type="date" />
+          <FieldInput label="Secondo Appuntamento" value={editSecondAppt} onChange={setEditSecondAppt} disabled={!canEdit} type="date" />
+          <FieldInput label="Data Firma Contratto" value={editContractDate} onChange={setEditContractDate} disabled={!canEdit} type="date" />
 
           {/* Timestamps */}
           <div style={{ paddingTop: 6, borderTop: `1px solid ${T.border}` }}>

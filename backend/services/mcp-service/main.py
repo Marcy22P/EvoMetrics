@@ -902,6 +902,7 @@ class EvoAgentChatRequest(BaseModel):
     conversation_id: Optional[str] = None
     channel: str = "evometrics"
     agent_id: str = "orchestrator"  # orchestrator | sales | ops | finance | clients
+    context: Optional[str] = None   # contesto aggiuntivo (es. dati lead corrente, pagina aperta)
 
 
 class EvoAgentChatResponse(BaseModel):
@@ -990,7 +991,12 @@ async def evo_agent_chat(payload: EvoAgentChatRequest, request: Request, db: Ses
 
     # Processa con l'orchestratore
     orchestrator = EvoAgentOrchestrator(token=token, user=user)
-    result = await orchestrator.chat(message=payload.message, history=history, agent_id=payload.agent_id)
+    result = await orchestrator.chat(
+        message=payload.message,
+        history=history,
+        agent_id=payload.agent_id,
+        context=payload.context,
+    )
 
     # Salva la conversazione aggiornata
     active_agent_id = payload.agent_id or "orchestrator"
@@ -1135,6 +1141,665 @@ async def evo_agent_status():
         "library": "installata" if lib_ok else "mancante",
         "model": model,
     }
+
+
+# ─── AirCall REST helpers & endpoints ────────────────────────────────────────
+
+_AIRCALL_BASE = "https://api.aircall.io/v1"
+
+
+def _aircall_headers() -> dict:
+    import base64
+    api_key = os.environ.get("AIRCALL_API", "")
+    if not api_key:
+        raise HTTPException(status_code=503, detail="AIRCALL_API non configurata")
+    if ":" in api_key:
+        encoded = base64.b64encode(api_key.encode()).decode()
+    else:
+        api_id = os.environ.get("AIRCALL_API_ID", "")
+        if api_id:
+            encoded = base64.b64encode(f"{api_id}:{api_key}".encode()).decode()
+        else:
+            return {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json", "Accept": "application/json"}
+    return {"Authorization": f"Basic {encoded}", "Content-Type": "application/json", "Accept": "application/json"}
+
+
+async def _push_lead_to_aircall(lead: dict) -> dict:
+    """Crea o aggiorna un contatto AirCall per il lead dato. Ritorna {'aircall_contact_id': str, 'action': 'created'|'linked'|'updated'}."""
+    import httpx as _httpx
+    _TIMEOUT = 8.0  # timeout ridotto per risposta rapida in caso di errori auth
+    headers = _aircall_headers()
+    fn    = (lead.get("first_name") or "").strip()
+    ln    = (lead.get("last_name") or "").strip()
+    nome  = f"{fn} {ln}".strip() or lead.get("azienda") or lead.get("email", "")
+    phone = (lead.get("phone") or "").strip()
+    email = (lead.get("email") or "").strip()
+    lead_id = str(lead.get("id", ""))
+    info  = (
+        f"EvoMetrics-ID:{lead_id}\n"
+        f"Azienda: {lead.get('azienda') or 'N/D'} | "
+        f"Stage: {lead.get('stage')} | "
+        f"Fonte: {lead.get('source_channel') or 'N/D'}"
+    )
+
+    async with _httpx.AsyncClient(timeout=_TIMEOUT) as c:
+        # Il Bulk Sync chiama questa funzione solo per lead SENZA aircall_contact_id.
+        # Per i lead già collegati usa Riconcilia.
+        # Cerca prima un contatto esistente per telefono/email prima di crearne uno nuovo.
+        found_id = None
+        for val in [v for v in [phone, email] if v]:
+            try:
+                r = await c.get(f"{_AIRCALL_BASE}/contacts", headers=headers,
+                                params={"search_query": val, "per_page": 1})
+                if r.status_code == 200:
+                    hits = r.json().get("contacts", [])
+                    if hits:
+                        found_id = str(hits[0]["id"])
+                        break
+            except Exception:
+                pass
+
+        if found_id:
+            # Esiste già — collega e aggiorna information con EvoMetrics-ID
+            try:
+                await c.patch(f"{_AIRCALL_BASE}/contacts/{found_id}", headers=headers,
+                              json={"information": info})
+            except Exception:
+                pass
+            return {"aircall_contact_id": found_id, "action": "linked", "name": nome}
+
+        # Nessun contatto trovato — crea nuovo contatto condiviso
+        body: dict = {
+            "first_name": fn or (nome.split()[0] if nome else ""),
+            "last_name":  ln or (" ".join(nome.split()[1:]) if len(nome.split()) > 1 else ""),
+            "information": info,
+            "is_shared": True,   # visibile a tutti gli utenti dell'account
+        }
+        if phone:
+            body["phone_numbers"] = [{"label": "Work", "value": phone}]
+        if email:
+            body["emails"] = [{"label": "Work", "value": email}]
+
+        r = await c.post(f"{_AIRCALL_BASE}/contacts", headers=headers, json=body)
+        r.raise_for_status()
+        contact = r.json().get("contact", {})
+
+    return {"aircall_contact_id": str(contact.get("id", "")), "action": "created", "name": nome}
+
+
+def _internal_base_url() -> str:
+    """URL interno del gateway (evita 403 da proxy Render su chiamate self-referenziali)."""
+    _port = os.environ.get("PORT", "10000")
+    return os.environ.get("INTERNAL_API_URL") or f"http://localhost:{_port}"
+
+
+@app.post("/api/mcp/aircall/push-lead")
+async def aircall_push_lead(request: Request):
+    """Sincronizza un singolo lead come contatto AirCall e salva l'aircall_contact_id nel lead."""
+    import httpx as _httpx
+    payload = await request.json()
+    lead_id = payload.get("lead_id")
+    if not lead_id:
+        raise HTTPException(status_code=400, detail="lead_id mancante")
+
+    token = request.headers.get("Authorization", "").replace("Bearer ", "")
+    headers_sales = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+    base = _internal_base_url()
+    async with _httpx.AsyncClient(timeout=20.0) as c:
+        # Recupera il lead
+        r = await c.get(f"{base}/api/leads/{lead_id}", headers=headers_sales)
+        if r.status_code != 200:
+            raise HTTPException(status_code=404, detail=f"Lead {lead_id} non trovato")
+        lead = r.json()
+
+        # Push su AirCall
+        result = await _push_lead_to_aircall(lead)
+        aircall_contact_id = result["aircall_contact_id"]
+
+        # Salva aircall_contact_id nel lead
+        if aircall_contact_id:
+            await c.put(
+                f"{base}/api/leads/{lead_id}",
+                headers=headers_sales,
+                json={"aircall_contact_id": aircall_contact_id},
+            )
+
+    return {
+        "success": True,
+        "aircall_contact_id": aircall_contact_id,
+        "action": result["action"],
+        "name": result["name"],
+        "message": f"Contatto '{result['name']}' {result['action']} su AirCall (ID: {aircall_contact_id})",
+    }
+
+
+@app.post("/api/mcp/aircall/bulk-push")
+async def aircall_bulk_push(request: Request):
+    """Sincronizza più lead come contatti AirCall. Se lead_ids è vuoto, sincronizza tutti i lead attivi."""
+    import asyncio as _asyncio
+    import httpx as _httpx
+    payload = await request.json()
+    lead_ids: list = payload.get("lead_ids", [])
+    token = request.headers.get("Authorization", "").replace("Bearer ", "")
+    headers_sales = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+    # ── Test rapido autenticazione AirCall prima di processare i lead ──────────
+    try:
+        ac_headers = _aircall_headers()
+        async with _httpx.AsyncClient(timeout=8.0) as _tc:
+            _tr = await _tc.get(f"{_AIRCALL_BASE}/users", headers=ac_headers, params={"per_page": 1})
+            if _tr.status_code == 401:
+                raise HTTPException(
+                    status_code=503,
+                    detail=(
+                        "Autenticazione AirCall fallita (401). "
+                        "Configura AIRCALL_API_ID e AIRCALL_API nel file .env "
+                        "con il formato api_id:api_token oppure imposta entrambe le variabili separatamente."
+                    ),
+                )
+    except HTTPException:
+        raise
+    except Exception as _e:
+        raise HTTPException(status_code=503, detail=f"AirCall non raggiungibile: {_e}")
+
+    base = _internal_base_url()
+    async with _httpx.AsyncClient(timeout=30.0) as c:
+        r = await c.get(f"{base}/api/leads", headers=headers_sales)
+        r.raise_for_status()
+        all_leads = r.json()
+
+    ACTIVE = {"optin", "contattato", "prima_chiamata", "appuntamento_vivo_1",
+              "seconda_chiamata", "appuntamento_vivo_2", "preventivo_consegnato"}
+    if lead_ids:
+        candidates = [l for l in all_leads if l["id"] in lead_ids or l["id"][:8] in lead_ids]
+    else:
+        candidates = [l for l in all_leads if l.get("stage") in ACTIVE]
+
+    # Il Bulk Sync crea contatti SOLO per lead senza aircall_contact_id.
+    # I lead già collegati vengono gestiti dalla Riconciliazione — evita
+    # PATCH su ID potenzialmente stale e crea doppioni.
+    leads = [l for l in candidates if not l.get("aircall_contact_id")]
+    skipped_already_linked = len(candidates) - len(leads)
+    if skipped_already_linked:
+        print(f"ℹ️ {skipped_already_linked} lead già collegati ad AirCall — saltati (usa Riconcilia per aggiornarli)")
+
+    # ── Elaborazione sequenziale con retry su 429 ─────────────────────────────
+    # AirCall rate-limit: ~60 req/min — processiamo 1 alla volta con pausa breve.
+    task_results = []
+    for lead in leads:
+        for attempt in range(3):
+            try:
+                result = await _push_lead_to_aircall(lead)
+                aircall_id = result["aircall_contact_id"]
+                if aircall_id and aircall_id != lead.get("aircall_contact_id"):
+                    async with _httpx.AsyncClient(timeout=10.0) as c2:
+                        await c2.put(
+                            f"{base}/api/leads/{lead['id']}",
+                            headers=headers_sales,
+                            json={"aircall_contact_id": aircall_id},
+                        )
+                task_results.append({"ok": True, "lead_id": lead["id"], "name": result["name"],
+                                     "aircall_contact_id": aircall_id, "action": result["action"]})
+                await _asyncio.sleep(0.6)   # ~100 req/min max, stia sotto il limite
+                break
+            except Exception as e:
+                err_str = str(e)
+                if "429" in err_str and attempt < 2:
+                    wait = 15 * (attempt + 1)
+                    print(f"⏳ AirCall 429 — attendo {wait}s prima di riprovare lead {lead.get('id','')[:8]}")
+                    await _asyncio.sleep(wait)
+                else:
+                    print(f"⚠️ AirCall bulk sync: errore per lead {lead.get('id','')[:8]}: {e}")
+                    task_results.append({"ok": False, "lead_id": lead["id"], "error": err_str})
+                    break
+
+    synced = sum(1 for r in task_results if r.get("ok"))
+    failed = sum(1 for r in task_results if not r.get("ok"))
+    return {"synced": synced, "failed": failed, "total": len(leads), "results": task_results}
+
+
+@app.get("/api/mcp/aircall/calls/{lead_id}")
+async def aircall_get_lead_calls(lead_id: str, request: Request):
+    """Recupera le chiamate AirCall per un lead (richiede aircall_contact_id)."""
+    import httpx as _httpx
+    token = request.headers.get("Authorization", "").replace("Bearer ", "")
+    base  = _internal_base_url()
+
+    async with _httpx.AsyncClient(timeout=15.0) as c:
+        r = await c.get(f"{base}/api/leads/{lead_id}",
+                        headers={"Authorization": f"Bearer {token}"})
+        if r.status_code != 200:
+            raise HTTPException(status_code=404, detail="Lead non trovato")
+        lead = r.json()
+
+    aircall_id = lead.get("aircall_contact_id")
+    if not aircall_id:
+        return {"calls": [], "message": "Lead non ancora sincronizzato con AirCall"}
+
+    headers_ac = _aircall_headers()
+    async with _httpx.AsyncClient(timeout=15.0) as c:
+        r = await c.get(f"{_AIRCALL_BASE}/contacts/{aircall_id}/calls",
+                        headers=headers_ac, params={"per_page": 20, "order": "desc"})
+        r.raise_for_status()
+        calls = r.json().get("calls", [])
+
+    return {"calls": calls, "aircall_contact_id": aircall_id}
+
+
+def _parse_evometrics_id(info_text: str) -> str | None:
+    """Estrae EvoMetrics-ID dal campo information di un contatto AirCall."""
+    if not info_text:
+        return None
+    for line in info_text.splitlines():
+        if line.startswith("EvoMetrics-ID:"):
+            return line.split(":", 1)[1].strip() or None
+    return None
+
+
+async def _find_lead_for_call(
+    call: dict,
+    all_leads: list,
+    aircall_headers: dict,
+) -> dict | None:
+    """
+    Lookup a 3 livelli per trovare il lead associato a una chiamata AirCall:
+    1. aircall_contact_id diretto sul lead
+    2. EvoMetrics-ID nel campo information del contatto AirCall
+    3. Matching per numero di telefono
+    """
+    import httpx as _httpx
+    import re as _re
+
+    ac_cid   = str((call.get("contact") or {}).get("id", "")) or None
+    raw_from = call.get("raw_digits") or call.get("from") or ""
+
+    # Livello 1: aircall_contact_id già mappato
+    if ac_cid:
+        hit = next((l for l in all_leads if str(l.get("aircall_contact_id", "")) == ac_cid), None)
+        if hit:
+            return hit
+
+    # Livello 2: EvoMetrics-ID nel campo information del contatto AirCall
+    if ac_cid:
+        try:
+            async with _httpx.AsyncClient(timeout=8.0) as c:
+                r = await c.get(f"{_AIRCALL_BASE}/contacts/{ac_cid}", headers=aircall_headers)
+                if r.status_code == 200:
+                    contact_info = r.json().get("contact", {}).get("information", "")
+                    evo_id = _parse_evometrics_id(contact_info)
+                    if evo_id:
+                        hit = next((l for l in all_leads if l.get("id") == evo_id), None)
+                        if hit:
+                            return hit
+        except Exception:
+            pass
+
+    # Livello 3: matching per numero di telefono (normalizza a solo cifre)
+    if raw_from:
+        digits = _re.sub(r"\D", "", raw_from)[-9:]  # ultimi 9 digit
+        for lead in all_leads:
+            lead_phone = _re.sub(r"\D", "", lead.get("phone") or "")
+            if lead_phone and lead_phone.endswith(digits):
+                return lead
+
+    return None
+
+
+async def _process_aircall_webhook(payload: dict) -> None:
+    """
+    Processa eventi AirCall (call.ended / call.completed):
+    1. Identifica il lead con lookup a 3 livelli
+    2. Aggiunge nota con metadata chiamata
+    3. Se il lead non aveva aircall_contact_id, lo aggiorna
+    """
+    import httpx as _httpx
+    data  = payload.get("data", {})
+    call  = data.get("call") or data
+    event = payload.get("event", "")
+
+    if event not in ("call.ended", "call.completed") and "call" not in event:
+        return
+
+    call_id   = call.get("id")
+    duration  = int(call.get("duration") or 0)
+    recording = call.get("recording") or ""
+    direction = call.get("direction", "?")
+    status    = call.get("status", "?")
+    agent     = (call.get("user") or {}).get("name") or "N/D"
+    started   = call.get("started_at")
+    ac_cid    = str((call.get("contact") or {}).get("id", "")) or None
+
+    svc_token = os.environ.get("INTERNAL_SERVICE_TOKEN", "")
+    if not svc_token:
+        print("⚠️ AirCall webhook: INTERNAL_SERVICE_TOKEN mancante.")
+        return
+
+    base = _internal_base_url()
+    headers_svc = {"Authorization": f"Bearer {svc_token}", "Content-Type": "application/json"}
+
+    # Recupera tutti i lead per il matching
+    async with _httpx.AsyncClient(timeout=15.0) as c:
+        r = await c.get(f"{base}/api/leads", headers=headers_svc)
+        if r.status_code != 200:
+            print(f"⚠️ AirCall webhook: errore fetch leads: {r.status_code}")
+            return
+        all_leads = r.json()
+
+    try:
+        ac_headers = _aircall_headers()
+    except Exception:
+        ac_headers = {}
+
+    matched_lead = await _find_lead_for_call(call, all_leads, ac_headers)
+    if not matched_lead:
+        print(f"ℹ️ AirCall webhook: nessun lead trovato per call_id={call_id} contact={ac_cid}")
+        return
+
+    # Aggiorna aircall_contact_id se mancava
+    if ac_cid and not matched_lead.get("aircall_contact_id"):
+        async with _httpx.AsyncClient(timeout=8.0) as c:
+            await c.put(
+                f"{base}/api/leads/{matched_lead['id']}",
+                headers=headers_svc,
+                json={"aircall_contact_id": ac_cid},
+            )
+        print(f"🔗 AirCall webhook: aircall_contact_id={ac_cid} salvato sul lead {matched_lead['id'][:8]}")
+
+    import datetime as _dt
+    date_str = _dt.datetime.fromtimestamp(started).strftime("%d/%m/%Y %H:%M") if started else "N/D"
+    dur_str  = f"{duration // 60}m {duration % 60}s" if duration > 0 else "N/D"
+    note_lines = [
+        f"[AUTO - AirCall {date_str}]",
+        f"Chiamata {direction} | Durata: {dur_str} | Status: {status} | Agente: {agent}",
+    ]
+    if recording:
+        note_lines.append(f"Recording: {recording}")
+    note_content = "\n".join(note_lines)
+
+    async with _httpx.AsyncClient(timeout=15.0) as c:
+        r = await c.post(
+            f"{base}/api/leads/{matched_lead['id']}/notes",
+            headers=headers_svc,
+            json={"content": note_content},
+        )
+        if r.status_code in (200, 201):
+            print(f"✅ AirCall webhook: nota aggiunta al lead {matched_lead['id'][:8]} (call {call_id})")
+        else:
+            print(f"⚠️ AirCall webhook: errore nota ({r.status_code}): {r.text[:200]}")
+
+
+@app.post("/api/mcp/aircall/dial")
+async def aircall_dial(request: Request):
+    """
+    Click-to-call: riempie l'app AirCall dell'agente con il numero del lead pronto da chiamare.
+    Richiede AIRCALL_USER_ID nell'env (ID utente AirCall del commerciale).
+    Se non configurato, usa il primo utente disponibile sull'account.
+    """
+    import httpx as _httpx
+    payload = await request.json()
+    lead_id = payload.get("lead_id")
+    if not lead_id:
+        raise HTTPException(status_code=400, detail="lead_id mancante")
+
+    token    = request.headers.get("Authorization", "").replace("Bearer ", "")
+    base     = _internal_base_url()
+    h_svc    = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    h_ac     = _aircall_headers()
+
+    # Recupera dati lead
+    async with _httpx.AsyncClient(timeout=10.0) as c:
+        r = await c.get(f"{base}/api/leads/{lead_id}", headers=h_svc)
+        if r.status_code != 200:
+            raise HTTPException(status_code=404, detail="Lead non trovato")
+        lead = r.json()
+
+    phone = (lead.get("phone") or "").strip()
+    if not phone:
+        raise HTTPException(status_code=422, detail="Il lead non ha un numero di telefono")
+
+    # Risolvi aircall_user_id
+    aircall_user_id = os.environ.get("AIRCALL_USER_ID", "").strip()
+    if not aircall_user_id:
+        async with _httpx.AsyncClient(timeout=8.0) as c:
+            r = await c.get(f"{_AIRCALL_BASE}/users", headers=h_ac, params={"per_page": 1})
+            if r.status_code != 200:
+                raise HTTPException(status_code=503, detail=f"Impossibile ottenere utenti AirCall: {r.status_code}")
+            users = r.json().get("users", [])
+            if not users:
+                raise HTTPException(status_code=503, detail="Nessun utente AirCall trovato")
+            aircall_user_id = str(users[0]["id"])
+
+    # Chiama POST /v1/users/{id}/dial → apre il telefono AirCall con il numero pre-compilato
+    async with _httpx.AsyncClient(timeout=10.0) as c:
+        r = await c.post(
+            f"{_AIRCALL_BASE}/users/{aircall_user_id}/dial",
+            headers=h_ac,
+            json={"to": phone},
+        )
+        if r.status_code not in (200, 201):
+            raise HTTPException(
+                status_code=502,
+                detail=f"AirCall dial fallito ({r.status_code}): {r.text[:200]}",
+            )
+
+    nome = f"{lead.get('first_name', '')} {lead.get('last_name', '')}".strip() or lead.get("azienda") or lead.get("email")
+    return {"success": True, "phone": phone, "aircall_user_id": aircall_user_id, "lead_name": nome}
+
+
+@app.post("/api/mcp/aircall/reconcile")
+async def aircall_reconcile(request: Request):
+    """
+    Riconciliazione one-shot: collega i lead EvoMetrics ai contatti AirCall già esistenti.
+    - Scarica tutti i contatti AirCall (paginati)
+    - Per ogni contatto: cerca un lead per phone/email
+    - Se trovato: aggiorna lead.aircall_contact_id + aggiorna information del contatto con EvoMetrics-ID
+    Utile dopo un'importazione manuale su AirCall.
+    """
+    import httpx as _httpx
+    import re as _re
+
+    token    = request.headers.get("Authorization", "").replace("Bearer ", "")
+    base     = _internal_base_url()
+    h_svc    = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    h_ac     = _aircall_headers()
+
+    # ── Pre-flight: verifica auth AirCall ─────────────────────────────────────
+    try:
+        async with _httpx.AsyncClient(timeout=8.0) as _tc:
+            _tr = await _tc.get(f"{_AIRCALL_BASE}/users", headers=h_ac, params={"per_page": 1})
+            if _tr.status_code == 401:
+                raise HTTPException(
+                    status_code=503,
+                    detail=(
+                        "Autenticazione AirCall fallita (401). "
+                        "Aggiungi AIRCALL_API_ID nel file .env con il tuo API ID "
+                        "(reperibile su AirCall → Impostazioni → Integrazioni → API Keys)."
+                    ),
+                )
+    except HTTPException:
+        raise
+    except Exception as _e:
+        raise HTTPException(status_code=503, detail=f"AirCall non raggiungibile: {_e}")
+
+    # ── STEP 1: scarica TUTTI i contatti AirCall (fonte di verità per i numeri) ──
+    # Strategia combinata: usa next_page_link quando presente, ma verifica anche
+    # meta.total come fallback perché AirCall a volte restituisce next_page_link=null
+    # prima di aver paginato tutti i contatti (bug noto in certi account).
+    print("🔄 Riconciliazione: scarico tutti i contatti AirCall...")
+    all_ac_contacts: list[dict] = []
+    PER_PAGE = 50
+    page = 1
+    total_reported = 0
+    async with _httpx.AsyncClient(timeout=30.0) as c:
+        while True:
+            r = await c.get(f"{_AIRCALL_BASE}/contacts", headers=h_ac,
+                            params={"per_page": PER_PAGE, "page": page})
+            if r.status_code != 200:
+                raise HTTPException(status_code=502,
+                                    detail=f"AirCall /contacts: HTTP {r.status_code} — {r.text[:200]}")
+            data = r.json()
+            batch = data.get("contacts", [])
+            if not batch:
+                break
+            all_ac_contacts.extend(batch)
+            meta = data.get("meta", {})
+            total_reported = int(meta.get("total", total_reported) or total_reported)
+            next_url = meta.get("next_page_link") or None
+            print(f"   pagina {page} — {len(all_ac_contacts)}/{total_reported} contatti scaricati")
+            # Interrompi se: batch incompleto, O non ci sono altri contatti da scaricare
+            if len(batch) < PER_PAGE:
+                break
+            if total_reported and len(all_ac_contacts) >= total_reported:
+                break
+            # Se next_page_link è null ma il totale è superiore ai contatti ottenuti,
+            # forziamo la pagina successiva (bug AirCall con next_page_link prematuro)
+            page += 1
+
+    print(f"✅ Totale contatti AirCall: {len(all_ac_contacts)}")
+
+    # ── STEP 2: costruisci mappa phone → contact e email → contact (da AirCall) ──
+    ac_phone_map: dict[str, dict] = {}   # ultimi 9 digit → contact
+    ac_email_map: dict[str, dict] = {}   # email lower → contact
+    for contact in all_ac_contacts:
+        for pn in contact.get("phone_numbers", []):
+            raw = pn.get("value", "")
+            digits = _re.sub(r"\D", "", raw)[-9:]
+            if digits and digits not in ac_phone_map:
+                ac_phone_map[digits] = contact
+        for em in contact.get("emails", []):
+            key = em.get("value", "").lower().strip()
+            if key and key not in ac_email_map:
+                ac_email_map[key] = contact
+
+    # Set di tutti gli ID AirCall validi — usato per rilevare ID stale sui lead
+    ac_id_set: set[str] = {str(c["id"]) for c in all_ac_contacts}
+    print(f"   Numeri unici indicizzati: {len(ac_phone_map)} | Email: {len(ac_email_map)}")
+
+    # ── STEP 3: scarica tutti i lead EvoMetrics ───────────────────────────────
+    async with _httpx.AsyncClient(timeout=30.0) as c:
+        r = await c.get(f"{base}/api/leads", headers=h_svc)
+        r.raise_for_status()
+        all_leads = r.json()
+
+    print(f"   Lead EvoMetrics: {len(all_leads)}")
+
+    # ── STEP 4: per ogni lead cerca il contatto AirCall corrispondente ─────────
+    matched = 0
+    cleared = 0
+    already_ok = 0
+    updated_info = 0
+    matched_lead_ids: set[str] = set()
+
+    async with _httpx.AsyncClient(timeout=15.0) as c:
+        for lead in all_leads:
+            lead_id_val = lead["id"]
+            lead_phone  = _re.sub(r"\D", "", lead.get("phone") or "")[-9:]
+            lead_email  = (lead.get("email") or "").lower().strip()
+            current_ac_id = str(lead.get("aircall_contact_id") or "")
+
+            # Cerca contatto AirCall: prima per telefono, poi per email
+            contact_match: dict | None = None
+            if lead_phone and lead_phone in ac_phone_map:
+                contact_match = ac_phone_map[lead_phone]
+            elif lead_email and lead_email in ac_email_map:
+                contact_match = ac_email_map[lead_email]
+
+            # Se il lead ha un ID non presente in AirCall, è stale → pulisci prima di tutto
+            if current_ac_id and current_ac_id not in ac_id_set:
+                await c.put(
+                    f"{base}/api/leads/{lead_id_val}",
+                    headers=h_svc,
+                    json={"aircall_contact_id": None},
+                )
+                cleared += 1
+                print(f"   🧹 Lead {lead_id_val[:8]}: ID stale {current_ac_id} rimosso (non esiste in AirCall)")
+                current_ac_id = ""   # reset per eventuale match sottostante
+
+            if contact_match:
+                ac_id = str(contact_match.get("id", ""))
+                matched_lead_ids.add(lead_id_val)
+
+                if current_ac_id == ac_id:
+                    already_ok += 1
+                else:
+                    # Aggiorna aircall_contact_id sul lead (overwrite stale/vuoto)
+                    await c.put(
+                        f"{base}/api/leads/{lead_id_val}",
+                        headers=h_svc,
+                        json={"aircall_contact_id": ac_id},
+                    )
+                    matched += 1
+                    print(f"   🔗 Lead {lead_id_val[:8]} ↔ AC {ac_id} (era: {current_ac_id or 'nessuno'})")
+
+                # Aggiorna information del contatto AirCall con EvoMetrics-ID (se mancante)
+                ac_info = contact_match.get("information", "") or ""
+                if not _parse_evometrics_id(ac_info):
+                    new_info = f"EvoMetrics-ID:{lead_id_val}\n{ac_info}".strip()
+                    r2 = await c.patch(
+                        f"{_AIRCALL_BASE}/contacts/{ac_id}",
+                        headers=h_ac,
+                        json={"information": new_info},
+                    )
+                    if r2.status_code in (200, 201):
+                        updated_info += 1
+
+            elif not current_ac_id:
+                # Nessun match per telefono/email e nessun ID → candidato per il Bulk Sync
+                pass
+
+    total_matched = matched + already_ok
+    print(f"\n✅ Riconciliazione completata:")
+    print(f"   {total_matched} lead collegati ({already_ok} già corretti, {matched} aggiornati)")
+    print(f"   {cleared} lead con ID stale ripuliti")
+    print(f"   {updated_info} contatti AirCall aggiornati con EvoMetrics-ID")
+    print(f"   {len(all_leads) - total_matched - cleared} lead senza corrispondenza AirCall (verranno creati al prossimo Sync)")
+
+    return {
+        "matched": total_matched,
+        "updated": matched,
+        "already_correct": already_ok,
+        "cleared_stale": cleared,
+        "unmatched": len(all_leads) - total_matched - cleared,
+        "updated_aircall_info": updated_info,
+        "message": (
+            f"Riconciliazione completata: {total_matched} lead collegati ad AirCall "
+            f"({matched} aggiornati, {already_ok} già corretti), "
+            f"{cleared} ID stale puliti, "
+            f"{len(all_leads) - total_matched - cleared} lead senza corrispondenza "
+            f"(usa Sync per crearli)."
+        ),
+    }
+
+
+@app.post("/api/mcp/aircall-webhook")
+async def aircall_webhook(request: Request, background_tasks: BackgroundTasks):
+    """
+    Riceve eventi da AirCall (call.ended, call.completed).
+    Risponde subito 200; processa in background: identifica il lead e aggiunge nota con metadata chiamata.
+    """
+    import hmac, hashlib
+    webhook_token = os.environ.get("AIRCALL_WEBHOOK_TOKEN", "")
+    raw_body = await request.body()
+
+    if webhook_token:
+        # AirCall usa token nel payload (non HMAC signature)
+        try:
+            payload = json.loads(raw_body)
+            if payload.get("token") != webhook_token:
+                raise HTTPException(status_code=401, detail="Token webhook AirCall non valido")
+        except (json.JSONDecodeError, KeyError):
+            raise HTTPException(status_code=400, detail="Payload non valido")
+    else:
+        try:
+            payload = json.loads(raw_body)
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="Payload non valido")
+
+    event = payload.get("event", "")
+    print(f"📨 AirCall webhook ricevuto: event={event}")
+    background_tasks.add_task(_process_aircall_webhook, payload)
+    return {"status": "accepted", "event": event}
 
 
 # ─── Fireflies Webhook ────────────────────────────────────────────────────────

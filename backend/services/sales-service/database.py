@@ -65,10 +65,11 @@ else:
     
     engine = create_engine(
         DATABASE_URL,
-        pool_pre_ping=True,  # Verifica che la connessione sia valida prima di usarla
-        pool_recycle=3600,   # Ricicla connessioni dopo 1 ora
-        pool_size=1,         # Ridotto per evitare TooManyConnections
-        max_overflow=1,      # Solo 1 connessione extra
+        pool_pre_ping=True,   # Verifica che la connessione sia valida prima di usarla
+        pool_recycle=1800,    # Ricicla connessioni dopo 30 minuti
+        pool_size=5,          # 5 connessioni persistenti nel pool
+        max_overflow=10,      # Fino a 10 connessioni aggiuntive sotto carico
+        pool_timeout=30,      # Attendi max 30s prima di dare TimeoutError
         connect_args=postgresql_connect_args
     )
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -137,8 +138,12 @@ class Lead(Base):
     setter_id = Column(String(50), nullable=True)
     appointment_date = Column(DateTime, nullable=True)
     follow_up_date = Column(DateTime, nullable=True)
+    second_appointment_date = Column(DateTime, nullable=True)
     trattativa_persa_reason = Column(String(100), nullable=True)
     lead_score = Column(Integer, default=0, nullable=True)
+    converted_at = Column(DateTime, nullable=True)
+    contract_date = Column(DateTime, nullable=True)  # Data firma contratto (può differire da converted_at)
+    aircall_contact_id = Column(String(50), nullable=True)  # ID contatto su AirCall
 
 def init_db():
     """

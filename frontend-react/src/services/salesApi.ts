@@ -1,6 +1,7 @@
-import { getServiceUrl } from '../utils/apiConfig';
+import { getServiceUrl, getApiGatewayUrl } from '../utils/apiConfig';
 
 const SALES_SERVICE_URL = getServiceUrl('sales');
+const MCP_SERVICE_URL   = getApiGatewayUrl();
 
 const getAuthToken = (): string | null => {
   return localStorage.getItem('auth_token');
@@ -138,8 +139,12 @@ export interface Lead {
   setter_id?: string;
   appointment_date?: string;
   follow_up_date?: string;
+  second_appointment_date?: string;
   trattativa_persa_reason?: string;
   lead_score?: number;
+  converted_at?: string;
+  contract_date?: string;       // Data firma contratto
+  aircall_contact_id?: string;  // ID contatto su AirCall
 }
 
 export interface LeadCreate {
@@ -192,8 +197,27 @@ export interface LeadUpdatePayload {
   setter_id?: string | null;
   appointment_date?: string | null;
   follow_up_date?: string | null;
+  second_appointment_date?: string | null;
   trattativa_persa_reason?: string | null;
   lead_score?: number | null;
+  converted_at?: string | null;
+  contract_date?: string | null;      // Data firma contratto
+  aircall_contact_id?: string | null; // ID contatto AirCall
+}
+
+export interface AircallCall {
+  id: number;
+  direction: 'inbound' | 'outbound';
+  status: 'done' | 'missed' | 'answered' | 'voicemail' | string;
+  duration: number;
+  started_at?: number;
+  ended_at?: number;
+  recording?: string;
+  voicemail?: string;
+  contact?: { id: number; name?: string; phone_number?: string };
+  user?: { id: number; name?: string; email?: string };
+  number?: { id: number; name?: string; digits?: string };
+  comments?: Array<{ id: number; content: string; author?: { name: string } }>;
 }
 
 export const salesApi = {
@@ -225,6 +249,10 @@ export const salesApi = {
       method: 'POST',
       body: JSON.stringify(data),
     });
+  },
+
+  getLead: async (id: string): Promise<Lead> => {
+    return authenticatedFetch(`${SALES_SERVICE_URL}/api/leads/${id}`);
   },
 
   updateLead: async (id: string, data: LeadUpdatePayload): Promise<Lead> => {
@@ -352,5 +380,67 @@ export const salesApi = {
   // --- V2: PIPELINE USERS ---
   getPipelineUsers: async (): Promise<PipelineUser[]> => {
     return authenticatedFetch(`${SALES_SERVICE_URL}/api/pipeline/users`);
+  },
+
+  // --- AIRCALL ---
+
+  /** Sincronizza un singolo lead come contatto AirCall. */
+  pushLeadToAircall: async (leadId: string): Promise<{
+    success: boolean;
+    aircall_contact_id: string;
+    action: 'created' | 'linked' | 'updated';
+    name: string;
+    message: string;
+  }> => {
+    return authenticatedFetch(`${MCP_SERVICE_URL}/api/mcp/aircall/push-lead`, {
+      method: 'POST',
+      body: JSON.stringify({ lead_id: leadId }),
+    });
+  },
+
+  /** Sincronizza più lead (o tutti gli attivi) su AirCall. */
+  bulkPushToAircall: async (leadIds?: string[]): Promise<{
+    synced: number;
+    failed: number;
+    total: number;
+    results: Array<{ lead_id: string; name?: string; aircall_contact_id?: string; action?: string; error?: string }>;
+  }> => {
+    return authenticatedFetch(`${MCP_SERVICE_URL}/api/mcp/aircall/bulk-push`, {
+      method: 'POST',
+      body: JSON.stringify({ lead_ids: leadIds ?? [] }),
+    });
+  },
+
+  /** Recupera le chiamate AirCall di un lead sincronizzato. */
+  getLeadAircallCalls: async (leadId: string): Promise<{
+    calls: AircallCall[];
+    aircall_contact_id?: string;
+    message?: string;
+  }> => {
+    return authenticatedFetch(`${MCP_SERVICE_URL}/api/mcp/aircall/calls/${leadId}`);
+  },
+
+  dialLead: async (leadId: string): Promise<{
+    success: boolean;
+    phone: string;
+    aircall_user_id: string;
+    lead_name: string;
+  }> => {
+    return authenticatedFetch(`${MCP_SERVICE_URL}/api/mcp/aircall/dial`, {
+      method: 'POST',
+      body: JSON.stringify({ lead_id: leadId }),
+    });
+  },
+
+  reconcileAircall: async (): Promise<{
+    matched: number;
+    updated_aircall_info: number;
+    skipped_already_linked: number;
+    message: string;
+  }> => {
+    return authenticatedFetch(`${MCP_SERVICE_URL}/api/mcp/aircall/reconcile`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
   },
 };

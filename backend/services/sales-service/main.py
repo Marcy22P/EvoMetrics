@@ -2,7 +2,7 @@ from fastapi import FastAPI, Depends, HTTPException, Request, Body, BackgroundTa
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import text
-from database import SessionLocal, init_db, Lead as LeadModel, PipelineStage as PipelineStageModel, LeadTag as LeadTagModel, DATABASE_URL, IS_REAL_PRODUCTION
+from database import SessionLocal, init_db, Lead as LeadModel, PipelineStage as PipelineStageModel, LeadTag as LeadTagModel, DATABASE_URL, IS_REAL_PRODUCTION, engine as _db_engine, Base as _db_Base
 from models import Lead, LeadCreate, LeadUpdate, PipelineStage, PipelineStageCreate, PipelineStageUpdate, LeadTag, LeadTagCreate, LeadTagUpdate
 import uuid
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,6 +13,85 @@ from datetime import timedelta
 import json
 import csv
 import io
+
+
+def _auto_sync_lead_to_aircall(lead_id: str) -> None:
+    """
+    Background task (sync): crea il contatto AirCall per un lead appena creato.
+    Usa SQLAlchemy + httpx.Client direttamente — nessuna dipendenza da token intermedi.
+    """
+    import httpx as _httpx
+    import base64 as _b64
+
+    api_key = os.environ.get("AIRCALL_API", "")
+    api_id  = os.environ.get("AIRCALL_API_ID", "")
+    if not api_key or not api_id:
+        print(f"⚠️ AirCall auto-sync: AIRCALL_API o AIRCALL_API_ID non configurati — skip lead {lead_id[:8]}")
+        return
+
+    AIRCALL_BASE = "https://api.aircall.io/v1"
+    encoded  = _b64.b64encode(f"{api_id}:{api_key}".encode()).decode()
+    ac_headers = {
+        "Authorization": f"Basic {encoded}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+
+    db = SessionLocal()
+    try:
+        lead = db.query(LeadModel).filter(LeadModel.id == lead_id).first()
+        if not lead:
+            print(f"⚠️ AirCall auto-sync: lead {lead_id[:8]} non trovato nel DB")
+            return
+        if getattr(lead, "aircall_contact_id", None):
+            print(f"ℹ️ AirCall auto-sync: lead {lead_id[:8]} già sincronizzato ({lead.aircall_contact_id})")
+            return
+
+        fn    = (lead.first_name or "").strip()
+        ln    = (lead.last_name  or "").strip()
+        nome  = f"{fn} {ln}".strip() or lead.azienda or lead.email or ""
+        phone = (lead.phone or "").strip()
+        email = (lead.email or "").strip()
+        info  = (
+            f"EvoMetrics-ID:{lead.id}\n"
+            f"Azienda: {lead.azienda or 'N/D'} | Stage: {lead.stage}"
+        )
+        body: dict = {
+            "first_name": fn or (nome.split()[0] if nome else "Lead"),
+            "last_name":  ln or (" ".join(nome.split()[1:]) if len(nome.split()) > 1 else ""),
+            "information": info,
+        }
+        if phone:
+            body["phone_numbers"] = [{"label": "Work", "value": phone}]
+        if email:
+            body["emails"] = [{"label": "Work", "value": email}]
+
+        print(f"🔄 AirCall auto-sync: creo contatto per lead {lead_id[:8]} ({nome})")
+        with _httpx.Client(timeout=12.0) as c:
+            r = c.post(f"{AIRCALL_BASE}/contacts", headers=ac_headers, json=body)
+
+        if r.status_code in (200, 201):
+            contact    = r.json().get("contact", {})
+            aircall_id = str(contact.get("id", ""))
+            if aircall_id:
+                db.query(LeadModel).filter(LeadModel.id == lead_id).update(
+                    {"aircall_contact_id": aircall_id}
+                )
+                db.commit()
+                print(f"✅ AirCall auto-sync: contatto creato per lead {lead_id[:8]} → AC ID {aircall_id}")
+            else:
+                print(f"⚠️ AirCall auto-sync: risposta senza contact.id: {r.text[:300]}")
+        elif r.status_code == 401:
+            print(f"❌ AirCall auto-sync: 401 Unauthorized — verifica AIRCALL_API_ID e AIRCALL_API nel .env e riavvia il server")
+        else:
+            print(f"⚠️ AirCall auto-sync: errore {r.status_code}: {r.text[:300]}")
+
+    except Exception as e:
+        import traceback
+        print(f"❌ AirCall auto-sync: eccezione per lead {lead_id[:8]}: {e}")
+        traceback.print_exc()
+    finally:
+        db.close()
 
 app = FastAPI(
     title="Sales Service",
@@ -37,8 +116,11 @@ def _run_db_migrations() -> None:
     Esegue le migrazioni schema usando una connessione diretta dall'engine
     (NON attraverso la Session ORM) per evitare UnboundExecutionError con
     SQLAlchemy 1.4 + Python 3.14 durante operazioni DDL.
+    engine e Base sono importati al top-level del modulo (non qui) per evitare
+    che sys.modules['database'] punti al modulo sbagliato durante le request.
     """
-    from database import Base, engine
+    engine = _db_engine
+    Base = _db_Base
     from sqlalchemy import text
 
     def get_columns(conn, table: str):
@@ -158,11 +240,15 @@ def _run_db_migrations() -> None:
             ('obiettivo_cliente',      'VARCHAR(50)'),
             ('pacchetto_consigliato',  'VARCHAR(50)'),
             ('budget_indicativo',      'VARCHAR(50)'),
-            ('setter_id',              'VARCHAR(50)'),
-            ('appointment_date',       'TIMESTAMP'),
-            ('follow_up_date',         'TIMESTAMP'),
-            ('trattativa_persa_reason','VARCHAR(100)'),
-            ('lead_score',             'INTEGER DEFAULT 0'),
+            ('setter_id',                  'VARCHAR(50)'),
+            ('appointment_date',           'TIMESTAMP'),
+            ('follow_up_date',             'TIMESTAMP'),
+            ('second_appointment_date',    'TIMESTAMP'),
+            ('trattativa_persa_reason',    'VARCHAR(100)'),
+            ('lead_score',                 'INTEGER DEFAULT 0'),
+            ('converted_at',               'TIMESTAMP'),
+            ('contract_date',              'TIMESTAMP'),
+            ('aircall_contact_id',         'VARCHAR(50)'),
         ]:
             if col not in columns:
                 add_col(conn, col, defn)
@@ -503,6 +589,9 @@ async def clickfunnels_webhook(request: Request, background_tasks: BackgroundTas
         
         # Crea workflow per stage change (se ci sono workflow configurati per lo stage)
         background_tasks.add_task(create_workflow_tasks_for_stage_change, new_lead.id, initial_stage, None)
+
+        # Sync automatico su AirCall
+        background_tasks.add_task(_auto_sync_lead_to_aircall, new_lead.id)
         
         return {"status": "created", "id": new_lead.id, "stage": initial_stage}
 
@@ -576,112 +665,157 @@ def reorder_stages(order: List[int] = Body(...), db: Session = Depends(get_db)):
 
 # --- API CRUD LEADS ---
 
+def _build_lead_dict(lead) -> dict:
+    """Costruisce il dict base di un lead (senza tag/utente)."""
+    return {
+        "id": lead.id,
+        "email": lead.email,
+        "first_name": lead.first_name,
+        "last_name": lead.last_name,
+        "phone": lead.phone,
+        "azienda": lead.azienda,
+        "stage": lead.stage,
+        "source": lead.source,
+        "clickfunnels_data": lead.clickfunnels_data,
+        "notes": lead.notes,
+        "response_status": lead.response_status,
+        "lead_tag_id": lead.lead_tag_id,
+        "structured_notes": lead.structured_notes or [],
+        "deal_value": getattr(lead, 'deal_value', None),
+        "deal_currency": getattr(lead, 'deal_currency', 'EUR'),
+        "deal_services": getattr(lead, 'deal_services', None),
+        "linked_preventivo_id": getattr(lead, 'linked_preventivo_id', None),
+        "linked_contratto_id": getattr(lead, 'linked_contratto_id', None),
+        "source_channel": getattr(lead, 'source_channel', None),
+        "assigned_to_user_id": getattr(lead, 'assigned_to_user_id', None),
+        "assigned_to_user": None,
+        "created_at": lead.created_at,
+        "updated_at": lead.updated_at,
+        "lead_tag": None,
+        "stage_entered_at": getattr(lead, 'stage_entered_at', None),
+        "first_contact_at": getattr(lead, 'first_contact_at', None),
+        "first_appointment_at": getattr(lead, 'first_appointment_at', None),
+        "last_activity_at": getattr(lead, 'last_activity_at', None),
+        "no_show_count": getattr(lead, 'no_show_count', 0) or 0,
+        "follow_up_count": getattr(lead, 'follow_up_count', 0) or 0,
+        "consapevolezza": getattr(lead, 'consapevolezza', None),
+        "obiettivo_cliente": getattr(lead, 'obiettivo_cliente', None),
+        "pacchetto_consigliato": getattr(lead, 'pacchetto_consigliato', None),
+        "budget_indicativo": getattr(lead, 'budget_indicativo', None),
+        "setter_id": getattr(lead, 'setter_id', None),
+        "appointment_date": getattr(lead, 'appointment_date', None),
+        "follow_up_date": getattr(lead, 'follow_up_date', None),
+        "second_appointment_date": getattr(lead, 'second_appointment_date', None),
+        "trattativa_persa_reason": getattr(lead, 'trattativa_persa_reason', None),
+        "lead_score": getattr(lead, 'lead_score', 0) or 0,
+        "converted_at": getattr(lead, 'converted_at', None),
+        "contract_date": getattr(lead, 'contract_date', None),
+        "aircall_contact_id": getattr(lead, 'aircall_contact_id', None),
+    }
+
+
+def _serialize_lead(lead, db, tags_map=None, users_map=None) -> dict:
+    """Serializza un lead ORM in dict con tag e utente assegnato.
+
+    Se tags_map/users_map sono forniti (batch pre-fetch), li usa senza query aggiuntive.
+    Altrimenti esegue query individuali (single-lead fallback).
+    """
+    lead_dict = _build_lead_dict(lead)
+
+    if lead.lead_tag_id:
+        if tags_map is not None:
+            lead_dict["lead_tag"] = tags_map.get(lead.lead_tag_id)
+        elif db is not None:
+            tag = db.query(LeadTagModel).filter(LeadTagModel.id == lead.lead_tag_id).first()
+            if tag:
+                lead_dict["lead_tag"] = {
+                    "id": tag.id, "label": tag.label, "color": tag.color,
+                    "hex_color": getattr(tag, 'hex_color', None),
+                    "index": tag.index, "is_system": tag.is_system,
+                }
+
+    assigned_uid = getattr(lead, 'assigned_to_user_id', None)
+    if assigned_uid:
+        if users_map is not None:
+            lead_dict["assigned_to_user"] = users_map.get(assigned_uid)
+        elif db is not None:
+            try:
+                user_row = db.execute(
+                    text("SELECT id, username, nome, cognome FROM users WHERE id = :uid"),
+                    {"uid": assigned_uid}
+                ).fetchone()
+                if user_row:
+                    lead_dict["assigned_to_user"] = {
+                        "id": str(user_row[0]), "username": user_row[1],
+                        "nome": user_row[2], "cognome": user_row[3],
+                    }
+            except Exception:
+                pass
+
+    return lead_dict
+
+
 @app.get("/api/leads")
 def get_leads(stage: str = None, db: Session = Depends(get_db)):
     query = db.query(LeadModel)
     if stage:
         query = query.filter(LeadModel.stage == stage)
     leads = query.order_by(LeadModel.created_at.desc()).all()
-    
-    # Log per debugging (solo se ci sono problemi)
-    total_count = db.query(LeadModel).count()
-    if total_count == 0:
-        print("⚠️ ATTENZIONE: Nessun lead trovato nel database")
-    elif stage:
-        print(f"📊 Recuperati {len(leads)} lead per stage '{stage}' (totale nel DB: {total_count})")
-    
-    # Popola tag e utente assegnato per ogni lead
-    result = []
-    # Cache utenti per evitare N+1 queries
-    user_cache = {}
-    
-    for lead in leads:
-        lead_dict = {
-            "id": lead.id,
-            "email": lead.email,
-            "first_name": lead.first_name,
-            "last_name": lead.last_name,
-            "phone": lead.phone,
-            "azienda": lead.azienda,
-            "stage": lead.stage,
-            "source": lead.source,
-            "clickfunnels_data": lead.clickfunnels_data,
-            "notes": lead.notes,
-            "response_status": lead.response_status,
-            "lead_tag_id": lead.lead_tag_id,
-            "structured_notes": lead.structured_notes or [],
-            "deal_value": getattr(lead, 'deal_value', None),
-            "deal_currency": getattr(lead, 'deal_currency', 'EUR'),
-            "deal_services": getattr(lead, 'deal_services', None),
-            "linked_preventivo_id": getattr(lead, 'linked_preventivo_id', None),
-            "linked_contratto_id": getattr(lead, 'linked_contratto_id', None),
-            "source_channel": getattr(lead, 'source_channel', None),
-            "assigned_to_user_id": getattr(lead, 'assigned_to_user_id', None),
-            "assigned_to_user": None,
-            "created_at": lead.created_at,
-            "updated_at": lead.updated_at,
-            "lead_tag": None,
-            # V3: campi operativi sales
-            "stage_entered_at": getattr(lead, 'stage_entered_at', None),
-            "first_contact_at": getattr(lead, 'first_contact_at', None),
-            "first_appointment_at": getattr(lead, 'first_appointment_at', None),
-            "last_activity_at": getattr(lead, 'last_activity_at', None),
-            "no_show_count": getattr(lead, 'no_show_count', 0) or 0,
-            "follow_up_count": getattr(lead, 'follow_up_count', 0) or 0,
-            "consapevolezza": getattr(lead, 'consapevolezza', None),
-            "obiettivo_cliente": getattr(lead, 'obiettivo_cliente', None),
-            "pacchetto_consigliato": getattr(lead, 'pacchetto_consigliato', None),
-            "budget_indicativo": getattr(lead, 'budget_indicativo', None),
-            "setter_id": getattr(lead, 'setter_id', None),
-            "appointment_date": getattr(lead, 'appointment_date', None),
-            "follow_up_date": getattr(lead, 'follow_up_date', None),
-            "trattativa_persa_reason": getattr(lead, 'trattativa_persa_reason', None),
-            "lead_score": getattr(lead, 'lead_score', 0) or 0,
+
+    if not leads:
+        return []
+
+    # ── Batch load tags (1 query) ────────────────────────────────────────────
+    tag_ids = {l.lead_tag_id for l in leads if l.lead_tag_id}
+    tags_map = {}
+    if tag_ids:
+        tags = db.query(LeadTagModel).filter(LeadTagModel.id.in_(list(tag_ids))).all()
+        tags_map = {
+            t.id: {
+                "id": t.id, "label": t.label, "color": t.color,
+                "hex_color": getattr(t, 'hex_color', None),
+                "index": t.index, "is_system": t.is_system,
+            }
+            for t in tags
         }
-        
-        # Recupera il tag se presente
-        if lead.lead_tag_id:
-            tag = db.query(LeadTagModel).filter(LeadTagModel.id == lead.lead_tag_id).first()
-            if tag:
-                lead_dict["lead_tag"] = {
-                    "id": tag.id,
-                    "label": tag.label,
-                    "color": tag.color,
-                    "hex_color": getattr(tag, 'hex_color', None),
-                    "index": tag.index,
-                    "is_system": tag.is_system
-                }
-        
-        # Recupera utente assegnato se presente
-        assigned_uid = getattr(lead, 'assigned_to_user_id', None)
-        if assigned_uid:
-            if assigned_uid not in user_cache:
-                try:
-                    user_row = db.execute(
-                        text("SELECT id, username, nome, cognome FROM users WHERE id = :uid"),
-                        {"uid": assigned_uid}
-                    ).fetchone()
-                    if user_row:
-                        user_cache[assigned_uid] = {
-                            "id": str(user_row[0]),
-                            "username": user_row[1],
-                            "nome": user_row[2],
-                            "cognome": user_row[3],
-                        }
-                    else:
-                        user_cache[assigned_uid] = None
-                except Exception:
-                    user_cache[assigned_uid] = None
-            lead_dict["assigned_to_user"] = user_cache.get(assigned_uid)
-        
-        result.append(lead_dict)
-    
-    return result
+
+    # ── Batch load users (1 query) ───────────────────────────────────────────
+    user_ids = list({
+        getattr(l, 'assigned_to_user_id', None)
+        for l in leads
+        if getattr(l, 'assigned_to_user_id', None)
+    })
+    users_map = {}
+    if user_ids:
+        try:
+            user_rows = db.execute(
+                text("SELECT id, username, nome, cognome FROM users WHERE id = ANY(:ids)"),
+                {"ids": user_ids}
+            ).fetchall()
+            users_map = {
+                str(r[0]): {"id": str(r[0]), "username": r[1], "nome": r[2], "cognome": r[3]}
+                for r in user_rows
+            }
+        except Exception:
+            pass
+
+    return [_serialize_lead(lead, db=None, tags_map=tags_map, users_map=users_map) for lead in leads]
+
+
+@app.get("/api/leads/{lead_id}")
+def get_lead(lead_id: str, db: Session = Depends(get_db)):
+    """Recupera un singolo lead per ID con tutti i dati relazionali."""
+    lead = db.query(LeadModel).filter(LeadModel.id == lead_id).first()
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    return _serialize_lead(lead, db)
+
 
 @app.post("/api/leads", response_model=Lead)
-def create_lead(lead_in: LeadCreate, db: Session = Depends(get_db)):
+def create_lead(lead_in: LeadCreate, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     """Crea un nuovo lead manualmente."""
-    existing = db.query(LeadModel).filter(LeadModel.email == lead_in.email).first()
+    normalized_email = lead_in.email.strip().lower()
+    existing = db.query(LeadModel).filter(LeadModel.email == normalized_email).first()
     if existing:
         raise HTTPException(status_code=400, detail="Un lead con questa email esiste già")
     
@@ -697,7 +831,7 @@ def create_lead(lead_in: LeadCreate, db: Session = Depends(get_db)):
 
     new_lead = LeadModel(
         id=str(uuid.uuid4()),
-        email=lead_in.email,
+        email=normalized_email,
         first_name=lead_in.first_name,
         last_name=lead_in.last_name,
         phone=lead_in.phone,
@@ -730,6 +864,10 @@ def create_lead(lead_in: LeadCreate, db: Session = Depends(get_db)):
     
     total_leads = db.query(LeadModel).count()
     print(f"✅ Lead creato manualmente: {lead_in.email} (ID: {new_lead.id}, Stage: {stage}, Totale lead nel DB: {total_leads})")
+
+    # Sync automatico su AirCall
+    background_tasks.add_task(_auto_sync_lead_to_aircall, new_lead.id)
+
     return new_lead
 
 def create_workflow_tasks_for_stage_change(lead_id: str, new_stage: str, previous_stage: str):
@@ -874,7 +1012,7 @@ def _calculate_lead_score(lead, update_data: dict) -> int:
     return max(0, min(100, score))
 
 
-@app.put("/api/leads/{lead_id}", response_model=Lead)
+@app.put("/api/leads/{lead_id}")
 def update_lead(lead_id: str, lead_in: LeadUpdate, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     """
     Aggiorna un lead. Se lo stage cambia, triggera automaticamente i workflow configurati.
@@ -886,36 +1024,53 @@ def update_lead(lead_id: str, lead_in: LeadUpdate, background_tasks: BackgroundT
     previous_stage = lead.stage
     stage_changed = False
 
-    update_data = lead_in.dict(exclude_unset=True)
+    # Tutti i campi inviati dal frontend (exclude_unset=True esclude quelli mai mandati)
+    raw_update = lead_in.dict(exclude_unset=True)
 
-    # AUTO-LOGIC: stage change → aggiorna stage_entered_at
-    if 'stage' in update_data and update_data['stage'] != previous_stage:
+    # Campi che non possono MAI essere impostati a null
+    never_null = {'id', 'email', 'source', 'created_at', 'stage'}
+
+    # ── AUTO-LOGIC ────────────────────────────────────────────────────────────
+
+    # Stage change → aggiorna stage_entered_at
+    if 'stage' in raw_update and raw_update['stage'] and raw_update['stage'] != previous_stage:
         stage_changed = True
-        update_data['stage_entered_at'] = datetime.datetime.utcnow()
-        print(f"📊 Stage change: {previous_stage} → {update_data['stage']} per lead {lead_id[:8]}")
+        raw_update['stage_entered_at'] = datetime.datetime.utcnow()
+        print(f"📊 Stage change: {previous_stage} → {raw_update['stage']} per lead {lead_id[:8]}")
 
-    # AUTO-LOGIC: aggiorna sempre last_activity_at
-    update_data['last_activity_at'] = datetime.datetime.utcnow()
+    # Aggiorna sempre last_activity_at
+    raw_update['last_activity_at'] = datetime.datetime.utcnow()
 
-    # AUTO-LOGIC: no_show incrementa il contatore
-    if update_data.get('response_status') == 'no_show':
-        current_count = getattr(lead, 'no_show_count', 0) or 0
-        update_data['no_show_count'] = current_count + 1
+    # no_show incrementa il contatore
+    if raw_update.get('response_status') == 'no_show':
+        raw_update['no_show_count'] = (getattr(lead, 'no_show_count', 0) or 0) + 1
 
-    # AUTO-LOGIC: ricalcola lead_score se cambiano i fattori rilevanti
+    # Tracciamento primo contatto (optin → altro stage)
+    if stage_changed and previous_stage == 'optin' and not getattr(lead, 'first_contact_at', None):
+        raw_update['first_contact_at'] = datetime.datetime.utcnow()
+
+    # Tracciamento conversione (qualsiasi stage → cliente)
+    if stage_changed and raw_update.get('stage') == 'cliente' and not getattr(lead, 'converted_at', None):
+        raw_update['converted_at'] = datetime.datetime.utcnow()
+
+    # Ricalcola lead_score se cambiano i fattori rilevanti
     score_fields = {'source_channel', 'consapevolezza', 'budget_indicativo', 'no_show_count'}
-    if score_fields & set(update_data.keys()):
-        update_data['lead_score'] = _calculate_lead_score(lead, update_data)
+    if score_fields & set(raw_update.keys()):
+        non_null_for_score = {k: v for k, v in raw_update.items() if v is not None}
+        raw_update['lead_score'] = _calculate_lead_score(lead, non_null_for_score)
 
-    for key, value in update_data.items():
-        if value is not None or key in ('stage_entered_at', 'first_contact_at',
-                                         'first_appointment_at', 'last_activity_at',
-                                         'appointment_date', 'follow_up_date',
-                                         'trattativa_persa_reason'):
-            if key == "deal_services" and isinstance(value, list):
-                value = [{"name": s.get("name", s.name) if hasattr(s, "name") else s.get("name", ""), "price": s.get("price", 0)} for s in value]
-            if hasattr(lead, key):
-                setattr(lead, key, value)
+    # ── Applica TUTTI i campi inviati, inclusi quelli null (= svuotare il campo) ─
+    for key, value in raw_update.items():
+        # Non azzerare mai i campi critici
+        if key in never_null and value is None:
+            continue
+        if key == "deal_services" and isinstance(value, list):
+            value = [
+                {"name": s.get("name", getattr(s, "name", "")), "price": s.get("price", getattr(s, "price", 0))}
+                for s in value
+            ]
+        if hasattr(lead, key):
+            setattr(lead, key, value)
 
     lead.updated_at = datetime.datetime.utcnow()
 
@@ -926,7 +1081,7 @@ def update_lead(lead_id: str, lead_in: LeadUpdate, background_tasks: BackgroundT
         print(f"🚀 Trigger workflow per lead {lead_id}: stage '{previous_stage}' -> '{lead.stage}'")
         background_tasks.add_task(create_workflow_tasks_for_stage_change, lead_id, lead.stage, previous_stage)
 
-    return lead
+    return _serialize_lead(lead, db)
 
 @app.delete("/api/leads/{lead_id}")
 def delete_lead(lead_id: str, db: Session = Depends(get_db)):
@@ -937,6 +1092,35 @@ def delete_lead(lead_id: str, db: Session = Depends(get_db)):
     db.delete(lead)
     db.commit()
     return {"status": "deleted"}
+
+
+@app.post("/api/admin/deduplicate-leads")
+def deduplicate_leads(db: Session = Depends(get_db)):
+    """
+    Deduplica i lead per email (case-insensitive).
+    Mantiene il lead più recente. Eseguire una volta sola.
+    """
+    dupes = db.execute(text("""
+        SELECT lower(email) as email_lower, array_agg(id::text ORDER BY created_at DESC) as ids
+        FROM leads
+        GROUP BY lower(email)
+        HAVING count(*) > 1
+    """)).fetchall()
+
+    removed = 0
+    for row in dupes:
+        ids = row[1]
+        delete_ids = ids[1:]
+        for del_id in delete_ids:
+            db.query(LeadModel).filter(LeadModel.id == del_id).delete()
+            removed += 1
+
+    # Normalizza anche le email esistenti a lowercase
+    db.execute(text("UPDATE leads SET email = lower(trim(email)) WHERE email != lower(trim(email))"))
+
+    db.commit()
+    return {"status": "done", "duplicates_removed": removed}
+
 
 # --- NOTE STRUTTURATE ---
 @app.post("/api/leads/{lead_id}/notes")

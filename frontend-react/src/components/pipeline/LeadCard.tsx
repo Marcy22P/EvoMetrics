@@ -74,7 +74,7 @@ const LeadCard: React.FC<LeadCardProps> = ({
   const nome = [lead.first_name, lead.last_name].filter(Boolean).join(' ') || lead.email;
 
   const dealVal = lead.deal_value
-    ? `€${Math.round(lead.deal_value > 10000 ? lead.deal_value / 100 : lead.deal_value).toLocaleString('it-IT')}`
+    ? `€${Math.round(lead.deal_value / 100).toLocaleString('it-IT')}`
     : null;
 
   const dueDate = lead.appointment_date || lead.follow_up_date;

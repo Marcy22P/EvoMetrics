@@ -204,6 +204,52 @@ SALES_TOOLS: List[Dict] = [
             "required": ["lead_id", "note_content"],
         },
     },
+    # ── AirCall tools ────────────────────────────────────────────────────────────
+    {
+        "name": "aircall_create_contact",
+        "description": "Crea o aggiorna un contatto in AirCall a partire da un lead della pipeline. Salva l'aircall_contact_id nel lead per il collegamento automatico delle chiamate future. Da usare prima di chiamare un lead.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "lead_id": {"type": "string", "description": "ID del lead da sincronizzare in AirCall"},
+            },
+            "required": ["lead_id"],
+        },
+    },
+    {
+        "name": "aircall_get_contact_calls",
+        "description": "Recupera le chiamate AirCall di un lead già sincronizzato (richiede aircall_contact_id). Mostra data, durata, direzione, status e se esiste una registrazione.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "lead_id": {"type": "string", "description": "ID del lead (deve avere aircall_contact_id)"},
+                "limit": {"type": "integer", "description": "Numero massimo di chiamate (default 10)"},
+            },
+            "required": ["lead_id"],
+        },
+    },
+    {
+        "name": "aircall_get_call_details",
+        "description": "Dettaglio completo di una specifica chiamata AirCall: URL registrazione, durata, commenti, agente che ha chiamato.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "call_id": {"type": "string", "description": "ID numerico della chiamata AirCall"},
+            },
+            "required": ["call_id"],
+        },
+    },
+    {
+        "name": "aircall_match_lead_to_calls",
+        "description": "Cerca in AirCall le chiamate correlate a un lead (per numero di telefono o contatto collegato). Utile per trovare registrazioni di chiamate passate.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "lead_id": {"type": "string", "description": "ID del lead"},
+            },
+            "required": ["lead_id"],
+        },
+    },
 ]
 
 OPS_TOOLS: List[Dict] = [
@@ -254,6 +300,57 @@ OPS_TOOLS: List[Dict] = [
         "name": "get_workflow_templates",
         "description": "Lista dei template workflow disponibili (onboarding, sviluppo ecommerce, campagne ADV, ecc.).",
         "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "update_lead_assignee",
+        "description": "Assegna o riassegna un'opportunità di vendita a un membro del team. Prima usa get_users_list per ottenere gli ID utente disponibili.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "lead_id": {"type": "string", "description": "ID del lead (anche parziale)"},
+                "user_id": {"type": "string", "description": "ID dell'utente a cui assegnare il lead"},
+                "note": {"type": "string", "description": "Nota opzionale sulla riassegnazione"},
+            },
+            "required": ["lead_id", "user_id"],
+        },
+    },
+    {
+        "name": "delete_lead",
+        "description": "Elimina definitivamente un lead dalla pipeline. Usare SOLO su richiesta esplicita dell'utente. Operazione irreversibile.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "lead_id": {"type": "string", "description": "ID del lead da eliminare"},
+                "confirm": {"type": "boolean", "description": "Deve essere true per confermare l'eliminazione"},
+            },
+            "required": ["lead_id", "confirm"],
+        },
+    },
+    {
+        "name": "send_slack_message",
+        "description": "Invia un messaggio in un canale Slack o in DM. Usa per notifiche urgenti su lead, follow-up o aggiornamenti pipeline.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "channel": {"type": "string", "description": "Nome canale (es. #sales, #team) o username (es. @marcello)"},
+                "message": {"type": "string", "description": "Testo del messaggio"},
+            },
+            "required": ["channel", "message"],
+        },
+    },
+    {
+        "name": "create_clickup_task",
+        "description": "Crea un task in ClickUp per un follow-up o azione commerciale da tracciare.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "description": "Titolo del task"},
+                "description": {"type": "string", "description": "Dettagli del task"},
+                "due_date": {"type": "string", "description": "Data scadenza ISO (es. 2026-03-20)"},
+                "assignee_name": {"type": "string", "description": "Nome del membro team"},
+            },
+            "required": ["title"],
+        },
     },
 ]
 
@@ -343,9 +440,14 @@ AGENT_CONFIGS: Dict[str, Dict] = {
         "description": "Assistente operativo completo — accede a tutta la piattaforma",
         "tools": ALL_TOOLS,
         "system_prompt": """Sei EvoAgent, l'assistente AI operativo di Evoluzione Imprese.
-Hai accesso all'intera piattaforma: pipeline, task, clienti, pagamenti, workflow.
+Hai accesso all'intera piattaforma: pipeline, task, clienti, pagamenti, workflow, AirCall, Fireflies.
 Sei preciso, diretto e operativo. Usa i tool per recuperare dati reali.
-Nel dubbio su quale agente usare, gestisci tu direttamente.""",
+Nel dubbio su quale agente usare, gestisci tu direttamente.
+
+Comportamento proattivo:
+- Se hai CONTESTO ATTIVO (es. lead aperto), usalo immediatamente
+- Se ti chiedono di una persona per nome, cercala con i tool — non chiedere l'ID
+- Agisci in autonomia: list_leads → ottieni ID → esegui operazione""",
     },
     "sales": {
         "id": "sales",
@@ -359,8 +461,15 @@ Il tuo dominio è la sales pipeline: lead, stage, deal value, fonti di acquisizi
 Fonti di dati disponibili:
 1. **EvoMetrics** (tool interni): pipeline, stage, preventivi, contratti
 2. **Fireflies** (se configurato): trascrizioni call di vendita e meeting
+3. **AirCall** (tool interni): contatti, chiamate, sincronizzazione
 
-Quando analizzi lead o trattative, combina entrambe le fonti:
+Comportamento proattivo:
+- Se hai già il CONTESTO ATTIVO con un lead, agisci subito senza chiedere ulteriori dati
+- Se ti chiedono di un lead per nome (es. "Sincronizza Beatrice su AirCall"), usa list_leads per trovarlo, poi agisci
+- Non chiedere mai l'ID a meno che non ci siano più lead con lo stesso nome
+- Per creare un contatto AirCall: trova il lead con list_leads → usa aircall_create_contact con l'ID trovato
+
+Quando analizzi lead o trattative, combina le fonti disponibili:
 - Stato pipeline → tool EvoMetrics
 - "Cosa è emerso nella call con X?" → cerca su Fireflies per nome/azienda
 - "Lead contattati di recente?" → Fireflies trascrizioni + pipeline EvoMetrics
@@ -409,6 +518,49 @@ _FIREFLIES_GQL_URL = "https://api.fireflies.ai/graphql"
 def _fireflies_token() -> Optional[str]:
     return os.environ.get("FIREFLIES_API_KEY")
 
+# ─── AirCall REST ─────────────────────────────────────────────────────────────
+
+_AIRCALL_BASE = "https://api.aircall.io/v1"
+
+def _aircall_auth_headers() -> Dict:
+    """Header Basic Auth per AirCall.
+    Supporta tre formati per AIRCALL_API:
+      - 'api_id:api_token'  → Basic Auth già combinato
+      - token singolo + AIRCALL_API_ID env var → Basic Auth
+      - token singolo senza ID → Bearer (fallback)
+    """
+    import base64
+    api_key = os.environ.get("AIRCALL_API", "")
+    if not api_key:
+        raise RuntimeError("AIRCALL_API non configurata nelle env var.")
+    if ":" in api_key:
+        encoded = base64.b64encode(api_key.encode()).decode()
+    else:
+        api_id = os.environ.get("AIRCALL_API_ID", "")
+        if api_id:
+            encoded = base64.b64encode(f"{api_id}:{api_key}".encode()).decode()
+        else:
+            return {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json", "Accept": "application/json"}
+    return {"Authorization": f"Basic {encoded}", "Content-Type": "application/json", "Accept": "application/json"}
+
+async def _aircall_get(path: str, params: Optional[Dict] = None) -> Dict:
+    async with httpx.AsyncClient(timeout=20.0) as c:
+        r = await c.get(f"{_AIRCALL_BASE}{path}", headers=_aircall_auth_headers(), params=params or {})
+        r.raise_for_status()
+        return r.json()
+
+async def _aircall_post(path: str, body: Dict) -> Dict:
+    async with httpx.AsyncClient(timeout=20.0) as c:
+        r = await c.post(f"{_AIRCALL_BASE}{path}", headers=_aircall_auth_headers(), json=body)
+        r.raise_for_status()
+        return r.json()
+
+async def _aircall_patch(path: str, body: Dict) -> Dict:
+    async with httpx.AsyncClient(timeout=20.0) as c:
+        r = await c.patch(f"{_AIRCALL_BASE}{path}", headers=_aircall_auth_headers(), json=body)
+        r.raise_for_status()
+        return r.json()
+
 # (MCP remoto Fireflies rimosso: https://api.fireflies.ai/mcp non esiste.
 #  Usiamo direttamente la GraphQL API di Fireflies via tool interni.)
 
@@ -443,6 +595,12 @@ class ToolExecutor:
             r = await c.put(f"{self.base_url}{path}", headers=self._headers, json=body)
             r.raise_for_status()
             return r.json()
+
+    async def _delete(self, path: str) -> Any:
+        async with httpx.AsyncClient(timeout=30.0) as c:
+            r = await c.delete(f"{self.base_url}{path}", headers=self._headers)
+            r.raise_for_status()
+            return r.json() if r.text else {}
 
     # ── Tool implementations ────────────────────────────────────────────────
 
@@ -1142,6 +1300,242 @@ class ToolExecutor:
         except Exception as e:
             return f"Errore match lead-trascrizioni: {e}"
 
+    # ─── AirCall tools ────────────────────────────────────────────────────────
+
+    async def aircall_create_contact(self, lead_id: str) -> str:
+        """Crea o aggiorna un contatto AirCall a partire da un lead della pipeline."""
+        try:
+            all_leads = await self._get("/api/leads")
+            lead = next(
+                (l for l in (all_leads if isinstance(all_leads, list) else [])
+                 if l.get("id", "").startswith(lead_id) or l.get("id") == lead_id),
+                None,
+            )
+            if not lead:
+                return f"Lead `{lead_id[:8]}` non trovato nella pipeline."
+
+            fn = (lead.get("first_name") or "").strip()
+            ln = (lead.get("last_name") or "").strip()
+            nome = f"{fn} {ln}".strip() or lead.get("azienda") or lead.get("email", "")
+            phone = (lead.get("phone") or "").strip()
+            email = (lead.get("email") or "").strip()
+            info  = (
+                f"Azienda: {lead.get('azienda') or 'N/D'} | "
+                f"Stage: {lead.get('stage')} | "
+                f"Fonte: {lead.get('source_channel') or 'N/D'} | "
+                f"Lead EvoMetrics ID: {lead['id'][:8]}"
+            )
+
+            existing_id = lead.get("aircall_contact_id")
+            if existing_id:
+                patch_body: Dict = {"information": info}
+                if phone:
+                    patch_body["phone_numbers"] = [{"label": "Work", "value": phone}]
+                resp = await _aircall_patch(f"/contacts/{existing_id}", patch_body)
+                c = resp.get("contact", {})
+                return (
+                    f"✅ Contatto AirCall aggiornato: **{nome}** (ID: {c.get('id', existing_id)})\n"
+                    f"Link: https://dashboard.aircall.io/contacts/{c.get('id', existing_id)}"
+                )
+
+            # Cerca contatto esistente per telefono o email
+            found_id: Optional[str] = None
+            for search_val in [v for v in [phone, email] if v]:
+                try:
+                    r = await _aircall_get("/contacts/search", {"term": search_val})
+                    hits = r.get("contacts", [])
+                    if hits:
+                        found_id = str(hits[0]["id"])
+                        break
+                except Exception:
+                    pass
+
+            if found_id:
+                await self._put(f"/api/leads/{lead['id']}", {"aircall_contact_id": found_id})
+                return (
+                    f"✅ Contatto AirCall già esistente collegato al lead: **{nome}** (ID: {found_id})\n"
+                    f"Link: https://dashboard.aircall.io/contacts/{found_id}"
+                )
+
+            # Crea nuovo contatto
+            body: Dict = {
+                "first_name": fn or nome.split()[0],
+                "last_name": ln or (" ".join(nome.split()[1:]) if len(nome.split()) > 1 else ""),
+                "information": info,
+            }
+            if phone:
+                body["phone_numbers"] = [{"label": "Work", "value": phone}]
+            if email:
+                body["emails"] = [{"label": "Work", "value": email}]
+
+            resp = await _aircall_post("/contacts", body)
+            c = resp.get("contact", {})
+            new_id = str(c.get("id", ""))
+            if new_id:
+                await self._put(f"/api/leads/{lead['id']}", {"aircall_contact_id": new_id})
+
+            return (
+                f"✅ Contatto AirCall creato: **{nome}** (ID: {new_id})\n"
+                f"- Telefono: {phone or 'N/D'}\n"
+                f"- Email: {email or 'N/D'}\n"
+                f"- Collegato al lead: `{lead['id'][:8]}`\n"
+                f"Link: https://dashboard.aircall.io/contacts/{new_id}"
+            )
+        except RuntimeError as e:
+            return f"AirCall non disponibile: {e}"
+        except Exception as e:
+            return f"Errore creazione contatto AirCall: {e}"
+
+    async def aircall_get_contact_calls(self, lead_id: str, limit: int = 10) -> str:
+        """Recupera le chiamate AirCall associate a un lead sincronizzato."""
+        try:
+            all_leads = await self._get("/api/leads")
+            lead = next(
+                (l for l in (all_leads if isinstance(all_leads, list) else [])
+                 if l.get("id", "").startswith(lead_id) or l.get("id") == lead_id),
+                None,
+            )
+            if not lead:
+                return f"Lead `{lead_id[:8]}` non trovato."
+
+            aircall_id = lead.get("aircall_contact_id")
+            if not aircall_id:
+                return (
+                    f"Lead **{lead.get('azienda') or lead.get('email')}** non ancora sincronizzato con AirCall.\n"
+                    f"Usa `aircall_create_contact` con lead_id=`{lead['id'][:8]}` per collegarlo."
+                )
+
+            r = await _aircall_get(f"/contacts/{aircall_id}/calls", {"per_page": limit, "order": "desc"})
+            calls = r.get("calls", [])
+
+            nome = f"{lead.get('first_name','') or ''} {lead.get('last_name','') or ''}".strip() or lead.get("azienda") or lead.get("email", "")
+            if not calls:
+                return f"Nessuna chiamata AirCall trovata per il contatto **{nome}** (ID: {aircall_id})."
+
+            lines = [f"**{len(calls)} chiamate AirCall per {nome}**\n"]
+            for c in calls:
+                started = c.get("started_at")
+                date_str = datetime.fromtimestamp(started).strftime("%d/%m/%Y %H:%M") if started else "N/D"
+                dur = int(c.get("duration") or 0)
+                dur_str = f"{dur // 60}m {dur % 60}s" if dur > 0 else "N/D"
+                rec = "🎙️ Sì" if c.get("recording") else "No"
+                agent = (c.get("user") or {}).get("name") or "N/D"
+                lines.append(
+                    f"- **{date_str}** | {c.get('direction','?')} | {dur_str} | "
+                    f"Status: {c.get('status','?')} | Recording: {rec} | Agente: {agent} | ID: `{c.get('id')}`"
+                )
+            lines.append("\nUsa `aircall_get_call_details` con l'ID per recording URL e commenti.")
+            return "\n".join(lines)
+        except RuntimeError as e:
+            return f"AirCall non disponibile: {e}"
+        except Exception as e:
+            return f"Errore recupero chiamate AirCall: {e}"
+
+    async def aircall_get_call_details(self, call_id: str) -> str:
+        """Recupera dettaglio completo di una chiamata AirCall."""
+        try:
+            r = await _aircall_get(f"/calls/{call_id}")
+            call = r.get("call", {})
+            if not call:
+                return f"Chiamata `{call_id}` non trovata in AirCall."
+
+            started = call.get("started_at")
+            date_str = datetime.fromtimestamp(started).strftime("%d/%m/%Y %H:%M") if started else "N/D"
+            dur = int(call.get("duration") or 0)
+            dur_str = f"{dur // 60}m {dur % 60}s" if dur > 0 else "N/D"
+            contact = call.get("contact") or {}
+            agent   = call.get("user") or {}
+            number  = call.get("number") or {}
+            comments = call.get("comments") or []
+            recording_url = call.get("recording") or ""
+            voicemail_url = call.get("voicemail") or ""
+
+            lines = [
+                f"## Chiamata AirCall #{call_id}",
+                f"**Data**: {date_str} | **Durata**: {dur_str}",
+                f"**Direzione**: {call.get('direction','?')} | **Status**: {call.get('status','?')}",
+                f"**Contatto**: {contact.get('name') or 'N/D'} (ID: {contact.get('id','N/D')})",
+                f"**Agente**: {agent.get('name') or 'N/D'}",
+                f"**Numero AirCall**: {number.get('name') or number.get('digits') or 'N/D'}",
+            ]
+            if recording_url:
+                lines.append(f"**Recording**: {recording_url}")
+            elif voicemail_url:
+                lines.append(f"**Voicemail**: {voicemail_url}")
+            else:
+                lines.append("**Recording**: Non disponibile")
+            if comments:
+                lines.append("\n**Note/Commenti**:")
+                for cm in comments:
+                    auth_name = (cm.get("author") or {}).get("name", "?")
+                    lines.append(f"  - {auth_name}: {cm.get('content','')}")
+            return "\n".join(lines)
+        except RuntimeError as e:
+            return f"AirCall non disponibile: {e}"
+        except Exception as e:
+            return f"Errore dettaglio chiamata AirCall: {e}"
+
+    async def aircall_match_lead_to_calls(self, lead_id: str) -> str:
+        """Cerca in AirCall le chiamate correlate a un lead (per telefono o contatto collegato)."""
+        try:
+            all_leads = await self._get("/api/leads")
+            lead = next(
+                (l for l in (all_leads if isinstance(all_leads, list) else [])
+                 if l.get("id", "").startswith(lead_id) or l.get("id") == lead_id),
+                None,
+            )
+            if not lead:
+                return f"Lead `{lead_id[:8]}` non trovato."
+
+            nome  = f"{lead.get('first_name','') or ''} {lead.get('last_name','') or ''}".strip() or lead.get("azienda") or lead.get("email", "")
+            phone = (lead.get("phone") or "").strip()
+
+            # Se il lead è già collegato ad AirCall, usa il metodo diretto
+            if lead.get("aircall_contact_id"):
+                return await self.aircall_get_contact_calls(lead_id)
+
+            if not phone:
+                return (
+                    f"Lead **{nome}** non ha numero di telefono e non è ancora sincronizzato con AirCall.\n"
+                    f"Usa `aircall_create_contact` per sincronizzarlo e poi ritorna su questo tool."
+                )
+
+            # Cerca per numero nelle chiamate recenti
+            clean_phone = phone.replace(" ", "").replace("-", "")
+            try:
+                r = await _aircall_get("/calls", {"per_page": 50, "order": "desc"})
+                calls_all = r.get("calls", [])
+                calls = [
+                    c for c in calls_all
+                    if (c.get("contact") or {}).get("phone_number", "").replace(" ", "").endswith(clean_phone[-8:])
+                ]
+            except Exception:
+                calls = []
+
+            if not calls:
+                return (
+                    f"Nessuna chiamata trovata per **{nome}** ({phone}).\n"
+                    f"Suggerimento: usa `aircall_create_contact` con lead_id=`{lead['id'][:8]}` "
+                    f"per sincronizzare il lead e tracciare le chiamate automaticamente."
+                )
+
+            lines = [f"**{len(calls)} chiamate trovate per {nome}** (tel: {phone})\n"]
+            for c in calls:
+                started = c.get("started_at")
+                date_str = datetime.fromtimestamp(started).strftime("%d/%m/%Y %H:%M") if started else "N/D"
+                dur = int(c.get("duration") or 0)
+                dur_str = f"{dur // 60}m {dur % 60}s" if dur > 0 else "N/D"
+                rec = "🎙️" if c.get("recording") else ""
+                lines.append(
+                    f"- **{date_str}** | {c.get('direction','?')} | {dur_str} {rec} | ID: `{c.get('id')}`"
+                )
+            lines.append("\nUsa `aircall_get_call_details` con l'ID per il dettaglio e il recording.")
+            return "\n".join(lines)
+        except RuntimeError as e:
+            return f"AirCall non disponibile: {e}"
+        except Exception as e:
+            return f"Errore match lead-chiamate AirCall: {e}"
+
     async def bulk_fetch_for_enrichment(self, limit: int = 20) -> str:
         try:
             # Fetch parallelo: trascrizioni Fireflies + lead pipeline
@@ -1232,6 +1626,79 @@ class ToolExecutor:
         except Exception as e:
             return f"Errore aggiunta nota al lead `{lead_id[:8]}`: {e}"
 
+    async def update_lead_assignee(self, lead_id: str, user_id: str, note: Optional[str] = None) -> str:
+        try:
+            body: Dict[str, Any] = {"assigned_to_user_id": user_id}
+            await self._put(f"/api/leads/{lead_id}", body)
+            if note:
+                await self._post(f"/api/leads/{lead_id}/notes", {"content": note})
+            return f"Lead `{lead_id[:8]}` assegnato all'utente ID `{user_id}`."
+        except Exception as e:
+            return f"Errore assegnazione lead: {e}"
+
+    async def delete_lead(self, lead_id: str, confirm: bool = False) -> str:
+        if not confirm:
+            return "Per eliminare il lead devi confermare esplicitamente (confirm: true). Operazione irreversibile."
+        try:
+            leads = await self._get("/api/leads")
+            lead = next((l for l in leads if l["id"].startswith(lead_id) or l["id"] == lead_id), None)
+            nome = (lead.get("azienda") or lead.get("email") or lead_id[:8]) if lead else lead_id[:8]
+            target_id = lead["id"] if lead else lead_id
+            await self._delete(f"/api/leads/{target_id}")
+            return f"Lead **{nome}** eliminato definitivamente dalla pipeline."
+        except Exception as e:
+            return f"Errore eliminazione lead: {e}"
+
+    async def send_slack_message(self, channel: str, message: str) -> str:
+        slack_token = os.environ.get("SLACK_BOT_TOKEN")
+        if not slack_token:
+            return "Slack non configurato (SLACK_BOT_TOKEN mancante). Messaggio non inviato."
+        try:
+            ch = channel if channel.startswith(('#', '@')) else f"#{channel}"
+            async with httpx.AsyncClient(timeout=10.0) as c:
+                resp = await c.post(
+                    "https://slack.com/api/chat.postMessage",
+                    headers={"Authorization": f"Bearer {slack_token}", "Content-Type": "application/json"},
+                    json={"channel": ch, "text": message, "unfurl_links": False},
+                )
+                data = resp.json()
+                if data.get("ok"):
+                    return f"Messaggio inviato su {ch}."
+                return f"Errore Slack: {data.get('error', 'unknown')}"
+        except Exception as e:
+            return f"Errore invio Slack: {e}"
+
+    async def create_clickup_task(self, title: str, description: str = "", due_date: str = "", assignee_name: str = "") -> str:
+        clickup_key = os.environ.get("CLICKUP_API_KEY")
+        clickup_list_id = os.environ.get("CLICKUP_DEFAULT_LIST_ID", "")
+        if not clickup_key:
+            return "ClickUp non configurato (CLICKUP_API_KEY mancante). Task non creato."
+        if not clickup_list_id:
+            return "CLICKUP_DEFAULT_LIST_ID non configurato. Impostare l'ID della lista di default."
+        try:
+            payload: Dict[str, Any] = {"name": title}
+            if description:
+                payload["description"] = description
+            if due_date:
+                try:
+                    from datetime import datetime as _dt
+                    ts = int(_dt.fromisoformat(due_date).timestamp() * 1000)
+                    payload["due_date"] = ts
+                except Exception:
+                    pass
+            async with httpx.AsyncClient(timeout=15.0) as c:
+                resp = await c.post(
+                    f"https://api.clickup.com/api/v2/list/{clickup_list_id}/task",
+                    headers={"Authorization": clickup_key, "Content-Type": "application/json"},
+                    json=payload,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                task_url = data.get("url", "")
+                return f"Task ClickUp creato: **{title}**{' — ' + task_url if task_url else ''}"
+        except Exception as e:
+            return f"Errore creazione task ClickUp: {e}"
+
     async def execute(self, name: str, args: Dict) -> str:
         """Dispatch universale: chiama il metodo corrispondente al tool name."""
         dispatch = {
@@ -1262,6 +1729,20 @@ class ToolExecutor:
             "match_lead_to_transcripts":    lambda: self.match_lead_to_transcripts(args["lead_id"]),
             "bulk_fetch_for_enrichment":    lambda: self.bulk_fetch_for_enrichment(args.get("limit", 20)),
             "update_lead_notes":            lambda: self.update_lead_notes(args["lead_id"], args["note_content"]),
+            # AirCall tools
+            "aircall_create_contact":    lambda: self.aircall_create_contact(args["lead_id"]),
+            "aircall_get_contact_calls": lambda: self.aircall_get_contact_calls(args["lead_id"], args.get("limit", 10)),
+            "aircall_get_call_details":  lambda: self.aircall_get_call_details(args["call_id"]),
+            "aircall_match_lead_to_calls": lambda: self.aircall_match_lead_to_calls(args["lead_id"]),
+            "update_lead_assignee":         lambda: self.update_lead_assignee(args["lead_id"], args["user_id"], args.get("note")),
+            "delete_lead":                  lambda: self.delete_lead(args["lead_id"], args.get("confirm", False)),
+            "send_slack_message":           lambda: self.send_slack_message(args["channel"], args["message"]),
+            "create_clickup_task":          lambda: self.create_clickup_task(
+                args["title"],
+                args.get("description", ""),
+                args.get("due_date", ""),
+                args.get("assignee_name", ""),
+            ),
         }
         fn = dispatch.get(name)
         if fn is None:
@@ -1287,19 +1768,24 @@ class Agent:
         )
         self.user = user
 
-    def _system_prompt(self) -> str:
+    def _system_prompt(self, context: Optional[str] = None) -> str:
         now = datetime.now().strftime("%A %d %B %Y, %H:%M")
         nome = f"{self.user.get('nome','')}{' ' + self.user.get('cognome','') if self.user.get('cognome') else ''}".strip() or self.user.get("username", "utente")
         role = self.user.get("role") or self.user.get("job_title") or "team member"
+        context_block = f"\n\n📌 **CONTESTO ATTIVO** (dati già disponibili, usali direttamente senza riscaricarli):\n{context}" if context else ""
         return (
             f"{self.config['system_prompt']}\n\n"
             f"Stai parlando con {nome} ({role}).\n"
             f"Data/ora: {now} (Europa/Roma).\n"
-            "Regole:\n"
+            "Regole operative:\n"
             "- Risposte brevi e dirette\n"
+            "- Se hai il CONTESTO ATTIVO, usalo immediatamente — non chiedere dati già forniti\n"
+            "- Se ti chiedono di un lead per nome, usa il tool list_leads o search per trovarlo — NON chiedere l'ID all'utente\n"
+            "- Per operazioni AirCall su un lead specifico, prima recupera il lead con list_leads cercando per nome\n"
             "- Usa SOLO i tool per dati reali, non inventare\n"
             "- Formatta con markdown (grassetto per urgenze, liste per elenchi)\n"
             "- Lingua: italiano"
+            f"{context_block}"
         )
 
     async def _call_with_retry(
@@ -1321,7 +1807,7 @@ class Agent:
                     raise e
         raise RuntimeError("Unreachable")
 
-    async def chat(self, message: str, history: List[Dict]) -> Dict[str, Any]:
+    async def chat(self, message: str, history: List[Dict], agent_id: Optional[str] = None, context: Optional[str] = None) -> Dict[str, Any]:
         api_key = _anthropic_key()
         if not _ANTHROPIC_AVAILABLE or not api_key:
             return {
@@ -1347,7 +1833,7 @@ class Agent:
                 call_params: Dict[str, Any] = {
                     "model": _model(),
                     "max_tokens": 2000,
-                    "system": self._system_prompt(),
+                    "system": self._system_prompt(context=context),
                     "tools": self.config["tools"],
                     "messages": messages,
                 }

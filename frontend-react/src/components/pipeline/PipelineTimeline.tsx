@@ -88,10 +88,8 @@ const PipelineTimeline: React.FC<PipelineTimelineProps> = ({
       <div className={s.timeline}>
         {stages.map(stage => {
           const stageLeads = leads.filter(l => l.stage === stage.key);
-          const totalValue = stageLeads.reduce((sum, l) => {
-            const v = l.deal_value ?? 0;
-            return sum + (v > 10000 ? v / 100 : v);
-          }, 0);
+          // deal_value è SEMPRE in centesimi nel DB → divido sempre per 100
+          const totalValue = stageLeads.reduce((sum, l) => sum + (l.deal_value ?? 0) / 100, 0);
           const isDragOver = dragOverStage === stage.key;
           const dotColor = STAGE_DOTS[stage.key] ?? '#9ca3af';
 

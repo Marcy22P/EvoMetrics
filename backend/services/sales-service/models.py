@@ -122,8 +122,12 @@ class LeadBase(BaseModel):
     setter_id: Optional[str] = None
     appointment_date: Optional[datetime] = None
     follow_up_date: Optional[datetime] = None
+    second_appointment_date: Optional[datetime] = None
     trattativa_persa_reason: Optional[str] = None
     lead_score: Optional[int] = 0
+    converted_at: Optional[datetime] = None
+    contract_date: Optional[datetime] = None  # Data firma contratto
+    aircall_contact_id: Optional[str] = None   # ID contatto AirCall
 
 class LeadCreate(LeadBase):
     clickfunnels_data: Optional[Dict[str, Any]] = None
@@ -160,8 +164,12 @@ class LeadUpdate(BaseModel):
     setter_id: Optional[str] = None
     appointment_date: Optional[datetime] = None
     follow_up_date: Optional[datetime] = None
+    second_appointment_date: Optional[datetime] = None
     trattativa_persa_reason: Optional[str] = None
     lead_score: Optional[int] = None
+    converted_at: Optional[datetime] = None
+    contract_date: Optional[datetime] = None  # Data firma contratto
+    aircall_contact_id: Optional[str] = None   # ID contatto AirCall
 
 class Lead(LeadBase):
     id: str

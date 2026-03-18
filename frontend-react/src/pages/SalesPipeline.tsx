@@ -164,7 +164,7 @@ const ListView: React.FC<ListViewProps> = ({ leads, stages }) => {
                 </td>
                 <td className={s.listTd} style={{ fontWeight: 600, fontSize: '0.82rem' }}>
                   {lead.deal_value
-                    ? `€${Math.round(lead.deal_value > 10000 ? lead.deal_value / 100 : lead.deal_value).toLocaleString('it-IT')}`
+                    ? `€${Math.round(lead.deal_value / 100).toLocaleString('it-IT')}`
                     : '—'}
                 </td>
                 <td className={s.listTd} style={{ fontSize: '0.78rem', color: '#9ca3af' }}>
@@ -208,6 +208,8 @@ const SalesPipeline: React.FC = () => {
   const [showSettings, setShowSettings] = useState(false);
   const [showAiInsights, setShowAiInsights] = useState(false);
   const [showFilterDropdown, setShowFilterDropdown] = useState(false);
+  const [aircallBulkSyncing,  setAircallBulkSyncing]  = useState(false);
+  const [aircallReconciling, setAircallReconciling] = useState(false);
 
   // Drag & Drop
   const [draggingLeadId, setDraggingLeadId] = useState<string | null>(null);
@@ -225,20 +227,22 @@ const SalesPipeline: React.FC = () => {
   const [newSourceChannel, setNewSourceChannel] = useState('');
   const [newAssignedTo, setNewAssignedTo] = useState('');
 
-  // ── AI Insights count ─────────────────────────────────────────────────────────
+  // ── AI Insights count ────────────────────────────────────────────────────────
+  // Il conteggio viene aggiornato direttamente dal pannello via callback (insight reali salvati)
 
-  const aiInsightsCount = useMemo(() => {
-    return leads.filter(l =>
-      !['cliente', 'trattativa_persa', 'scartato', 'archiviato'].includes(l.stage) &&
-      (l.lead_score ?? 0) < 40
-    ).length;
-  }, [leads]);
+  const [aiInsightsCount, setAiInsightsCount] = useState<number>(() => {
+    try {
+      const raw = localStorage.getItem('pipeline_ai_insights_v1');
+      if (raw) return (JSON.parse(raw)?.insights?.length as number) ?? 0;
+    } catch { /* ignore */ }
+    return 0;
+  });
 
   // ── Filtering ─────────────────────────────────────────────────────────────────
 
   const filteredLeads = useMemo(() => {
     return leads.filter(lead => {
-      const q = search.query.toLowerCase();
+      const q = search.query.trim().toLowerCase();
       if (q) {
         const match =
           lead.email.toLowerCase().includes(q) ||
@@ -350,7 +354,7 @@ const SalesPipeline: React.FC = () => {
         stage: newLeadStage || undefined,
         notes: newLeadNotes || undefined,
         source_channel: newSourceChannel || undefined,
-        deal_value: newDealValue ? parseFloat(newDealValue) : undefined,
+        deal_value: newDealValue ? Math.round(parseFloat(newDealValue) * 100) : undefined,
         assigned_to_user_id: newAssignedTo || undefined,
       };
       await salesApi.createLead(data);
@@ -451,6 +455,54 @@ const SalesPipeline: React.FC = () => {
             <IconDownload /> CSV
           </button>
 
+          {/* AirCall bulk sync */}
+          <button
+            className={s.filterBtn}
+            disabled={aircallBulkSyncing}
+            title="Sincronizza tutti i lead attivi come contatti su AirCall"
+            onClick={async () => {
+              setAircallBulkSyncing(true);
+              try {
+                const res = await salesApi.bulkPushToAircall();
+                fetchLeads();
+                toast.success(`AirCall: ${res.synced} contatti sincronizzati${res.failed ? `, ${res.failed} errori` : ''}`);
+              } catch {
+                toast.error('Errore sincronizzazione AirCall');
+              } finally {
+                setAircallBulkSyncing(false);
+              }
+            }}
+          >
+            <svg width="13" height="13" viewBox="0 0 20 20" fill="currentColor" style={{ flexShrink: 0 }}>
+              <path d="M2.7 1h4.2l1.3 4-2.1 1.2a11.5 11.5 0 005.7 5.7L13 9.8l4 1.3v4.2c0 1-1 1.7-2 1.5C5.4 15.5.5 10.6.2 3 0 2 .7 1 1.7 1z"/>
+            </svg>
+            {aircallBulkSyncing ? 'Sync...' : 'AirCall'}
+          </button>
+
+          {/* AirCall reconcile (una-tantum per lead importati manualmente) */}
+          <button
+            className={s.filterBtn}
+            disabled={aircallReconciling}
+            title="Riconcilia i lead EvoMetrics con i contatti AirCall già esistenti (per lead importati manualmente)"
+            onClick={async () => {
+              setAircallReconciling(true);
+              try {
+                const res = await salesApi.reconcileAircall();
+                fetchLeads();
+                toast.success(res.message);
+              } catch {
+                toast.error('Errore riconciliazione AirCall');
+              } finally {
+                setAircallReconciling(false);
+              }
+            }}
+          >
+            <svg width="13" height="13" viewBox="0 0 20 20" fill="currentColor" style={{ flexShrink: 0 }}>
+              <path d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H8a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H12a1 1 0 110-2h4a1 1 0 011 1v4a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z"/>
+            </svg>
+            {aircallReconciling ? 'Riconcilio...' : 'Riconcilia'}
+          </button>
+
           <button className={s.newDealBtn} onClick={() => setShowCreateModal(true)}>
             <IconPlus /> New Deal
           </button>
@@ -491,6 +543,7 @@ const SalesPipeline: React.FC = () => {
         <AiInsightsPanel
           leads={filteredLeads}
           onClose={() => setShowAiInsights(false)}
+          onInsightsLoaded={setAiInsightsCount}
         />
       )}
 

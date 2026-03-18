@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import type { Lead, PipelineStage, MonthlyValueResponse } from '../../services/salesApi';
 import s from './pipeline.module.css';
 
@@ -64,29 +64,100 @@ const HBar: React.FC<HBarProps> = ({ label, value, max, color, suffix }) => {
 
 interface MonthBarProps {
   month: string;
-  value: number;
+  totalValue: number;
+  pipelineValue: number;
+  wonValue: number;
   max: number;
   delta?: number | null;
   isCurrentMonth?: boolean;
 }
 
-const MonthBar: React.FC<MonthBarProps> = ({ month, value, max, delta, isCurrentMonth }) => {
-  const pct = max > 0 ? Math.max((value / max) * 100, value > 0 ? 2 : 0) : 0;
-  const color = value === 0 ? '#e5e7eb' : isCurrentMonth ? 'var(--accent)' : '#93c5fd';
+const MonthBar: React.FC<MonthBarProps> = ({ month, totalValue, pipelineValue, wonValue, max, delta, isCurrentMonth }) => {
+  const [tooltip, setTooltip] = useState<string | null>(null);
+  const totalPct = max > 0 ? Math.max(((pipelineValue + wonValue) / max) * 100, totalValue > 0 ? 2 : 0) : 0;
+  const pipelineColor = isCurrentMonth ? 'var(--accent)' : '#93c5fd';
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flex: 1, gap: 4 }}>
-      <div style={{ fontSize: '0.65rem', fontWeight: 600, color: value > 0 ? 'var(--text)' : 'transparent', height: 14 }}>
-        {value > 0 ? fmtEuro(value) : ''}
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flex: 1, gap: 4, position: 'relative' }}>
+      {/* Valore totale sopra — altezza fissa per allineare tutte le colonne */}
+      <div style={{ fontSize: '0.65rem', fontWeight: 600, color: totalValue > 0 ? 'var(--text)' : 'transparent', height: 14, lineHeight: '14px' }}>
+        {totalValue > 0 ? fmtEuro(totalValue) : ''}
       </div>
-      <div style={{ width: '100%', height: 80, display: 'flex', alignItems: 'flex-end' }}>
-        <div style={{ width: '100%', background: color, borderRadius: '4px 4px 0 0', height: `${pct}%`, minHeight: value > 0 ? 3 : 0, transition: 'height 400ms ease', position: 'relative' }} />
-      </div>
-      <div style={{ fontSize: '0.7rem', color: 'var(--text-2)', fontWeight: 500 }}>{month}</div>
-      {delta != null && (
-        <div style={{ fontSize: '0.62rem', color: delta >= 0 ? 'var(--green)' : 'var(--red)', fontWeight: 600 }}>
-          {delta >= 0 ? '+' : ''}{delta}%
+
+      {/* Barra stacked ancorata al fondo */}
+      <div style={{ width: '100%', height: 80, position: 'relative' }}>
+        <div style={{
+          position: 'absolute', bottom: 0, left: 0, right: 0,
+          height: `${totalPct}%`,
+          minHeight: totalValue > 0 ? 3 : 0,
+          display: 'flex',
+          flexDirection: 'column',
+          borderRadius: '4px 4px 0 0',
+          overflow: 'hidden',
+          transition: 'height 400ms ease',
+        }}>
+          {/* Segmento verde (vinti) — in cima */}
+          {wonValue > 0 && (
+            <div
+              onMouseEnter={() => setTooltip(`Deal vinti: ${fmtEuro(wonValue)}`)}
+              onMouseLeave={() => setTooltip(null)}
+              style={{ flex: wonValue, background: '#22c55e', cursor: 'default' }}
+            />
+          )}
+          {/* Segmento blu (pipeline) — in fondo */}
+          {pipelineValue > 0 && (
+            <div
+              onMouseEnter={() => setTooltip(`Pipeline attiva: ${fmtEuro(pipelineValue)}`)}
+              onMouseLeave={() => setTooltip(null)}
+              style={{
+                flex: pipelineValue,
+                background: pipelineColor,
+                boxShadow: isCurrentMonth ? '0 -2px 6px rgba(59,130,246,0.35)' : undefined,
+                cursor: 'default',
+              }}
+            />
+          )}
+          {/* Barra vuota se entrambi zero */}
+          {pipelineValue === 0 && wonValue === 0 && (
+            <div style={{ flex: 1, background: '#e5e7eb' }} />
+          )}
         </div>
-      )}
+
+        {/* Tooltip custom */}
+        {tooltip && (
+          <div style={{
+            position: 'absolute',
+            bottom: '100%',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            background: 'rgba(15,23,42,0.92)',
+            color: '#fff',
+            fontSize: '0.7rem',
+            fontWeight: 600,
+            padding: '4px 8px',
+            borderRadius: 6,
+            whiteSpace: 'nowrap',
+            pointerEvents: 'none',
+            zIndex: 50,
+            marginBottom: 4,
+            boxShadow: '0 2px 8px rgba(0,0,0,0.18)',
+          }}>
+            {tooltip}
+          </div>
+        )}
+      </div>
+
+      <div style={{ fontSize: '0.7rem', color: 'var(--text-2)', fontWeight: 500 }}>{month}</div>
+
+      {/* Delta % — spazio fisso 16px anche quando assente (evita disallineamento gennaio) */}
+      <div style={{ height: 16, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        {delta != null ? (
+          <span style={{ fontSize: '0.62rem', color: delta >= 0 ? 'var(--green)' : 'var(--red)', fontWeight: 600 }}>
+            {delta >= 0 ? '+' : ''}{delta}%
+          </span>
+        ) : (
+          <span style={{ fontSize: '0.62rem', color: 'var(--text-3)' }}>—</span>
+        )}
+      </div>
     </div>
   );
 };
@@ -121,9 +192,15 @@ const PipelineAnalytics: React.FC<PipelineAnalyticsProps> = ({ leads, stages, mo
   const clienti       = useMemo(() => leads.filter(l => l.stage === 'cliente'), [leads]);
   const persi         = useMemo(() => leads.filter(l => l.stage === 'trattativa_persa'), [leads]);
 
-  const totalValue = useMemo(() =>
-    activeLeads.reduce((s, l) => s + centsToEuro(l.deal_value), 0),
+  // "Valore Pipeline" = solo lead in lavorazione, senza clienti già chiusi
+  const pipelineLeads = useMemo(() =>
+    activeLeads.filter(l => l.stage !== 'cliente'),
     [activeLeads]
+  );
+
+  const totalValue = useMemo(() =>
+    pipelineLeads.reduce((s, l) => s + centsToEuro(l.deal_value), 0),
+    [pipelineLeads]
   );
 
   const wonValue = useMemo(() =>
@@ -191,6 +268,21 @@ const PipelineAnalytics: React.FC<PipelineAnalyticsProps> = ({ leads, stages, mo
     return monthlyData.months;
   }, [monthlyData]);
 
+  // Deal vinti per mese (calcolato dai lead con stage === 'cliente' nell'anno corrente)
+  const wonValueByMonth = useMemo(() => {
+    const year = monthlyData?.year ?? new Date().getFullYear();
+    const map: Record<number, number> = {};
+    clienti.forEach(l => {
+      const dateStr = l.contract_date || l.converted_at || l.stage_entered_at;
+      if (!dateStr) return;
+      const d = new Date(dateStr);
+      if (d.getFullYear() !== year) return;
+      const mo = d.getMonth() + 1;
+      map[mo] = (map[mo] || 0) + centsToEuro(l.deal_value);
+    });
+    return map;
+  }, [clienti, monthlyData?.year]);
+
   const monthlyMax = useMemo(() =>
     Math.max(...(monthlyChartData.map(m => m.total_value)), 1),
     [monthlyChartData]
@@ -209,13 +301,15 @@ const PipelineAnalytics: React.FC<PipelineAnalyticsProps> = ({ leads, stages, mo
     return sorted.map(([label, value]) => ({ label, value, max }));
   }, [leads]);
 
-  // ── Stage velocity (giorni medi in stage per i clienti) ──────────────────────
+  // ── Incubazione: da creazione a firma contratto (o a moved→cliente se manca contract_date) ─
   const stageVelocity = useMemo(() => {
     return clienti
-      .filter(l => l.stage_entered_at && l.created_at)
+      .filter(l => l.created_at && (l.contract_date || l.stage_entered_at))
       .map(l => {
+        // Usa contract_date se disponibile (data firma reale), altrimenti stage_entered_at
+        const closingDate = l.contract_date ?? l.stage_entered_at!;
         const days = Math.round(
-          (new Date(l.stage_entered_at!).getTime() - new Date(l.created_at).getTime())
+          (new Date(closingDate).getTime() - new Date(l.created_at).getTime())
           / (1000 * 60 * 60 * 24)
         );
         return days;
@@ -238,7 +332,7 @@ const PipelineAnalytics: React.FC<PipelineAnalyticsProps> = ({ leads, stages, mo
         <KpiCard label="Conversion Rate" value={`${convRate}%`}          sub={`${persi.length} persi`} />
         <KpiCard label="Valore Medio Deal" value={avgDealValue > 0 ? `€${avgDealValue.toLocaleString('it-IT')}` : 'N/D'} sub="clienti chiusi" />
         {avgClosingDays != null && (
-          <KpiCard label="Tempo Medio Chiusura" value={`${avgClosingDays}gg`} sub="optin → cliente" />
+          <KpiCard label="Periodo Incubazione" value={`${avgClosingDays}gg`} sub="lead → firma contratto" />
         )}
       </div>
 
@@ -256,18 +350,37 @@ const PipelineAnalytics: React.FC<PipelineAnalyticsProps> = ({ leads, stages, mo
             )}
           </div>
           {monthlyChartData.length > 0 ? (
-            <div style={{ display: 'flex', alignItems: 'flex-end', gap: 4, paddingBottom: 4 }}>
-              {monthlyChartData.map(m => (
-                <MonthBar
-                  key={m.month}
-                  month={m.label}
-                  value={m.total_value}
-                  max={monthlyMax}
-                  delta={m.delta_pct}
-                  isCurrentMonth={m.month === currentMonth}
-                />
-              ))}
-            </div>
+            <>
+              <div style={{ display: 'flex', alignItems: 'stretch', gap: 4, paddingBottom: 4 }}>
+                {monthlyChartData.map(m => {
+                  const won      = wonValueByMonth[m.month] ?? 0;
+                  const pipeline = Math.max(0, m.total_value - won);
+                  return (
+                    <MonthBar
+                      key={m.month}
+                      month={m.label}
+                      totalValue={m.total_value}
+                      pipelineValue={pipeline}
+                      wonValue={won}
+                      max={monthlyMax}
+                      delta={m.delta_pct}
+                      isCurrentMonth={m.month === currentMonth}
+                    />
+                  );
+                })}
+              </div>
+              {/* Legenda */}
+              <div style={{ display: 'flex', gap: 14, marginTop: 6, justifyContent: 'flex-end' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: '0.68rem', color: 'var(--text-2)' }}>
+                  <div style={{ width: 10, height: 10, borderRadius: 2, background: '#93c5fd', flexShrink: 0 }} />
+                  Pipeline attiva
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: '0.68rem', color: 'var(--text-2)' }}>
+                  <div style={{ width: 10, height: 10, borderRadius: 2, background: '#22c55e', flexShrink: 0 }} />
+                  Deal vinti
+                </div>
+              </div>
+            </>
           ) : (
             <div className={s.analyticsEmpty}>
               Nessun dato mensile — i valori verranno mostrati quando i lead avranno un deal_value assegnato.
