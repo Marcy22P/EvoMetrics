@@ -2231,7 +2231,12 @@ async def calendly_callback(
     """Gestisce il callback OAuth di Calendly (PKCE), scambia il code per i token e li salva."""
     from starlette.responses import HTMLResponse
 
+    # Log tutti i parametri ricevuti per debugging
+    all_params = dict(request.query_params)
+    print(f"📩 Calendly callback ricevuto — params: {all_params}")
+
     if error:
+        print(f"❌ Calendly OAuth error: {error}")
         return HTMLResponse(
             f"""<html><body><script>
             window.opener && window.opener.postMessage({{type:'calendly_oauth',success:false,error:'{error}'}}, '*');
@@ -2239,7 +2244,17 @@ async def calendly_callback(
             </script><p>Autorizzazione Calendly negata: {error}</p></body></html>"""
         )
     if not code:
-        raise HTTPException(status_code=400, detail="Parametro 'code' mancante nel callback.")
+        print(f"❌ Calendly callback senza 'code'. Tutti i params ricevuti: {all_params}")
+        return HTMLResponse(
+            f"""<html><body><script>
+            window.opener && window.opener.postMessage({{type:'calendly_oauth',success:false,error:'missing_code'}}, '*');
+            window.close();
+            </script>
+            <p>Errore: parametro <code>code</code> mancante nel callback.</p>
+            <p>Params ricevuti: <pre>{all_params}</pre></p>
+            </body></html>""",
+            status_code=400,
+        )
 
     client_id     = os.environ.get("CALENDLY_CLIENT_ID", "")
     client_secret = os.environ.get("CALENDLY_CLIENT_SECRET", "")
