@@ -2086,3 +2086,208 @@ async def fireflies_webhook(request: Request, background_tasks: BackgroundTasks)
 
     return {"status": "accepted", "transcriptId": transcript_id}
 
+
+# ── Calendly OAuth ────────────────────────────────────────────────────────────
+
+_CALENDLY_AUTH_URL  = "https://auth.calendly.com/oauth/authorize"
+_CALENDLY_TOKEN_URL = "https://auth.calendly.com/oauth/token"
+_CALENDLY_API_BASE  = "https://api.calendly.com"
+
+
+def _get_calendly_token_from_db() -> Optional[dict]:
+    """Recupera il token Calendly salvato nel DB."""
+    from models import OAuthToken
+    db = SessionLocal()
+    try:
+        record = db.query(OAuthToken).filter(OAuthToken.provider == "calendly").order_by(OAuthToken.updated_at.desc()).first()
+        if not record:
+            return None
+        return {
+            "access_token": record.access_token,
+            "refresh_token": record.refresh_token,
+            "expires_at": record.expires_at,
+            "account_id": record.account_id,
+        }
+    finally:
+        db.close()
+
+
+def _save_calendly_token(access_token: str, refresh_token: Optional[str], expires_in: Optional[int], account_id: Optional[str] = None):
+    """Salva o aggiorna il token Calendly nel DB."""
+    from models import OAuthToken
+    db = SessionLocal()
+    try:
+        expires_at = None
+        if expires_in:
+            expires_at = datetime.utcnow() + timedelta(seconds=expires_in)
+        record = db.query(OAuthToken).filter(OAuthToken.provider == "calendly").first()
+        if record:
+            record.access_token = access_token
+            record.refresh_token = refresh_token or record.refresh_token
+            record.expires_at = expires_at
+            if account_id:
+                record.account_id = account_id
+        else:
+            record = OAuthToken(
+                provider="calendly",
+                access_token=access_token,
+                refresh_token=refresh_token,
+                expires_at=expires_at,
+                account_id=account_id,
+            )
+            db.add(record)
+        db.commit()
+    finally:
+        db.close()
+
+
+async def _get_valid_calendly_token() -> str:
+    """
+    Ritorna un access token Calendly valido.
+    Se scaduto e c'è refresh_token, lo rinnova automaticamente.
+    Fallback: usa CALENDLY_API_TOKEN dall'env (Personal Access Token).
+    """
+    # Prima prova il PAT da env (più semplice, ha precedenza se configurato)
+    pat = os.environ.get("CALENDLY_API_TOKEN", "").strip()
+    if pat:
+        return pat
+
+    token_data = _get_calendly_token_from_db()
+    if not token_data:
+        raise HTTPException(status_code=401, detail="Calendly non connesso. Vai su /api/mcp/calendly/connect per autorizzare.")
+
+    # Controlla scadenza (con 5 minuti di margine)
+    if token_data.get("expires_at") and token_data["expires_at"] < datetime.utcnow() + timedelta(minutes=5):
+        # Prova refresh
+        refresh_token = token_data.get("refresh_token")
+        if not refresh_token:
+            raise HTTPException(status_code=401, detail="Token Calendly scaduto. Ri-autorizza su /api/mcp/calendly/connect.")
+        client_id     = os.environ.get("CALENDLY_CLIENT_ID", "")
+        client_secret = os.environ.get("CALENDLY_CLIENT_SECRET", "")
+        async with httpx.AsyncClient() as c:
+            r = await c.post(_CALENDLY_TOKEN_URL, data={
+                "grant_type": "refresh_token",
+                "refresh_token": refresh_token,
+                "client_id": client_id,
+                "client_secret": client_secret,
+            })
+        if r.status_code != 200:
+            raise HTTPException(status_code=401, detail=f"Refresh token Calendly fallito: {r.text}")
+        resp = r.json()
+        _save_calendly_token(
+            access_token=resp["access_token"],
+            refresh_token=resp.get("refresh_token", refresh_token),
+            expires_in=resp.get("expires_in"),
+        )
+        return resp["access_token"]
+
+    return token_data["access_token"]
+
+
+@app.get("/api/mcp/calendly/connect")
+async def calendly_connect(request: Request):
+    """Avvia il flusso OAuth con Calendly. Reindirizza l'utente alla pagina di autorizzazione."""
+    client_id    = os.environ.get("CALENDLY_CLIENT_ID", "")
+    redirect_uri = os.environ.get("CALENDLY_REDIRECT_URI", "https://www.evoluzioneimprese.com/api/mcp/calendly/callback")
+    if not client_id:
+        raise HTTPException(status_code=500, detail="CALENDLY_CLIENT_ID non configurato nel server.")
+    from urllib.parse import urlencode
+    from starlette.responses import RedirectResponse
+    params = {
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+    }
+    auth_url = f"{_CALENDLY_AUTH_URL}?{urlencode(params)}"
+    return RedirectResponse(url=auth_url)
+
+
+@app.get("/api/mcp/calendly/callback")
+async def calendly_callback(request: Request, code: Optional[str] = None, error: Optional[str] = None):
+    """Gestisce il callback OAuth di Calendly, scambia il code per i token e li salva."""
+    from starlette.responses import HTMLResponse
+    frontend_url = os.environ.get("FRONTEND_URL", "https://www.evoluzioneimprese.com")
+
+    if error:
+        return HTMLResponse(
+            f"""<html><body><script>
+            window.opener && window.opener.postMessage({{type:'calendly_oauth',success:false,error:'{error}'}}, '*');
+            window.close();
+            </script><p>Autorizzazione Calendly negata: {error}</p></body></html>"""
+        )
+    if not code:
+        raise HTTPException(status_code=400, detail="Parametro 'code' mancante nel callback.")
+
+    client_id     = os.environ.get("CALENDLY_CLIENT_ID", "")
+    client_secret = os.environ.get("CALENDLY_CLIENT_SECRET", "")
+    redirect_uri  = os.environ.get("CALENDLY_REDIRECT_URI", "https://www.evoluzioneimprese.com/api/mcp/calendly/callback")
+
+    # Scambio code → tokens
+    async with httpx.AsyncClient() as c:
+        r = await c.post(_CALENDLY_TOKEN_URL, data={
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": redirect_uri,
+            "client_id": client_id,
+            "client_secret": client_secret,
+        })
+
+    if r.status_code != 200:
+        return HTMLResponse(
+            f"""<html><body><script>
+            window.opener && window.opener.postMessage({{type:'calendly_oauth',success:false,error:'token_exchange_failed'}}, '*');
+            window.close();
+            </script><p>Errore scambio token: {r.text}</p></body></html>"""
+        )
+
+    resp = r.json()
+    access_token  = resp.get("access_token", "")
+    refresh_token = resp.get("refresh_token")
+    expires_in    = resp.get("expires_in")
+    owner_uri     = resp.get("owner", "")
+
+    _save_calendly_token(access_token, refresh_token, expires_in, account_id=owner_uri)
+    print(f"✅ Calendly OAuth completato — account: {owner_uri}")
+
+    return HTMLResponse(
+        f"""<html><body><script>
+        window.opener && window.opener.postMessage({{type:'calendly_oauth',success:true}}, '*');
+        window.close();
+        </script>
+        <p>✅ Calendly connesso con successo! Puoi chiudere questa finestra.</p>
+        </body></html>"""
+    )
+
+
+@app.get("/api/mcp/calendly/status")
+async def calendly_status():
+    """Controlla se Calendly è connesso e ritorna info account."""
+    # Prova con PAT
+    pat = os.environ.get("CALENDLY_API_TOKEN", "").strip()
+    token = pat if pat else None
+
+    if not token:
+        token_data = _get_calendly_token_from_db()
+        if token_data:
+            token = token_data["access_token"]
+
+    if not token:
+        return {"connected": False, "method": None}
+
+    try:
+        async with httpx.AsyncClient() as c:
+            r = await c.get(f"{_CALENDLY_API_BASE}/users/me", headers={"Authorization": f"Bearer {token}"})
+        if r.status_code == 200:
+            user = r.json().get("resource", {})
+            return {
+                "connected": True,
+                "method": "pat" if pat else "oauth",
+                "name": user.get("name"),
+                "email": user.get("email"),
+                "scheduling_url": user.get("scheduling_url"),
+                "account_uri": user.get("uri"),
+            }
+    except Exception:
+        pass
+    return {"connected": False, "method": None}
+

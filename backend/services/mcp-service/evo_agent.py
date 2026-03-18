@@ -320,6 +320,70 @@ SALES_TOOLS: List[Dict] = [
             "required": ["lead_id"],
         },
     },
+    # ── Calendly tools ───────────────────────────────────────────────────────
+    {
+        "name": "calendly_get_status",
+        "description": "Verifica se Calendly è connesso e mostra info account (nome, email, link di prenotazione).",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "calendly_list_event_types",
+        "description": "Lista tutti i tipi di appuntamento Calendly (es. consulenza 30min, call 60min) con il link di prenotazione diretto.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "calendly_list_scheduled_events",
+        "description": "Lista gli appuntamenti Calendly futuri (o recenti). Mostra data, orario, partecipante, tipo meeting.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "count": {"type": "integer", "description": "Numero max di appuntamenti (default 10)"},
+                "status": {"type": "string", "description": "Filtra per stato: 'active' (default) o 'canceled'"},
+                "min_start_time": {"type": "string", "description": "Data minima ISO8601 (es. 2026-03-01T00:00:00Z)"},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "calendly_get_event_invitees",
+        "description": "Recupera i partecipanti (invitees) di un appuntamento Calendly specifico, con nome, email e risposte alle domande.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "event_uuid": {"type": "string", "description": "UUID dell'evento Calendly (dalla lista eventi)"},
+            },
+            "required": ["event_uuid"],
+        },
+    },
+    {
+        "name": "calendly_cancel_event",
+        "description": "Cancella un appuntamento Calendly specificando UUID e motivo opzionale.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "event_uuid": {"type": "string", "description": "UUID dell'evento da cancellare"},
+                "reason": {"type": "string", "description": "Motivo della cancellazione (opzionale)"},
+            },
+            "required": ["event_uuid"],
+        },
+    },
+    {
+        "name": "calendly_create_scheduling_link",
+        "description": "Crea un link di prenotazione Calendly monouso (single-use) per un tipo di evento specifico. Utile per mandare a un lead un link personalizzato.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "event_type_uri": {"type": "string", "description": "URI del tipo di evento Calendly (da calendly_list_event_types)"},
+                "max_event_count": {"type": "integer", "description": "Numero massimo di prenotazioni (default 1 = single-use)"},
+            },
+            "required": ["event_type_uri"],
+        },
+    },
+    {
+        "name": "calendly_get_availability",
+        "description": "Recupera le schedule di disponibilità configurate su Calendly (orari lavorativi, giorni disponibili).",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
 ]
 
 OPS_TOOLS: List[Dict] = [
@@ -549,7 +613,21 @@ Fonti di dati disponibili:
 - Per cercare chiamate di un numero: usa SEMPRE `aircall_search_calls` con `phone_number`
 - NON dire mai "non ho un tool per cercare per numero" — hai `aircall_search_calls`
 - Per trovare un lead per nome: usa `list_leads`, non chiedere l'ID
-- Combina le fonti: pipeline EvoMetrics + chiamate AirCall + trascrizioni Fireflies
+- Combina le fonti: pipeline EvoMetrics + chiamate AirCall + trascrizioni Fireflies + appuntamenti Calendly
+
+## Tool Calendly disponibili:
+- `calendly_get_status` → verifica connessione e info account
+- `calendly_list_event_types` → tipi di meeting con link prenotazione
+- `calendly_list_scheduled_events` → appuntamenti futuri/passati
+- `calendly_get_event_invitees` → chi si è prenotato a un appuntamento
+- `calendly_cancel_event` → cancella un appuntamento
+- `calendly_create_scheduling_link` → crea link monouso personalizzato per un lead
+- `calendly_get_availability` → orari di disponibilità configurati
+
+## Regole cross-tool:
+- "Crea link per questo lead" → `calendly_list_event_types` → poi `calendly_create_scheduling_link`
+- "Appuntamenti di domani" → `calendly_list_scheduled_events`
+- "Chi si è prenotato?" → `calendly_list_scheduled_events` + `calendly_get_event_invitees`
 
 Sii analitico, proattivo, orientato alla conversione. Non inventare dati, usali dai tool.""",
     },
@@ -1763,6 +1841,279 @@ class ToolExecutor:
         """Cerca tutte le chiamate AirCall di un lead. Alias di aircall_get_lead_calls."""
         return await self.aircall_get_lead_calls(lead_id)
 
+    # ─── Calendly tools ───────────────────────────────────────────────────────
+
+    async def _calendly_get(self, path: str, params: Optional[Dict] = None) -> Dict:
+        """Helper GET per Calendly API v2."""
+        token = await self._get_calendly_access_token()
+        async with httpx.AsyncClient() as c:
+            r = await c.get(
+                f"https://api.calendly.com{path}",
+                headers={"Authorization": f"Bearer {token}"},
+                params=params or {},
+            )
+        if r.status_code == 401:
+            raise RuntimeError("Token Calendly non valido o scaduto. Ri-autorizza su /api/mcp/calendly/connect.")
+        r.raise_for_status()
+        return r.json()
+
+    async def _calendly_post(self, path: str, body: Dict) -> Dict:
+        """Helper POST per Calendly API v2."""
+        token = await self._get_calendly_access_token()
+        async with httpx.AsyncClient() as c:
+            r = await c.post(
+                f"https://api.calendly.com{path}",
+                headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+                json=body,
+            )
+        if r.status_code == 401:
+            raise RuntimeError("Token Calendly non valido o scaduto. Ri-autorizza su /api/mcp/calendly/connect.")
+        r.raise_for_status()
+        return r.json()
+
+    async def _get_calendly_access_token(self) -> str:
+        """Recupera il token Calendly valido (PAT o OAuth)."""
+        import os as _os
+        from datetime import datetime as _dt, timedelta as _td
+
+        # Priorità: Personal Access Token da env
+        pat = _os.environ.get("CALENDLY_API_TOKEN", "").strip()
+        if pat:
+            return pat
+
+        # Altrimenti: token OAuth da DB via chiamata HTTP interna
+        svc_base = _os.environ.get("MCP_SERVICE_URL", "http://localhost:10001")
+        try:
+            async with httpx.AsyncClient() as c:
+                r = await c.get(f"{svc_base}/api/mcp/calendly/status")
+            data = r.json()
+            if not data.get("connected"):
+                raise RuntimeError("Calendly non connesso. Usa `calendly_get_status` per info e vai su /api/mcp/calendly/connect.")
+        except Exception:
+            pass
+
+        # Recupero diretto dal DB
+        try:
+            from database import SessionLocal as _SL
+            from models import OAuthToken as _OT
+            db = _SL()
+            record = db.query(_OT).filter(_OT.provider == "calendly").order_by(_OT.updated_at.desc()).first()
+            db.close()
+            if record:
+                # Refresh se scaduto
+                if record.expires_at and record.expires_at < _dt.utcnow() + _td(minutes=5):
+                    if record.refresh_token:
+                        client_id     = _os.environ.get("CALENDLY_CLIENT_ID", "")
+                        client_secret = _os.environ.get("CALENDLY_CLIENT_SECRET", "")
+                        async with httpx.AsyncClient() as c:
+                            resp = await c.post("https://auth.calendly.com/oauth/token", data={
+                                "grant_type": "refresh_token",
+                                "refresh_token": record.refresh_token,
+                                "client_id": client_id,
+                                "client_secret": client_secret,
+                            })
+                        if resp.status_code == 200:
+                            rd = resp.json()
+                            db2 = _SL()
+                            rec2 = db2.query(_OT).filter(_OT.provider == "calendly").first()
+                            if rec2:
+                                rec2.access_token = rd["access_token"]
+                                if rd.get("refresh_token"):
+                                    rec2.refresh_token = rd["refresh_token"]
+                                if rd.get("expires_in"):
+                                    rec2.expires_at = _dt.utcnow() + _td(seconds=rd["expires_in"])
+                                db2.commit()
+                            db2.close()
+                            return rd["access_token"]
+                    raise RuntimeError("Token Calendly scaduto. Ri-autorizza su /api/mcp/calendly/connect.")
+                return record.access_token
+        except Exception as e:
+            raise RuntimeError(f"Calendly non disponibile: {e}")
+        raise RuntimeError("Calendly non connesso.")
+
+    async def _get_calendly_user_uri(self) -> str:
+        """Recupera l'URI dell'utente Calendly corrente."""
+        data = await self._calendly_get("/users/me")
+        return data.get("resource", {}).get("uri", "")
+
+    async def calendly_get_status(self) -> str:
+        """Verifica connessione Calendly e info account."""
+        try:
+            data = await self._calendly_get("/users/me")
+            user = data.get("resource", {})
+            lines = [
+                "## Calendly — Account connesso ✅",
+                f"**Nome**: {user.get('name', 'N/D')}",
+                f"**Email**: {user.get('email', 'N/D')}",
+                f"**Link prenotazione**: {user.get('scheduling_url', 'N/D')}",
+                f"**Timezone**: {user.get('timezone', 'N/D')}",
+            ]
+            return "\n".join(lines)
+        except RuntimeError as e:
+            return f"⚠️ {e}\nPer connettere Calendly: apri `https://www.evoluzioneimprese.com/api/mcp/calendly/connect`"
+        except Exception as e:
+            return f"Errore connessione Calendly: {e}"
+
+    async def calendly_list_event_types(self) -> str:
+        """Lista i tipi di evento Calendly con link di prenotazione."""
+        try:
+            user_uri = await self._get_calendly_user_uri()
+            data = await self._calendly_get("/event_types", {"user": user_uri, "active": "true"})
+            items = data.get("collection", [])
+            if not items:
+                return "Nessun tipo di evento Calendly attivo trovato."
+            lines = [f"**{len(items)} tipi di evento Calendly**\n"]
+            for e in items:
+                duration = e.get("duration", "?")
+                booking_url = e.get("scheduling_url", "N/D")
+                uri = e.get("uri", "")
+                uuid = uri.split("/")[-1] if uri else "N/D"
+                color = f" [{e.get('color', '')}]" if e.get("color") else ""
+                lines.append(
+                    f"- **{e.get('name','?')}**{color} | {duration} min | UUID: `{uuid}`\n"
+                    f"  Link: {booking_url}"
+                )
+            return "\n".join(lines)
+        except RuntimeError as e:
+            return f"⚠️ {e}"
+        except Exception as e:
+            return f"Errore lista event types Calendly: {e}"
+
+    async def calendly_list_scheduled_events(self, count: int = 10, status: str = "active", min_start_time: Optional[str] = None) -> str:
+        """Lista gli appuntamenti Calendly."""
+        try:
+            user_uri = await self._get_calendly_user_uri()
+            params: Dict = {
+                "user": user_uri,
+                "count": min(count, 50),
+                "status": status,
+                "sort": "start_time:asc",
+            }
+            if not min_start_time:
+                params["min_start_time"] = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+            else:
+                params["min_start_time"] = min_start_time
+
+            data = await self._calendly_get("/scheduled_events", params)
+            events = data.get("collection", [])
+            pagination = data.get("pagination", {})
+
+            label = "futuri" if status == "active" else status
+            if not events:
+                return f"Nessun appuntamento Calendly {label} trovato."
+
+            lines = [f"**{len(events)} appuntamenti Calendly {label}**\n"]
+            for ev in events:
+                start = ev.get("start_time", "")
+                end   = ev.get("end_time", "")
+                try:
+                    start_dt = datetime.fromisoformat(start.replace("Z", "+00:00"))
+                    start_fmt = start_dt.strftime("%d/%m/%Y %H:%M")
+                    end_dt   = datetime.fromisoformat(end.replace("Z", "+00:00"))
+                    end_fmt  = end_dt.strftime("%H:%M")
+                except Exception:
+                    start_fmt = start
+                    end_fmt   = end
+                event_type = (ev.get("event_type") or "").split("/")[-1]
+                uuid = (ev.get("uri") or "").split("/")[-1]
+                status_ev = ev.get("status", "?")
+                lines.append(
+                    f"- **{start_fmt} → {end_fmt}** | {ev.get('name','?')} | "
+                    f"Status: {status_ev} | UUID: `{uuid}`"
+                )
+            if pagination.get("next_page"):
+                lines.append(f"\n*Ci sono altri appuntamenti. Usa count={count * 2} per vederne di più.*")
+            return "\n".join(lines)
+        except RuntimeError as e:
+            return f"⚠️ {e}"
+        except Exception as e:
+            return f"Errore lista eventi Calendly: {e}"
+
+    async def calendly_get_event_invitees(self, event_uuid: str) -> str:
+        """Recupera i partecipanti di un evento Calendly."""
+        try:
+            data = await self._calendly_get(f"/scheduled_events/{event_uuid}/invitees")
+            invitees = data.get("collection", [])
+            if not invitees:
+                return f"Nessun partecipante trovato per l'evento `{event_uuid}`."
+            lines = [f"**{len(invitees)} partecipanti — evento `{event_uuid}`**\n"]
+            for inv in invitees:
+                questions = inv.get("questions_and_answers", [])
+                qa_str = ""
+                if questions:
+                    qa_parts = [f"{q.get('question','?')}: {q.get('answer','?')}" for q in questions]
+                    qa_str = " | " + " | ".join(qa_parts)
+                lines.append(
+                    f"- **{inv.get('name','?')}** ({inv.get('email','?')}) | "
+                    f"Status: {inv.get('status','?')}{qa_str}"
+                )
+            return "\n".join(lines)
+        except RuntimeError as e:
+            return f"⚠️ {e}"
+        except Exception as e:
+            return f"Errore invitees Calendly: {e}"
+
+    async def calendly_cancel_event(self, event_uuid: str, reason: str = "") -> str:
+        """Cancella un evento Calendly."""
+        try:
+            body: Dict = {}
+            if reason:
+                body["reason"] = reason
+            await self._calendly_post(f"/scheduled_events/{event_uuid}/cancellation", body)
+            return f"✅ Evento Calendly `{event_uuid}` cancellato con successo." + (f"\nMotivo: {reason}" if reason else "")
+        except RuntimeError as e:
+            return f"⚠️ {e}"
+        except Exception as e:
+            return f"Errore cancellazione evento Calendly: {e}"
+
+    async def calendly_create_scheduling_link(self, event_type_uri: str, max_event_count: int = 1) -> str:
+        """Crea un link di prenotazione Calendly (single-use o multi-use)."""
+        try:
+            body = {
+                "max_event_count": max_event_count,
+                "owner": event_type_uri,
+                "owner_type": "EventType",
+            }
+            data = await self._calendly_post("/scheduling_links", body)
+            link = data.get("resource", {}).get("booking_url", "")
+            link_type = "monouso" if max_event_count == 1 else f"max {max_event_count} prenotazioni"
+            return (
+                f"✅ Link Calendly creato ({link_type}):\n"
+                f"**{link}**\n\n"
+                f"Invia questo link al lead per prenotare direttamente."
+            )
+        except RuntimeError as e:
+            return f"⚠️ {e}"
+        except Exception as e:
+            return f"Errore creazione scheduling link Calendly: {e}"
+
+    async def calendly_get_availability(self) -> str:
+        """Recupera le schedule di disponibilità Calendly."""
+        try:
+            user_uri = await self._get_calendly_user_uri()
+            data = await self._calendly_get("/user_availability_schedules", {"user": user_uri})
+            schedules = data.get("collection", [])
+            if not schedules:
+                return "Nessuna schedule di disponibilità configurata su Calendly."
+            lines = [f"**{len(schedules)} schedule di disponibilità Calendly**\n"]
+            for s in schedules:
+                timezone = s.get("timezone", "?")
+                default = " (predefinita)" if s.get("default") else ""
+                lines.append(f"### {s.get('name','Schedule')}{default} — Timezone: {timezone}")
+                for rule in s.get("rules", []):
+                    wtype = rule.get("type", "?")
+                    intervals = rule.get("intervals", [])
+                    if wtype == "wday" and intervals:
+                        hours = " | ".join([f"{i.get('from','?')} → {i.get('to','?')}" for i in intervals])
+                        lines.append(f"  - {rule.get('wday','?').capitalize()}: {hours}")
+                    elif wtype == "date":
+                        lines.append(f"  - Data specifica: {rule.get('date','?')} — {'chiuso' if not intervals else 'aperto'}")
+            return "\n".join(lines)
+        except RuntimeError as e:
+            return f"⚠️ {e}"
+        except Exception as e:
+            return f"Errore disponibilità Calendly: {e}"
+
     async def bulk_fetch_for_enrichment(self, limit: int = 20) -> str:
         try:
             # Fetch parallelo: trascrizioni Fireflies + lead pipeline
@@ -1971,6 +2322,18 @@ class ToolExecutor:
             "aircall_list_users":            lambda: self.aircall_list_users(),
             "aircall_dial_lead":             lambda: self.aircall_dial_lead(args["lead_id"], args.get("aircall_user_id")),
             "aircall_match_lead_to_calls":   lambda: self.aircall_match_lead_to_calls(args["lead_id"]),
+            # Calendly tools
+            "calendly_get_status":           lambda: self.calendly_get_status(),
+            "calendly_list_event_types":     lambda: self.calendly_list_event_types(),
+            "calendly_list_scheduled_events": lambda: self.calendly_list_scheduled_events(
+                args.get("count", 10), args.get("status", "active"), args.get("min_start_time")
+            ),
+            "calendly_get_event_invitees":   lambda: self.calendly_get_event_invitees(args["event_uuid"]),
+            "calendly_cancel_event":         lambda: self.calendly_cancel_event(args["event_uuid"], args.get("reason", "")),
+            "calendly_create_scheduling_link": lambda: self.calendly_create_scheduling_link(
+                args["event_type_uri"], args.get("max_event_count", 1)
+            ),
+            "calendly_get_availability":     lambda: self.calendly_get_availability(),
             "update_lead_assignee":         lambda: self.update_lead_assignee(args["lead_id"], args["user_id"], args.get("note")),
             "delete_lead":                  lambda: self.delete_lead(args["lead_id"], args.get("confirm", False)),
             "send_slack_message":           lambda: self.send_slack_message(args["channel"], args["message"]),

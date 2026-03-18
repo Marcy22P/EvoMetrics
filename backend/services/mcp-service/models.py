@@ -46,6 +46,22 @@ class AgentConversation(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
+class OAuthToken(Base):
+    """Token OAuth per integrazioni esterne (Calendly, etc.)."""
+    __tablename__ = "oauth_tokens"
+
+    id = Column(Integer, primary_key=True, index=True)
+    provider = Column(String(50), nullable=False, index=True)   # es. 'calendly'
+    account_id = Column(String(200), nullable=True)             # URI/ID account del provider
+    access_token = Column(Text, nullable=False)
+    refresh_token = Column(Text, nullable=True)
+    token_type = Column(String(50), default="Bearer")
+    scope = Column(String(500), nullable=True)
+    expires_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 class Assessment(Base):
     __tablename__ = "assessment"
 
