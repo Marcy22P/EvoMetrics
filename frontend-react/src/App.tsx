@@ -1,5 +1,6 @@
 import React from 'react';
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
+import { Toaster } from 'react-hot-toast'
 // import './App.css' // Disabilitiamo CSS globale custom per favorire Polaris
 import HomePage from './pages/HomePage' // NUOVA DASHBOARD
 import BilancioPage from './pages/BilancioPage' // NUOVA PAGINA BILANCIO
@@ -354,7 +355,16 @@ function App() {
   return (
     <AuthProvider>
       <TasksConfigurationProvider>
-      <AppRoutes />
+        <AppRoutes />
+        <Toaster
+          position="top-right"
+          toastOptions={{
+            duration: 4000,
+            style: { fontSize: '0.875rem', maxWidth: 380 },
+            success: { iconTheme: { primary: '#22c55e', secondary: '#fff' } },
+            error:   { iconTheme: { primary: '#ef4444', secondary: '#fff' } },
+          }}
+        />
       </TasksConfigurationProvider>
     </AuthProvider>
   )

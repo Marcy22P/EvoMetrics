@@ -815,6 +815,8 @@ def get_lead(lead_id: str, db: Session = Depends(get_db)):
 def create_lead(lead_in: LeadCreate, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     """Crea un nuovo lead manualmente."""
     normalized_email = lead_in.email.strip().lower()
+    if not normalized_email:
+        raise HTTPException(status_code=422, detail="Email obbligatoria")
     existing = db.query(LeadModel).filter(LeadModel.email == normalized_email).first()
     if existing:
         raise HTTPException(status_code=400, detail="Un lead con questa email esiste già")
